@@ -139,7 +139,10 @@ c <= 0.04045
 - `color.ts` 不依赖 Three.js，也不依赖其他领域模块。
 - sRGB 转换公式和边界行为必须与 Three.js 对应的 sRGB 色彩空间规则一致。
 - Three.js `Color`、纹理色彩空间和渲染器输出色彩空间只允许在基础设施/渲染适配层处理。
-- Three.js 只允许作为测试期 `devDependency`，用于对关键转换做一致性测试。
+- 测试可以使用 Three.js `Color` 的显式色彩空间 API（例如传入 `SRGBColorSpace`，读取 `LinearSRGBColorSpace`）作为独立 oracle，验证 `sRGB → Linear-sRGB` 传输函数以及字节↔hex 编码的一致性。Three.js 在这些 API 内部通过 `ColorManagement` 执行转换；测试无需显式导入或配置 `ColorManagement`，除非正在验证其专门的全局配置行为。
+- Three.js 对齐是测试验证手段，不改变本模块的领域边界：`parseRgb`、`toHex`、`srgbToLinear` 和 `linearize` 的公开语义由本契约中的类型、公式和错误模型定义。
+- 对齐只覆盖传输函数与字节↔hex 编码。本模块的解析规则有意比 Three.js 的 CSS 解析器更严格：Three.js 还接受 `#RGB`、颜色名、`rgb()`/`hsl()` 和百分数；本模块只接受 6 位 hex，不得为了“贴近 Three.js”而放宽 `parseHex`。
+- 差分测试使用与标准 sRGB 公式相称的严格浮点容差，并应足以发现公式、分支阈值或字节编码错误；容差不应放宽到掩盖实现错误。具体容差和扫描范围属于测试实现，不是本领域接口契约。
 - 生产代码不得导入 Three.js。
 
 **依赖**：util/result。

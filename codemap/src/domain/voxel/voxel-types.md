@@ -9,6 +9,8 @@
 - `CommandScope`：`keys | color | bounds | all | visible | hidden | slice-y` 的可辨识联合；禁止携带谓词函数。
 
 **内部**：
+- `VoxelKey` 与 `ColorHex` 的唯一 owner 分别是 `util/packed-int`、`util/color`；本模块只可显式 re-export，不得重新声明同形类型。`VoxelColor` 是领域别名 `ColorHex`。
+- `GridPosition`、`Bounds3i` 的唯一 owner 是本模块；不得别名到 `util/math` 的 `Vec3`、`Aabb`，两者分别表达整数体素坐标/闭区间和通用浮点数学值。
 - 坐标必须是安全整数；所有范围均为闭区间。空范围用 `isEmpty` 表示，不把 `Infinity` 写入持久化数据。
 - 颜色在进入领域层时规范化为大写 `#RRGGBB`；颜色比较按规范化字符串精确比较。颜色同时承担“颜色组/层”的身份，不另建持久化 Group ID。
 - `visible` 只控制编辑与渲染可见性，不删除体素；隐藏体素仍属于文档、包围盒和优化邻域判断。
