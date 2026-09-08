@@ -1,0 +1,7 @@
+# Important Global Constraints
+
+- `math.ts` does not use `Result`.
+
+# Future Work
+
+- Property-based testing: evaluate and introduce `fast-check` after the Batch A APIs have stabilized.
