@@ -107,7 +107,7 @@ const fallback = unwrapOr(err({ code: "missing" }), 0);
 
 ## unwrap 边界
 
-- Batch A 不提供会抛异常的 `unwrap()`。
+- 不提供会抛异常的 `unwrap()`。
 - 调用方使用 `unwrapOr()`，或显式判断 `result.ok`。
 - 这是为了避免绕过错误处理，不是全面禁止 `throw`。
 - 如果后续确有高频使用场景，可以重新评估提供 `unwrap()`；届时它必须抛出专用 `Error` 子类，不能直接抛出 `E`。

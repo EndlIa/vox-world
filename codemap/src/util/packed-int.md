@@ -195,7 +195,7 @@ export type PackedIntError =
 - 不读取全局状态。
 - 不修改输入。
 - 不缓存或持有全局 `Map`。
-- 不依赖 DOM、Worker、Three.js 或持久化 API。
+- 不依赖平台 API（DOM、Worker、持久化）。
 - 不使用字符串拼接生成体素键。
 
 **依赖**：`util/result`。

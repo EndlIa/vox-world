@@ -64,6 +64,26 @@ util ──────────────→ util
 - 不削弱 `tsconfig.json` 中的严格 TypeScript 设置，不通过无约束的 `any` 或强制类型断言绕过类型检查。
 - `Result` 的具体契约见 `codemap/src/util/result.md`；全局例外见 `IMPORTANT`。
 
+## 类型所有权
+
+公共类型必须有唯一 owner；其他模块只能 `import type` 或显式 re-export，不得声明同形副本。当前已落地的稳定契约如下：
+
+| 类型 | 唯一 owner | 边界 |
+| --- | --- | --- |
+| `Result` | `util/result` | 所有层的可恢复失败容器 |
+| `ColorHex`、`Rgb`、`LinearRgb`、`ColorParseError`、`ColorChannelError`、`ColorScalarError`、`ColorError` | `util/color` | 无 alpha 的领域颜色及错误 |
+| `VoxelKey`、`PackedIntError` | `util/packed-int` | 16-bit 体素坐标打包键及错误 |
+| `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值 |
+
+类型收敛规则：
+
+- 只有出现在跨模块公共签名或稳定边界契约中的类型才导出；模块内部辅助类型保持私有。
+- `Rgb` 与 `LinearRgb` 虽同形，但分别表示 sRGB 8-bit 和线性 sRGB，禁止合并。
+- `Vec3` 与领域 `GridPosition`、`Aabb` 与领域 `Bounds3i` 语义不同，禁止互相别名或合并。
+- `VoxelKey`、`ColorHex` 只能由 `util/packed-int`、`util/color` 定义；domain 只能 re-export，`VoxelColor` 只能作为 `ColorHex` 的领域别名。
+- 跨模块的公开数据使用只读普通对象/数组；本项目的 `readonly` 是编译期约束，不依赖 `Object.freeze`，但不得把所有权状态对象或其底层 `Map`/`Set` 暴露给其他模块。
+- 序列化边界必须在输入侧接收 `unknown` 并做运行时校验；TypeScript brand 不提供运行时保证。
+
 ## 契约维护
 
 实现、测试和对应契约必须在同一次改动中保持同步。出现以下变化时，应更新相关契约：
