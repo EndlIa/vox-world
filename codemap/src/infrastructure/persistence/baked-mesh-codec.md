@@ -25,15 +25,17 @@ BakedMeshManifestV1 {
   };
   visible: boolean;
   source: {
+    scope: "scene" | "object";
+    objectId?: string;
     mode: "all" | "color" | "colors" | "islands";
-    sourceDocumentVersion: number;
+    sourceSceneVersion: number;
     color?: "#RRGGBB";
     islandConnectivity?: 6 | 26;
   };
 }
 ```
 
-项目文档保存 manifest 数组；几何和材质 bytes 通过 `geometryAssetId`/`materialAssetId` 存入 repository。名称 trim 后非空，空名称拒绝并保留旧名称；重复名称在 manifest 写入前确定性添加 `_2`、`_3`，选中身份仍使用 `id`，不能依赖名称。
+项目文档保存 manifest 数组；几何和材质 bytes 通过 `geometryAssetId`/`materialAssetId` 存入 repository。`scope = "object"` 时必须提供存在的 `objectId`；`scope = "scene"` 时不得提供。名称 trim 后非空，空名称拒绝并保留旧名称；重复名称在 manifest 写入前确定性添加 `_2`、`_3`，选中身份仍使用 `id`，不能依赖名称。
 
 ## 资产 DTO
 
@@ -90,8 +92,8 @@ TextureAssetRef {
 
 ## 版本、原子性与配额
 
-- 未知更高 asset/manifest 版本返回 `UNSUPPORTED_VERSION`，不得部分解码。
+- 非当前 asset/manifest 版本返回 `UNSUPPORTED_VERSION`，不得迁移或部分解码。
 - 解码先验证数组长度、index 范围、有限数值、alpha/metalness/roughness 范围和纹理引用，再创建运行时资源。
-- 保存顺序为：写入新资产 → 校验读回 → 原子提交项目 manifest → 回收旧资产。失败保留旧项目，临时资产必须删除。
+- 保存顺序为：写入新资产 → 校验读回 → 原子提交项目 manifest → 回收旧资产。失败保留原项目，临时资产必须删除。
 - 资产字节使用实际 byte 配额，不适用 localStorage UTF-16 口径。容量不足返回 `QUOTA_EXCEEDED`，不能丢弃部分 Mesh 后仍报告项目保存成功。
 - 加载项目时，只有 manifest 与所有引用资产都完整且校验通过才提交 Bake Mesh；缺失资产返回 `MISSING_BAKED_MESH_ASSET`，不得静默把 Mesh 删除后覆盖项目。

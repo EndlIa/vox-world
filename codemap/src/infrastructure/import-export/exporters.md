@@ -13,10 +13,10 @@
 
 | format | scope | 几何 | 顶点色 | 材质/纹理 | 关键限制 |
 | --- | --- | --- | --- | --- | --- |
-| `vox` | Raw Voxels | 体素 | 调色板颜色 | 无 | MagicaVoxel VOX 200；256 色槽；坐标 0..255 |
-| `obj_raw` | Raw Voxels | 可见/隐藏体素的表面几何 | 无 | 无 | OBJ 文本；不表达 PBR |
-| `stl_raw` | Raw Voxels | 表面几何 | 无 | 无 | 几何 only；默认 ASCII，可请求 binary |
-| `ply_raw` | Raw Voxels | 表面几何 | 可写顶点色 | 无纹理引用 | 不保留材质图 |
+| `vox` | Active Object Raw | 体素 | 调色板颜色 | 无 | MagicaVoxel VOX 200；256 色槽；坐标 0..255 |
+| `obj_raw` | Active Object/Scene Raw | 可见/隐藏体素的表面几何 | 无 | 无 | OBJ 文本；不表达 PBR |
+| `stl_raw` | Active Object/Scene Raw | 表面几何 | 无 | 无 | 几何 only；默认 ASCII，可请求 binary |
+| `ply_raw` | Active Object/Scene Raw | 表面几何 | 可写顶点色 | 无纹理引用 | 不保留材质图 |
 | `glb` | Baked All/Selected | 完整 mesh | 支持 | PBR scalar + maps | 单文件二进制 |
 | `gltf` | Baked All/Selected | 完整 mesh | 支持 | PBR scalar + maps | 单文件 JSON，资源必须内嵌 data URI |
 | `obj` | Baked All/Selected | 完整 mesh | 受 OBJ 能力限制 | 不保证 MTL/纹理 | 只保证几何、UV 可用性 |
@@ -31,9 +31,10 @@ Baked Mesh 导出前必须存在至少一个 Baked Mesh。`selected` scope 未�
 ExportRequest {
   format: "vox" | "obj_raw" | "stl_raw" | "ply_raw" |
           "glb" | "gltf" | "obj" | "stl" | "ply";
-  scope: "rawVoxels" | "bakedAll" | "bakedSelected";
+  scope: "activeObjectRaw" | "sceneRaw" | "bakedAll" | "bakedSelected";
   fileName: string;
-  documentVersion: number;
+  objectId?: VoxObjectId;
+  sceneVersion: number;
   selectedMeshId?: string;
   options: {
     binaryStl?: boolean;
@@ -44,24 +45,24 @@ ExportRequest {
 }
 ```
 
-`fileName` 去除路径分隔符和非法字符；空值回退为 `untitled`。导出必须基于开始时捕获的不可变快照，不允许在异步过程中读取正在变化的 VoxelDocument 或 mesh pool。
+`fileName` 去除路径分隔符和非法字符；空值回退为 `untitled`。`activeObjectRaw` 必须提供 `objectId`。导出必须基于开始时捕获的不可变 `SceneSnapshot`/对象局部快照，不允许在异步过程中读取正在变化的 SceneDocument 或 mesh pool。
 
 ## VOX 导出
 
-**本重构必须补齐**：`vox` 只导出 Raw Voxels，不从 Baked Mesh 反向重建体素。
+**本重构必须补齐**：`vox` 只导出指定 `VoxObject` 的局部 Raw Voxels，不从 Baked Mesh 反向重建体素，也不跨对象合并。
 
 - 输出 MagicaVoxel VOX 200，包含 `MAIN`、`SIZE`、`XYZI`、`RGBA` 块。
 - 尺寸映射为 `SIZE = { x: dim.x, y: dim.z, z: dim.y }`；每个体素先按文档包围盒中心平移，再映射为 `x = adjustedX + dim.x / 2`、`y = -adjustedZ + dim.z / 2`、`z = adjustedY + dim.y / 2`。
 - 颜色按 RGBA 去重；按 shithill 的调色板映射保留索引 0 和首个占位项，真实去重颜色从 2 开始，剩余槽填 `(0,0,0,255)`，RGBA 块始终写出 256 项。
 - 坐标必须落在 0..255；超过 255 或唯一颜色超过 255 返回 `VOX_CAPACITY_EXCEEDED`，不得截断、取模或丢体素。
-- 空文档返回 `EMPTY_EXPORT`。VOX 不表达体素可见性；为保持 shithill 行为，文档中的隐藏体素仍写出为普通体素。
-- 写入前先从当前只读文档快照重建体素缓冲，保证颜色与位置一致；不使用 Baked Mesh 的材质。
+- 空对象返回 `EMPTY_EXPORT`。VOX 不表达体素可见性；为保持 shithill 行为，对象中的隐藏体素仍写出为普通体素。
+- 写入前先从目标 `VoxObject` 的只读局部快照重建体素缓冲，保证颜色与位置一致；不使用 Baked Mesh 的材质。
 
 ## STL 导出
 
 **本重构必须补齐**：STL 同时支持 Raw Voxels 与 Baked Mesh，但只输出三角几何。
 
-- `stl_raw` 从 Raw Voxels 生成表面三角；`stl` 从 Baked All/Selected 生成三角。
+- `stl_raw` 从 Active Object 或 Scene Raw 快照生成表面三角；`stl` 从 Baked All/Selected 生成三角。Scene Raw 必须应用每个对象的节点世界变换。
 - 默认 ASCII STL，与现有 vendored `STLExporter` 路径一致；`binaryStl: true` 输出二进制 STL。
 - 不导出颜色、PBR 参数、纹理、对象名称或层级；这些信息丢失必须在 UI 中提示。
 - Baked Mesh 的 position、rotation/quaternion、scale 必须应用为相同世界变换。不能只应用 position，也不能把 selected 与 all 变换语义分开处理。

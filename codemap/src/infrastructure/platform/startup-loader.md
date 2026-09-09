@@ -6,7 +6,7 @@
 
 **内部**：
 - 仅当 runtime 为本地、非 hosted 且 `pref_user_startup` 为真时读取 `user/startup.json`；默认新建项目，读取/解析失败时保留默认项目并给出通知。
-- `user/startup.json` 的字节交给 ProjectService/legacy-voxel-codec 做版本迁移和校验，loader 不自行理解体素字符串、相机动画或渲染字段。
+- `user/startup.json` 的字节交给 ProjectService/project-codec 做当前格式解码和严格校验，loader 不自行理解场景结构、对象局部体素字符串、相机动画或渲染字段。
 - `user/module.js` 只能在编辑器 ready 后动态导入；hosted 模式、语法错误、import 失败或 `activate` 抛错都必须隔离，主应用继续运行。
 - 用户模块使用显式 `UserModuleContext`：只暴露 editor handle、actions、服务端口和 runtime config；禁止依赖全局 `scene`、直接改状态对象或绕过命令/端口。
 - 模块可导出 `activate(context)` 与 `deactivate(context)`；dispose 必须按加载顺序逆序调用并等待可等待的清理。
@@ -16,4 +16,3 @@
 **边界**：不实现项目编解码、不实现 import/voxelization、不执行 TRELLIS2；不把 `user/module.js` 当配置覆盖机制。
 
 **依赖**：runtime-config、preferences、project-service、platform-port。
-

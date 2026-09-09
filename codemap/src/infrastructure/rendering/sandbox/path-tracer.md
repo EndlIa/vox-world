@@ -10,7 +10,7 @@
 
 **内部**：
 - 创建 `WebGLPathTracer` 时设置 `bounces = 1`、`renderDelay = 100`、`fadeDuration = 250`、`minSamples = 1`、`renderToCanvas = true`、初始纹理尺寸 `512x512`、初始 tiles `1x1`、`dynamicLowRes = true`、`lowResScale = 0.5`。
-- 规范化设置必须覆盖 `samples`、`bounces`、`renderScale`、`tiles`：默认分别为 `512`、`1`、`0.8`、`4`；`samples` 最小 `8` 且按整数接受，`bounces >= 1`，`tiles >= 1`，`renderScale` 限制在 `0.1..1`。旧项目字段 `render.dpr` 映射为 `renderScale`，不得产生两个独立设置所有者。
+- 规范化设置必须覆盖 `samples`、`bounces`、`renderScale`、`tiles`：默认分别为 `512`、`1`、`0.8`、`4`；`samples` 最小 `8` 且按整数接受，`bounces >= 1`，`tiles >= 1`，`renderScale` 限制在 `0.1..1`。项目只使用 `renderScale`，不得产生两个独立设置所有者。
 - 每次只调用一次 `renderSample()`，由统一调度器按帧推进；不得在模块内另建长期动画循环。达到 `samples` 后停止采样但保留最终图像，重新开始前必须 `reset()`。
 - `configure` 变更 samples、bounces、renderScale 或 tiles 后必须重置累积采样并重新创建/更新 PathTracer 状态；相机、环境、灯光、材质或场景变化分别调用对应 `update*`，不得整场景无条件重建。
 - `pause()` 保留已积累的样本和进度；`resume()` 从当前样本继续；`stop()` 停止采样并把进度归零；`reset()` 清空 GPU 累积缓冲但保留场景、相机和设置。暂停状态在窗口隐藏、Sandbox 停用和 context lost 时保持可恢复。

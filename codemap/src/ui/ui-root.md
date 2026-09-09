@@ -2,7 +2,7 @@
 
 **职责**：挂载整套 DOM UI，建立 view model 订阅、动作分发和所有 UI 控制器的作用域。
 **接口**：mount(rootElement, viewModel, actions): UiHandle；unmount(handle)；flush()；dispose()。
-**内部**：先校验 DOM 契约，再创建 PanelManager、Controls、PalettePanel、HoverOverlay 和 Bindings；只持有 UI 控制器及 DOM 生命周期，不访问 Three.js、VoxelDocument、Selection、TransformSession 或其他可变领域对象。
+**内部**：先校验 DOM 契约，再创建 PanelManager、Controls、PalettePanel、HoverOverlay 和 Bindings；只持有 UI 控制器及 DOM 生命周期，不访问 Three.js、SceneDocument、EditorState、Object/Voxel Selection、TransformSession 或其他可变领域对象。
 **依赖**：ui/dom-contract、ui/panels、ui/controls、ui/palette-panel、ui/hover-overlay、ui/bindings、ui/editor-view-model、ui/actions。
 
 ## 挂载契约

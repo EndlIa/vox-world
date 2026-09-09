@@ -1,7 +1,7 @@
 # pointer-router.ts
 
 **职责**：把 DOM 指针事件转换为稳定的画布/UI 语义输入，管理单指针编辑会话与 pointer capture 生命周期，并在编辑、导航和 DOM 控件之间做互斥路由。
-**接口**：attach(options: PointerRouterOptions): PointerRouterHandle；detach()；setActiveTool(toolId)；suspendEditing(reason)；resumeEditing()；capturePointer(pointerId)；releasePointer(pointerId, reason)；cancelPointer(pointerId, reason)；activePointers()；cancelAll(reason)。
+**接口**：attach(options: PointerRouterOptions): PointerRouterHandle；detach()；setActiveTool(toolId)；setEditorMode(mode)；suspendEditing(reason)；resumeEditing()；capturePointer(pointerId)；releasePointer(pointerId, reason)；cancelPointer(pointerId, reason)；activePointers()；cancelAll(reason)。
 **内部**：只监听 DOM Pointer/Wheel 事件，维护 `PointerSample` 和活动指针表；通过注入的 `ToolInputPort` 调用工具生命周期，通过 `InputIntentSink` 发出动作，不直接修改工具、相机、状态或领域对象。
 **依赖**：DOM Pointer/Wheel Events、application/tools/tool、application/editor-session 的输入端口、ui/actions 的纯意图类型、由 app 注入的 InputCoordinationPort/NavigationOwnership 端口、util/disposable。
 
@@ -35,6 +35,7 @@ type PointerSample = {
 - `gestureId` 在一次 `pointerdown` 成功路由时生成，并在对应的 up/cancel 中保持不变。合成事件、`pointercancel` 和重复 up 不得生成第二个编辑手势。
 - 路由到 `ToolPointerEvent` 时至少保留 pointer id、button、buttons、坐标、modifiers、phase 和 gestureId；额外的压力/时间信息只作为只读元数据，不能迫使工具依赖 DOM 类型。
 - 每个事件在进入路由前调用一次 `normalize`；pointermove 若浏览器提供 `getCoalescedEvents()`，只使用最后一个有效样本更新状态，避免一次事件重复提交多次编辑。
+- Object 模式的 canvas 指针只可进入对象选择/对象变换/对象可见性工具；Edit 模式只可进入活动对象的体素工具。模式切换时立即取消 Draft、预览和 pointer capture，不能把手势迁移到另一模式。
 
 ## 命中优先级
 

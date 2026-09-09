@@ -12,7 +12,7 @@
 | 数据类型 | 后端 | 写入语义 |
 | --- | --- | --- |
 | 项目文档 | IndexedDB、文件系统、Electron | 原子替换，成功后产生新版本 |
-| Quick Save | localStorage | 覆盖 `vbstore_voxels`，失败保留旧值 |
+| Quick Save | localStorage | 覆盖 `vox-world.quick-save`，失败保留旧值 |
 | 命名 Snapshot | localStorage | 槽位记录与缩略图成组提交或整体回滚 |
 | Snapshot 归档 | Blob/文件系统 | 全部内容生成成功后才暴露下载/落盘句柄 |
 | Bake Mesh manifest | 项目文档 | 与项目版本一起提交 |
@@ -50,7 +50,7 @@ RepositoryCapabilities {
 }
 ```
 
-`saveAtomic` 必须先完成序列化、校验和容量预检，再替换可见记录。localStorage 无法提供真正事务时，实现必须读取旧记录，按“移除旧值 → 写新值 → 失败时恢复旧值”的顺序提交；任何 `QuotaExceededError`、序列化失败或平台 I/O 失败都不能报告成功。
+`saveAtomic` 必须先完成序列化、校验和容量预检，再替换可见记录。localStorage 无法提供真正事务时，实现必须读取原记录，按“移除原值 → 写新值 → 失败时恢复原值”的顺序提交；任何 `QuotaExceededError`、序列化失败或平台 I/O 失败都不能报告成功。
 
 ## 原子写入与回滚
 
@@ -70,6 +70,6 @@ RepositoryCapabilities {
 ## 生命周期与版本
 
 - 每个 namespace 记录包含独立版本；项目文档版本由 `project-codec` 决定，repository 只保证字节/文档原样读写。
-- 读取未知更高版本时返回 `UNSUPPORTED_VERSION`，不得尝试猜测或截断数据。
+- 读取非当前版本时返回 `UNSUPPORTED_VERSION`，不得尝试猜测、迁移或截断数据。
 - 删除项目时同时清理仅被该项目引用的 Bake Mesh 资产；共享资产按引用计数延迟回收。
 - `supports()` 必须明确区分项目文档、localStorage snapshot、二进制资产和原子 rename 能力，调用方不得假设所有后端能力相同。

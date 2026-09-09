@@ -1,7 +1,7 @@
 # actions.ts
 
 **职责**：定义 UI 可以发出的类型化用户意图及其参数校验边界。
-**接口**：tool.select、command.dispatch、history.undo/redo、selection.delete、project.*、file.*、panel.*、camera.*、animation.*、palette.*、colorPicker.*、confirm.respond、notification.dismiss、debug.toggleInspector。
+**接口**：editor.setMode、object.select、object.create、object.delete、object.rename、object.setVisibility、object.transform、tool.select、command.dispatch、history.undo/redo、selection.delete、project.*、file.*、panel.*、camera.*、animation.*、palette.*、colorPicker.*、confirm.respond、notification.dismiss、debug.toggleInspector。
 **内部**：动作是纯数据描述，不包含 DOM、Three.js、持久化或命令执行实现；调用方只把 action 交给 editor-session/UI controller。
 **依赖**：application/editor-session、ui/editor-view-model。
 
@@ -9,11 +9,13 @@
 
 ### 工具与编辑
 
+- `editor.setMode(mode)`：在 object/edit 之间切换；Edit 模式必须已有选中对象，切换前由应用层处理未完成的 XFORM。
+- `object.select(objectId)`、`object.create(options)`、`object.delete(objectId)`、`object.rename(nodeId, name)`、`object.setVisibility(objectId, visible)`、`object.transform(...)`：只作用于 Object 模式。
 - `tool.select(toolId, options?: { temporary?: boolean })`：切换工具；不可用工具不得激活。`temporary` 只用于 Space/Alt 等按住式相机模式，应用层负责记录和恢复原工具。
 - `command.dispatch(command)`：发送不可变命令数据。
 - `history.undo()` / `history.redo()`。
 - `transform.apply()` / `transform.cancel()` / `transform.deleteSelection()`。
-- `selection.delete()`：删除当前 voxel/mesh 选择；由应用层按上下文解析，UI/输入层不自行判断选择类型。
+- `selection.delete()`：Edit 模式删除活动对象的体素选择；Object 模式删除选中对象。由应用层按 EditorState 解析，UI/输入层不自行判断选择类型。
 - `symmetry.nextAxis()`：按稳定顺序切换对称轴。
 
 ### 面板与布局
