@@ -1,6 +1,6 @@
 # panels.ts
 
-**职责**：注册并管理场景 Outliner、对象属性、工具箱、调色板、项目/File/Storage、相机、渲染、建模、PBR、导出和动画面板的显示、拖拽、层级、最小化和恢复。
+**职责**：注册并管理场景 Outliner、对象属性、工具箱、调色板、项目/File/Storage、相机、通用动画、渲染、建模、PBR 和导出面板的显示、拖拽、层级、最小化和恢复。
 **接口**：mount(root, viewModel, actions): PanelManager；register(descriptor)；open/close/toggle(key)；minimize/restore(key)；reset(key)；resetAll()；bringToFront(key)；update(snapshot)；dispose()。
 **内部**：每个面板只消费 view model 并发出 actions；面板控制器之间不互相调用，不直接访问应用状态、Three.js 或领域对象。
 **依赖**：ui/editor-view-model、ui/actions、ui/dom-contract、ui/palette-panel、DOM。
@@ -22,7 +22,7 @@ type PanelDescriptor = {
 ```
 
 - `key` 是稳定语义键，不随显示文案改变。
-- `toolbar_btn_<key>` 是恢复入口；`menu-<key>` 是对应面板。动画面板例外，使用 `#camera-animation-panel` 和 `#toolbar_btn_animation`。
+- `toolbar_btn_<key>` 是恢复入口；`menu-<key>` 是对应面板；动画面板使用标准的 `#toolbar_btn_animation` -> `#menu-animation` 映射。
 - 所有面板节点必须带 `.panel`，菜单面板同时带 `.menu`；结构、标题和控件仍以 HTML 契约为准。
 - 面板注册时不得自行添加第二套 drag listener、全局 z-index 或独立最小化状态。
 - Trellis 面板及其 mask 控件不在本模块设计范围内。
@@ -95,10 +95,21 @@ type PanelDescriptor = {
 - 面板必须区分“尚未保存”“正在保存”“保存失败”和“已保存”状态，并通过 view model 更新。
 - 导入相关的格式解析、体素化和业务分支不在本面板模块内。
 
-### 相机与动画面板
+### 相机面板
 
 - 相机面板提供投影切换、六面预设、Frame All/Color/Voxels/Island、FOV/F-Stop/Focal、Auto Rotate 等控件。
-- 动画面板提供 Duration、时间轴、Add Keyframe、Play/Pause、Loop、Follow Camera、Show Camera Path、Camera Control 参数和 Camera/View 双向同步控件。
+
+### 通用动画面板
+
+- 动画面板以 track 为单位展示 camera target 和 SceneNode target，显示稳定 `target`、`channel`、`trackId` 与关键帧摘要；node channel 为 `position | rotation | scale`，camera channel 为 `position | rotation | fov`。UI 不得把 target 显示成对象内部体素或运行时节点实例。
+- 通用时间轴提供 Duration、Loop、Play/Pause/Stop、Seek、Add/Delete Track 和 Add/Delete/Move Keyframe；所有操作携带 `trackId`、`keyframeId`、`target`、`channel` 等稳定数据，不使用列表索引或名称绑定。
+- Add Keyframe 只从选中 track 的作者态来源取值：camera track 使用 Camera Control，SceneNode track 使用节点当前基础局部变换。只要播放状态不是 stopped 或仍存在 Node/Camera override，编辑 Duration/Loop/Track/Keyframe 前就必须由应用层先执行 `stopPlaybackAndClearOverride()`，禁止把 evaluated override 写回作者数据。
+- Follow Camera、Show Camera Path、Camera Control 参数和 Camera/View 双向同步只对 camera target 显示或启用；SceneNode target 仍使用同一时间轴和播放控件，但不得出现“相机动画”专用文案。
+- 动画面板显示播放状态但明确区分项目动画数据与 Node/Camera 运行时 override；关闭/重新打开面板只影响 UI 可见性，不创建第二份播放状态，切换项目或进入编辑/XFORM 必须停止播放并清除 override。
+- Duration/Loop/Track/Keyframe 编辑更新项目动画文档并推进项目 dirty，不修改 `SceneDocument.version`，也不进入 V1 场景 History；UI 不得显示可用的场景 undo/redo 来暗示动画可撤销。
+
+### 动画渲染区
+
 - 渲染区提供 Width、Height、FPS、Format、Start/End Frame、Transparent、Prefix、Render Animation 和 Cancel；UI 只负责收集选项和展示状态，离线渲染由 application/renderer 执行。
 - 所有时间、帧范围和数值输入在 action 边界校验；非法值显示字段错误或通知，不直接修改动画数据。
 - 面板布局需保证参数 label 和数值输入可见；动画面板的 z-index 默认高于普通面板、hover 和普通菜单。

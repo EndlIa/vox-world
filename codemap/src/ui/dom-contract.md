@@ -15,7 +15,7 @@
 ## ID 约定
 
 - `toolbar_btn_<key>`：面板恢复入口。
-- `menu-<key>`：普通浮动菜单面板；`camera-animation-panel` 是动画面板的稳定例外。
+- `menu-<key>`：普通浮动菜单面板；动画面板使用 `menu-animation`，不再保留相机专用例外。
 - `btn_action_*`：一次性动作或命令。
 - `btn_tool_*`：工具选择。
 - `input-*`：面板内数值、文本、颜色、复选框等控件。
@@ -72,7 +72,7 @@
 | `bakery` | `#menu-bakery` | model |
 | `pbr` | `#menu-pbr` | render |
 | `export` | `#menu-export` | export |
-| `animation` | `#camera-animation-panel` | model |
+| `animation` | `#menu-animation` | model |
 
 Trellis 面板及其 mask 控件不在本次契约设计范围内。
 
@@ -93,7 +93,7 @@ Trellis 面板及其 mask 控件不在本次契约设计范围内。
 | `.help` | 可折叠帮助文本 |
 | `.demo-mode` | 演示模式根标记 |
 
-新增可编程行为优先使用 `data-action`、`data-tool-id`、`data-panel-key`、`data-field`，不要让选择器依赖可见文案。
+新增可编程行为优先使用 `data-action`、`data-tool-id`、`data-panel-key`、`data-field`，不要让选择器依赖可见文案。动画列表/时间轴还必须使用 `data-track-id`、`data-keyframe-id`、`data-target-kind`、`data-channel` 传递稳定身份；不得把节点名称或 DOM 顺序当作绑定数据。
 
 ## CSS token
 
@@ -139,7 +139,7 @@ Trellis 面板及其 mask 控件不在本次契约设计范围内。
 `validate(root)` 必须检查：
 
 - 必需 ID 存在且全局唯一。
-- 面板 key 与 toolbar 按钮一一对应，动画面板例外正确映射。
+- 面板 key 与 toolbar 按钮一一对应；动画面板必须解析到 `#toolbar_btn_animation` 和 `#menu-animation`。
 - 所有 `openfile_*` 的 accept/multiple 与注册表一致。
 - 所有 `label[for]` 指向存在的控件。
 - CSS token 可从 `:root` 读取。
