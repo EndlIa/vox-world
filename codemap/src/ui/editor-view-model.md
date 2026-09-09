@@ -18,12 +18,13 @@
 - `activeTool`、`toolSettings`、`toolAvailability`。
 - `voxelSelection`、`objectTransformSession`、`voxelTransformSession` 的只读摘要和版本号。
 - `project`：名称、dirty 状态、最近保存时间。
-- `history`：undo/redo 可用性。
+- `history`：场景 `ScenePatch` 的 undo/redo 可用性；动画轨道/关键帧编辑不进入 V1 场景 History，不能通过该状态暗示动画可撤销。
 - `progress`：当前任务、已完成/总量、可取消性。
 - `notifications`：当前可见通知或通知事件序列。
 - `palette`：唯一颜色、隐藏颜色、列数和当前颜色。
 - `camera`：透视/正交、FOV、F-Stop、焦距、自动旋转和 framing 状态。
-- `animation`：关键帧摘要、时长、播放/暂停、当前时间、Follow Camera、路径可见性、Camera Control 状态。
+- `animation`：时长、循环、播放状态、当前时间、是否存在 Node/Camera 运行时 override、选中 `trackId`/`keyframeId`、track 摘要和离线渲染状态。每条 track 摘要至少包含稳定 `trackId`、`target`、`channel`、关键帧数量及排序后的时间摘要；`target` 为 `{ kind: 'node', nodeId }` 或 `{ kind: 'camera' }`，channel 按目标限制为 node `position | rotation | scale`、camera `position | rotation | fov`。
+- `animation.cameraControls`：仅 camera target 可用的 Follow Camera、Camera Path、Camera Control 和 Camera/View 同步状态；SceneNode target 不得依赖这些相机专用字段。
 - `export`：格式、选中/全部、纹理选项、可用格式和当前任务状态。
 - `fileActions`：可由 UI 触发的打开/保存/导出 descriptor。
 
@@ -32,6 +33,7 @@
 - 快照必须深冻结或至少保证调用方无法修改其中的应用对象；嵌套对象按需复制。
 - 相同版本重复 `sync` 必须无副作用；每个字段带单调递增的 `version` 或整体版本号。
 - 不把 DOM 节点、Three.js 对象、Map/Set 的可变引用或命令处理器暴露给 UI。
+- 动画快照只暴露稳定身份和只读摘要；SceneNode track 的 `nodeId` 可以关联场景摘要中的名称，但 UI 不得持有节点实例或直接把运行时 override 当作作者态变换。
 - 大量数据如体素列表不进入 UI 快照；面板只接收计数、颜色集合摘要或分页数据。
 - UI 局部状态不属于该 view model，包括面板位置、焦点、拖拽、hover 展开状态和颜色选择器的临时颜色。
 
@@ -57,6 +59,8 @@ type NotificationEvent = {
 ```
 
 通知显示、替换和计时由 `ui/controls.ts` 拥有；view model 只描述事件，不直接操作 DOM。
+
+节点删除或场景 undo/redo 因动画引用被拒绝时，应用层发出 `node-referenced-by-animation` 错误通知，并在 payload/消息中列出相关 `trackId`；view model 不自动删除轨道，也不把错误降级成静默失败。
 
 ## 依赖方向
 

@@ -38,7 +38,7 @@ Project
   │     ├── SceneNode（层级与变换）
   │     └── VoxObject（局部体素网格）
   ├── Camera / Render settings
-  └── CameraAnimation
+  └── AnimationDocumentV1
 
 SceneNode
   ├── id / parentId / childIds
@@ -63,6 +63,16 @@ VoxObject
 - 进入 Edit 模式、退出 Edit 模式、切换活动对象和删除活动对象时，必须显式清理或取消不适用的体素 Selection/XFORM 状态。
 
 `ObjectSelection` 是对象选择的唯一可变所有者；`EditorState` 只保存模式和活动对象，不复制 `selectedObjectId`。进入 Edit 模式时由 Scene Command Handler 原子同步两者，退出 Edit 后保留对象选择。
+
+### 动画模型
+
+- `AnimationDocumentV1` 是项目级唯一动画文档，包含一个共享时间轴和若干轨道；Camera 轨道与 SceneNode 轨道使用同一求值器。
+- Node 轨道绑定稳定 `SceneNodeId`，只驱动该节点相对父节点的 `position`、`rotation`、`scale`；父子矩阵组合负责得到世界变换。
+- Camera 轨道驱动 `position`、`rotation`、`fov`。相机不是 SceneNode，不参与场景层级。
+- `SceneSnapshot` 只保存作者设置的节点基础变换；动画求值产生只读 `AnimationEvaluation`。Renderer 使用“作者态 + 运行时 override”的有效节点/相机状态，播放不得写回 `SceneDocument`、相机作者态或项目数据。
+- 开始播放前必须先清除残留 override；停止播放、加载项目、恢复 Snapshot、进入编辑/XFORM、删除被引用节点或 context restore 时必须调用 `stopAndClearOverride()`，恢复 Node/Camera 作者态。
+- Reparent 保留 `nodeId`；Node 轨道继续绑定同一节点，并解释为新父空间中的局部变换。根节点变换固定，不能成为动画目标。轨道不得引用不存在的节点；删除被动画引用的节点在 V1 必须失败，先删除相关轨道。
+- Duration、Loop、Track 和 Keyframe 编辑是项目数据变更，推进 `ProjectService.projectVersion` 并置 dirty；播放时钟、播放状态和 Node/Camera 求值 override 只存在于运行时，不进入项目、History 或 `SceneDocument.version`。
 
 ### 坐标与可见性
 
@@ -121,6 +131,8 @@ util ──────────────→ util
 | `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值 |
 | `SceneNodeId`、`VoxObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`VoxObjectSnapshot`、`SceneSnapshot`、`ObjectVoxelRef` | `domain/scene/scene-types` | 场景图、对象身份和对象局部体素引用 |
 | `ScenePatch`、`ScenePatchOp` | `domain/scene/scene-patch` | 场景级可逆补丁 |
+| `AnimationDocumentV1`、`AnimationTrackV1`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |
+| `AnimationPreviewPort`、`AnimationSessionPort`、`AnimationApplyPort`、`AnimationOutputWriter`、`AnimationOutputMetadata`、`AnimationOutputResult` | `application/ports/animation-port` | 应用层动画预览/会话、运行时求值应用与离线输出契约 |
 
 类型收敛规则：
 

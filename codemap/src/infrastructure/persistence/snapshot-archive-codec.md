@@ -35,13 +35,13 @@ SnapshotArchiveManifestV1 {
 
 ## 条目 DTO
 
-条目正文直接使用 `project-codec` 的 `SnapshotProjectEntry`，不在归档层另造平行 DTO。每个条目的 `data.scene` 必须包含完整多对象场景，`cameraAnimation` 必须存在且版本为 `1`。归档条目不写 camera/render 设置或 Bake Mesh。
+条目正文直接使用 `project-codec` 的 `SnapshotProjectEntry`，不在归档层另造平行 DTO。每个条目的 `data.scene` 必须包含完整多对象场景，`animation: AnimationDocumentV1` 必须存在且版本为 `1`，并使用该条目自己的 `data.scene` 完成文档内轨道 ID 唯一、单轨关键帧 ID 唯一、每轨至少一个关键帧、`durationMs` 为有限数且 `> 0`、同一 `target` + `channel` 唯一、节点目标存在且非根以及关键帧规则校验。归档条目不写 camera/render 设置或 Bake Mesh；旧 `cameraAnimation` 字段一律拒绝，不迁移或兼容旧格式。
 
 ## 写出与校验
 
 - `encodeArchive` 先构造并校验全部 manifest 与条目，再一次性生成 ZIP；任一槽位失败都不返回部分 Blob。
 - 缩略图存在时必须是 `data:image/png;base64,...` 或 `data:image/jpeg;base64,...`，尺寸和字节上限由 Snapshot 服务传入；缺失缩略图不阻止数据备份。
-- `inspectArchive` 校验 ZIP 可读、`manifest.json` 存在且版本为 `1`、槽位范围 0..99、文件名唯一、条目长度/校验和、JSON 结构、场景节点/对象引用及每个对象的局部 voxel 字符串语法。
+- `inspectArchive` 校验 ZIP 可读、`manifest.json` 存在且版本为 `1`、槽位范围 0..99、文件名唯一、条目长度/校验和、JSON 结构、场景节点/对象引用、`AnimationDocumentV1` 的完整文档与节点引用规则，以及每个对象的局部 voxel 字符串语法。
 - `decodeLocalBackup` 只服务本地备份恢复。它必须完整解码并校验所有当前格式条目后返回完整批次；不能边解析边写 localStorage。
 - 外部用户选择的 ZIP、第三方兼容导入和覆盖合并策略明确属于 import，本模块不提供 `importExternal` API。
 
