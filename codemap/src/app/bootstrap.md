@@ -6,8 +6,8 @@
 
 **启动顺序（必须实现）**：
 1. 在根节点存在后加载 `runtime-config` 并应用其中的 `appIdentity`；处理 `appid`、`demo` 查询参数，不重载页面。
-2. 创建 `Preferences`，先完成 localStorage 读取、默认值和迁移，再据此确定 minimal/mobile/渲染初值。
-3. 创建 `VoxelDocument`、`Selection`、`TransformSession`、`History` 等状态对象，以及 repository、renderer、picker、worker、platform、input 等端口实现。
+2. 创建 `Preferences`，完成 localStorage 读取、类型校验和默认值初始化，再据此确定 minimal/mobile/渲染初值。
+3. 创建 `SceneDocument`、`EditorState`、`ObjectSelection`、`VoxelSelection`、`ObjectTransformSession`、`VoxelTransformSession`、`History` 等状态对象，以及 repository、renderer、picker、worker、platform、input 等端口实现。
 4. 创建 CommandHandler、CommandBus、ProjectService、ImportExportService、RenderSync、PickService 和 EditorSession；所有依赖显式注入 `EditorDependencies`。
 5. 初始化 renderer、scene、camera、materials、overlays、worker client、input routers 和 UI view model；任何失败都停止后续阶段。
 6. 创建 `lifecycle` 并注册 resize、visibility、pagehide、context-lost/context-restored 和 disposal 监听。

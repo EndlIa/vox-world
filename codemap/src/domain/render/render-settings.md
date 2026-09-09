@@ -17,10 +17,10 @@
 - `EnvironmentSettings` 包含 `background`、`environmentPower`、`backgroundBlur`；默认 `false`、`0.65`、`0.05`。`power > 0`、`blur >= 0`；背景强度固定为 `0.8`，不作为可编辑项目字段。
 - `LightingSettings` 包含直接光颜色和强度，默认 `#FFE484`、`0.8`；颜色必须规范为不带 alpha 的大写 `#RRGGBB`。
 - `MaterialSettings` 包含默认 PBR 的 `roughness`、`metalness`、`transmission`、`emissive`、`emissiveIntensity`，默认分别为 `0.8`、`0`、`0`、`#5EC3C5`、`2`。`clearcoat = 0` 与 `specularIntensity = 1` 是材质构造默认，不属于项目设置。
-- `PathTracerSettings` 包含 `renderScale`、`samples`、`bounces`、`tiles`，默认 `0.8`、`512`、`1`、`4`；`renderScale` 限制在 `0.1..1`，`samples` 是 `>= 8` 的整数，`bounces >= 1`，`tiles >= 1`。旧项目 `render.dpr` 必须映射到 `renderScale`，不能形成第二个所有者。
+- `PathTracerSettings` 包含 `renderScale`、`samples`、`bounces`、`tiles`，默认 `0.8`、`512`、`1`、`4`；`renderScale` 限制在 `0.1..1`，`samples` 是 `>= 8` 的整数，`bounces >= 1`，`tiles >= 1`。
 - `PostProcessingSettings` 包含 `effect` 与 `samples`，默认 `none`、`4`；`samples` 限制在 `1..8`，移动端允许降为 `2`。后处理属于工作区偏好，不属于项目 `camera`/`render` DTO。
-- `ProjectCameraSettings` 固定使用 `offset`、`fov`、`fstop`、`focal` 字段名；`ProjectRenderSettings` 固定使用 `dpr`、`samples`、`bounces`、`tiles`、`tonemap`、`environment`、`lights`、`materials` 字段名，并保持 `emissive_intensity` 的下划线形式。Tonemap 项目值是索引，映射到运行时枚举；未知索引回退 `none`。
-- `normalizeProjectSettings` 必须接受缺失、部分或 legacy 字段，逐字段回退默认值并一次性返回完整结果；任何失败都不得修改输入或生成半规范化对象。`toProjectSettings` 只输出可 JSON 序列化的项目字段，不得输出运行时枚举、Three.js 对象、HDRI 内容、GPU 句柄或工作区偏好。
+- `ProjectCameraSettings` 固定使用 `offset`、`fov`、`fstop`、`focal` 字段名；`ProjectRenderSettings` 固定使用 `renderScale`、`samples`、`bounces`、`tiles`、`tonemap`、`environment`、`lights`、`materials` 字段名，并保持 `emissive_intensity` 的下划线形式。Tonemap 项目值是索引，映射到运行时枚举；未知索引是校验错误。
+- `normalizeProjectSettings` 只接受完整、合法的当前项目 DTO，缺失字段、旧字段别名、未知字段或非法值都返回错误；任何失败都不得修改输入或生成半规范化对象。`toProjectSettings` 只输出可 JSON 序列化的项目字段，不得输出运行时枚举、Three.js 对象、HDRI 内容、GPU 句柄或工作区偏好。
 - 所有规范化函数保持无副作用、确定性、可重复调用；不读取 localStorage、不依赖当前时间、不访问 DOM，也不缓存全局可变设置。
 
 **依赖**：util/color、util/math、util/result。

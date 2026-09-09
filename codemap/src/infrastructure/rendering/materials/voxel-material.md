@@ -1,6 +1,6 @@
 # voxel-material.ts
 
-**职责**：创建和管理体素渲染材质，承接 PBR 参数、颜色空间、透明材质和选中/悬停高亮；不持有 `VoxelDocument`，也不负责设置持久化。
+**职责**：创建和管理体素渲染材质，承接 PBR 参数、颜色空间、透明材质和选中/悬停高亮；不持有 `SceneDocument`，也不负责设置持久化。
 **接口**：
 - `createMaterial(kind, parameters)`、`updateMaterial(kind, parameters)`、`setColorSpace`、`setHighlightMode`、`dispose`。
 - `kind` 至少包含 `opaque`、`emissive`、`shade`、`translucent-layer`、`preview-shell`。

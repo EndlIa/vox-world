@@ -9,10 +9,14 @@
 
 ```ts
 type KeyboardContext = {
-  mode: 'model' | 'render' | 'export';
+  editorMode: 'object' | 'edit';
+  workspaceMode: 'model' | 'render' | 'export';
+  activeObjectId?: string;
+  selectedObjectId?: string;
   activeToolId?: string;
-  transformActive: boolean;
-  selectionKind?: 'voxel' | 'mesh';
+  objectTransformActive: boolean;
+  voxelTransformActive: boolean;
+  selectionKind?: 'object' | 'voxel';
   modal: 'none' | 'color-picker' | 'confirm' | 'dialog';
   inspectorOpen: boolean;
   editingSuspended: boolean;
@@ -54,17 +58,17 @@ type Shortcut = {
 | 快捷键 | 语义 | 动作边界 |
 | --- | --- | --- |
 | Space / Alt（按住） | 临时 Free Camera | `tool.select(camera, { temporary: true })`，释放后恢复原工具 |
-| Enter | Apply Transform | `transform.apply()`；按钮聚焦时忽略 |
+| Enter | Apply 当前 XFORM | Object 模式应用 ObjectTransformSession；Edit 模式应用活动对象的 VoxelTransformSession；按钮聚焦时忽略 |
 | Ctrl（按住） | 相机平移修饰键 | 向导航输入端口发布 `camera.navigate` 的 modifier 状态，不直接改相机 |
 | Shift（按住） | Clone Transform / 修饰模式 | 记录到修饰键快照；工具在 pointerdown 时读取，不在手势中改变 |
-| Delete | 删除选中体素或 mesh | `selection.delete()`，由应用层按当前选择类型解析 |
+| Delete | 删除选中对象或活动对象体素 | `selection.delete()`，由应用层按 `editorMode` 解析 |
 | `` ` `` / C | Free Camera 工具 | `tool.select('camera')` |
 | F | Frame 相机/当前选择 | 按上下文发送 `camera.frame(target)` |
 | O | 切换正交/透视 | `camera.setProjection('toggle')` |
 | R | 切换 Render 模式 | `panel.setMode('render')` |
 | S | 切换对称轴 | `symmetry.nextAxis()` |
-| T | Transform Box 工具 | `tool.select('transform-box')` |
-| 1 | Add | `tool.select('add')` |
+| T | 当前模式变换工具 | Object 模式选择对象变换；Edit 模式选择体素 Transform Box |
+| 1 | Add | 仅 Edit 模式 `tool.select('add')` |
 | 2 | Remove | `tool.select('remove')` |
 | 3 | Box Add | `tool.select('box-add')` |
 | 4 | Box Remove | `tool.select('box-remove')` |
@@ -75,13 +79,14 @@ type Shortcut = {
 | Ctrl+Z | Undo | `history.undo()` |
 | Ctrl+X | Redo | `history.redo()`；这是 shithill 的既有非标准映射，不得擅自改成 Ctrl+Shift+Z |
 | Ctrl+/ | 切换 Inspector | `debug.toggleInspector()` |
-| Escape | 取消 Transform / modal | 优先取消颜色选择器或确认框，其次 `transform.cancel()` |
+| Escape | 取消 XFORM / modal | 优先取消颜色选择器或确认框，其次取消当前模式的 TransformSession |
 
 - 工具 id 必须来自 ToolRegistry；表中名称是语义别名，落地时以稳定 id 为准，不能按可见文案查找按钮。
 - 不在表中新增会与浏览器、输入法或操作系统冲突的全局快捷键；平台别名只能作为显式配置，不能悄悄改变 Ctrl+X=Redo 的迁移契约。
-- `Ctrl+Z/X` 在 `MODEL` 下生效；其他模式不得把历史快捷键发送给不可用的 History。
-- `F` 在 XFORM 中优先 Frame 选择，在 Render/Export 中优先 Frame mesh；具体目标由 `KeyboardContext.selectionKind` 决定。
-- `R` 的切换是模式切换意图，不直接修改 DOM 的 display 或 class。
+- `Ctrl+Z/X` 在 workspace `MODEL` 下生效；其他工作区不得把历史快捷键发送给不可用的 History。
+- `F` 在 Object 模式 Frame 选中对象，在 Edit 模式优先 Frame 活动对象/体素选择，在 Render/Export 中优先 Frame mesh；具体目标由 `KeyboardContext.selectionKind` 决定。
+- `R` 切换的是 `workspaceMode`，不是 `editorMode`；Object/Edit 切换只能通过显式 UI action，不能与 Render 快捷键复用。
+- Object 模式只能触发对象选择/变换/可见性工具；Edit 模式只能触发活动对象的体素工具。模式不匹配的快捷键必须忽略，不得由 router 自动切换模式。
 
 ## 修饰键与临时模式
 

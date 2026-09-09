@@ -28,6 +28,50 @@ src/
   util/            无业务语义的基础工具
 ```
 
+## 核心领域模型
+
+项目采用“单场景、多体素对象”的数据模型。一个 `Project` 只包含一个 `SceneSnapshot`；场景中的对象身份、层级和变换与对象内部的体素数据分离：
+
+```text
+Project
+  ├── SceneSnapshot
+  │     ├── SceneNode（层级与变换）
+  │     └── VoxObject（局部体素网格）
+  ├── Camera / Render settings
+  └── CameraAnimation
+
+SceneNode
+  ├── id / parentId / childIds
+  ├── transform（局部 -> 父空间）
+  ├── visible（子树渲染开关）
+  └── objectId?（至多绑定一个 VoxObject）
+
+VoxObject
+  ├── id
+  └── VoxelSnapshot（只使用该对象的局部 VoxelKey）
+```
+
+跨对象引用体素时必须使用 `ObjectVoxelRef = { objectId, key }`。`VoxelKey` 不再是整个场景的全局唯一键，只保证在单个 `VoxObject` 的局部网格内唯一。
+
+每个 `VoxObject` 必须由恰好一个 `SceneNode` 绑定；不允许孤儿对象或重复绑定。绑定对象的节点第一版必须是叶节点，组节点只用于层级组织。场景 Patch 必须原子地保持这些不变量。
+
+### 编辑器模式
+
+- **Object 模式**：选择和变换 `VoxObject`；变换由对象绑定的 `SceneNode` 承担。对象模式不直接编辑体素。
+- **Edit 模式**：必须恰好有一个 `activeObjectId`。体素查询、选择、绘制、XFORM 和模型算法只能作用于该活动对象。
+- Edit 模式下其他对象可以按 `SceneNode.visible` 渲染，但不得进入体素拾取、选择、XFORM 或命令候选；渲染可见性与可编辑性是两个独立概念。
+- 进入 Edit 模式、退出 Edit 模式、切换活动对象和删除活动对象时，必须显式清理或取消不适用的体素 Selection/XFORM 状态。
+
+`ObjectSelection` 是对象选择的唯一可变所有者；`EditorState` 只保存模式和活动对象，不复制 `selectedObjectId`。进入 Edit 模式时由 Scene Command Handler 原子同步两者，退出 Edit 后保留对象选择。
+
+### 坐标与可见性
+
+- `VoxObject` 的局部整数坐标由 `VoxelKey` 表示；对象的局部到世界变换由它绑定的 `SceneNode` 及其祖先组合得到。
+- `SceneNode.visible` 控制渲染子树；`VoxelValue.visible` 控制对象内部单个体素的渲染。有效可见性为两者及祖先可见性的逻辑与。
+- “其他对象不可编辑”由 EditorState、PickService 和命令校验共同保证，不能通过把对象设为不可见来伪装。
+- 对象级 Patch 与对象内体素 Patch 必须在同一场景版本下原子提交；Undo/Redo 保存场景感知的正反向补丁。
+- `SceneDocument.version` 是场景命令的并发令牌；`ProjectService.projectVersion` 是项目聚合的持久化修订号，还覆盖动画、项目设置和 Bake Mesh。两者不得混用。
+
 ## 分层职责
 
 - `app`：唯一允许了解所有具体实现的 composition root，负责创建会话、装配依赖、管理启动与释放顺序，并处理生命周期。
@@ -61,6 +105,7 @@ util ──────────────→ util
 - 可预期、可恢复的失败使用 `Result`；编程错误、内部不变量破坏和理论上不可能的状态使用 `throw Error`。
 - Worker、持久化、IPC、项目文件和其他序列化边界只能传递普通可序列化数据，不得传递函数、类实例、DOM/Three.js 对象或原生 `Error`。
 - 跨边界错误使用普通数据表示，通常为 `{ code, message, details? }`。
+- 持久化格式从当前 `V1` 开始定义，只支持当前版本并拒绝其他版本；不设计迁移链、旧字段别名或宽松兼容解析。
 - 不削弱 `tsconfig.json` 中的严格 TypeScript 设置，不通过无约束的 `any` 或强制类型断言绕过类型检查。
 - `Result` 的具体契约见 `codemap/src/util/result.md`；全局例外见 `IMPORTANT`。
 
@@ -74,6 +119,8 @@ util ──────────────→ util
 | `ColorHex`、`Rgb`、`LinearRgb`、`ColorParseError`、`ColorChannelError`、`ColorScalarError`、`ColorError` | `util/color` | 无 alpha 的领域颜色及错误 |
 | `VoxelKey`、`PackedIntError` | `util/packed-int` | 16-bit 体素坐标打包键及错误 |
 | `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值 |
+| `SceneNodeId`、`VoxObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`VoxObjectSnapshot`、`SceneSnapshot`、`ObjectVoxelRef` | `domain/scene/scene-types` | 场景图、对象身份和对象局部体素引用 |
+| `ScenePatch`、`ScenePatchOp` | `domain/scene/scene-patch` | 场景级可逆补丁 |
 
 类型收敛规则：
 
@@ -81,6 +128,7 @@ util ──────────────→ util
 - `Rgb` 与 `LinearRgb` 虽同形，但分别表示 sRGB 8-bit 和线性 sRGB，禁止合并。
 - `Vec3` 与领域 `GridPosition`、`Aabb` 与领域 `Bounds3i` 语义不同，禁止互相别名或合并。
 - `VoxelKey`、`ColorHex` 只能由 `util/packed-int`、`util/color` 定义；domain 只能 re-export，`VoxelColor` 只能作为 `ColorHex` 的领域别名。
+- `SceneSnapshot` 是场景根快照；`VoxelSnapshot` 只表示单个 `VoxObject` 的局部数据。任何跨对象操作都不得退化为全局 `VoxelKey` 查找。
 - 跨模块的公开数据使用只读普通对象/数组；本项目的 `readonly` 是编译期约束，不依赖 `Object.freeze`，但不得把所有权状态对象或其底层 `Map`/`Set` 暴露给其他模块。
 - 序列化边界必须在输入侧接收 `unknown` 并做运行时校验；TypeScript brand 不提供运行时保证。
 

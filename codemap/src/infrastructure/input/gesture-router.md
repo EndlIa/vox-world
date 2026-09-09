@@ -36,7 +36,8 @@ type NavigationGesture =
 - 第二根手指到达时，先取得导航所有权，再取消第一根手指的编辑候选；这个顺序保证取消原因和 gestureId 可诊断。
 - 手势结束或取消后先清除导航所有权，再让 pointer-router 处理最后一次 up；由于编辑会话已经取消，up 不得被解释为点击或提交。
 - 导航期间禁止发送工具 hover、选中预览或命令；相机导航完成后只刷新必要的相机 view model，不重放被取消的编辑。
-- 任何导航意图都不得绕过 application 的导航输入端口直接修改 Three.js camera、VoxelDocument、Selection 或 History。
+- 任何导航意图都不得绕过 application 的导航输入端口直接修改 Three.js camera、SceneDocument、Object/Voxel Selection 或 History。
+- 导航不改变 `EditorMode`、`activeObjectId` 或对象选择；多指手势只抢占画布输入，不得把对象操作或体素操作互相转换。
 
 ## Capture 与浏览器默认行为
 

@@ -15,10 +15,11 @@
 ExportJobRequest {
   format: "vox" | "obj_raw" | "stl_raw" | "ply_raw" |
           "glb" | "gltf" | "obj" | "stl" | "ply";
-  scope: "rawVoxels" | "bakedAll" | "bakedSelected";
+  scope: "activeObjectRaw" | "sceneRaw" | "bakedAll" | "bakedSelected";
   fileName?: string;
+  objectId?: VoxObjectId;           // activeObjectRaw 必须提供
   selectedMeshId?: string;
-  documentVersion: number;
+  sceneVersion: number;
   options?: ExportOptions;
 }
 
@@ -41,12 +42,12 @@ ExportResult {
 
 ## 编排规则
 
-- `rawVoxels` 从 VoxelDocument 的不可变快照导出，允许 `vox`、`obj_raw`、`stl_raw`、`ply_raw`；不得要求存在 Bake Mesh。
+- `activeObjectRaw` 从指定 `VoxObject` 的不可变局部快照导出；`sceneRaw` 从完整 `SceneSnapshot` 导出并保留节点变换和对象边界。二者允许 `vox`、`obj_raw`、`stl_raw`、`ply_raw`；不得要求存在 Bake Mesh。
 - `bakedAll`/`bakedSelected` 从 bake-service 的不可变 mesh manifest 和资产快照导出，允许 `glb`、`gltf`、`obj`、`stl`、`ply`。
 - `bakedSelected` 必须提供 `selectedMeshId`；对象在任务期间被删除或重命名不改变该 id 的选择语义。
-- 捕获的 `documentVersion` 与当前文档不一致时，允许继续导出该历史快照，但结果必须标注 source version；若调用方要求最新版本则返回 `STALE_EXPORT_SOURCE`。
+- 捕获的 `sceneVersion` 与当前场景不一致时，允许继续导出该历史快照，但结果必须标注 source version；若调用方要求最新版本则返回 `STALE_EXPORT_SOURCE`。
 - 格式、scope 不匹配时在派发 Worker 前返回 `UNSUPPORTED_EXPORT_COMBINATION`，不得先生成再报错。
-- 任务通过 exporters 的格式适配器执行。需要 Three.js 或纹理编码的工作进入 Worker/离线流程；导出只读取项目，不修改体素、Bake Mesh、材质或选择。
+- 任务通过 exporters 的格式适配器执行。需要 Three.js 或纹理编码的工作进入 Worker/离线流程；导出只读取项目，不修改节点、对象局部体素、Bake Mesh、材质或选择。
 
 ## 进度、取消与失败原子性
 

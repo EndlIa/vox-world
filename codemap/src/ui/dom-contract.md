@@ -45,7 +45,7 @@
 | `#color-picker` | 颜色选择器 |
 | `#confirm` / `#confirmblocker` | 滑动确认框与 blocker |
 | `#notifier` | 单槽通知 |
-| `#options_screen` | NEW SCENE、Workplanes 等场景选项 |
+| `#options_screen` | Object/Edit 模式、对象放置和 Workplanes 等场景选项 |
 | `#marquee` | 矩形选择框 |
 | `#progressbar` | 长任务进度条 |
 | `#info` / `#info_render` / `#info_tool` | 状态信息 |
@@ -87,7 +87,7 @@ Trellis 面板及其 mask 控件不在本次契约设计范围内。
 | `.tool` | 工具按钮 |
 | `.tool_selector` | 当前工具选中态 |
 | `.segment_selector` | 分段按钮选中态 |
-| `.mode_select` | 当前编辑模式 |
+| `.mode_select` | 当前 Editor 模式（object/edit）；不得与 workspace mode 复用 |
 | `.panel_select` | 当前面板已打开 |
 | `.ignorekeys` | 文本/数值输入，全局快捷键必须忽略 |
 | `.help` | 可折叠帮助文本 |

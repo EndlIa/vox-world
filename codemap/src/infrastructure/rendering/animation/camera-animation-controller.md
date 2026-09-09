@@ -20,6 +20,6 @@
 - 路径由当前 clip 采样生成白色 Line；采样点数量取 `min(128, (keyframeCount - 1) * 16 + 1)`，只在至少两个关键帧时显示。关键帧 marker 使用空心 billboard 圆，位置取关键帧 position。路径/marker 使用渲染辅助层，不进入体素拾取；截图和离线渲染期间必须隐藏并在 `finally` 恢复原开关。
 - `prepareOfflineCapture()` 先停止播放并结束 preview，再隐藏 Camera Control、路径和 marker，切换到 cinematic camera。返回的 restore 必须幂等，在成功、取消、异常和 context lost 后都恢复播放前编辑器 view/投影、输入 controls 启用状态、Camera Control 作者姿态/可见性/选择、路径开关和后处理绑定；不得自动重新开始播放，也不得把 cinematic 临时姿态写回作者数据。
 - `stop()`、非循环自然结束、用户取消和 context lost 走同一个恢复事务：先清 Follow/Observe 临时显示，再恢复播放前编辑器 view、controls、Camera Control 与 path 状态；恢复函数只执行一次。离线导出调用 `prepareOfflineCapture()` 时先停止预览，导出结束后仍保持 stopped，等待用户显式播放。
-- 项目新建、加载、Storage/snapshot 恢复时调用 `load()`；缺少字段恢复默认空 clip，旧项目兼容由 `domain/animation` 完成。Camera Control 不属于项目格式，加载后必须清空。
+- 项目新建时调用 `load(createDefaultCameraAnimation())`；加载或 Storage/snapshot 恢复时只接受 `domain/animation` 严格校验通过的当前 V1 clip，缺字段或非法数据由项目加载整体失败。Camera Control 不属于项目格式，加载后必须清空。
 
 **依赖**：domain/animation、camera-controller、camera-control、three-renderer、overlays、util/math。

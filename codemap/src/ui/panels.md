@@ -1,6 +1,6 @@
 # panels.ts
 
-**职责**：注册并管理工具箱、调色板、项目/File/Storage、相机、渲染、建模、PBR、导出和动画面板的显示、拖拽、层级、最小化和恢复。
+**职责**：注册并管理场景 Outliner、对象属性、工具箱、调色板、项目/File/Storage、相机、渲染、建模、PBR、导出和动画面板的显示、拖拽、层级、最小化和恢复。
 **接口**：mount(root, viewModel, actions): PanelManager；register(descriptor)；open/close/toggle(key)；minimize/restore(key)；reset(key)；resetAll()；bringToFront(key)；update(snapshot)；dispose()。
 **内部**：每个面板只消费 view model 并发出 actions；面板控制器之间不互相调用，不直接访问应用状态、Three.js 或领域对象。
 **依赖**：ui/editor-view-model、ui/actions、ui/dom-contract、ui/palette-panel、DOM。
@@ -71,7 +71,7 @@ type PanelDescriptor = {
 ### 工具箱与模式栏
 
 - 左侧工具箱按稳定顺序提供 File、Storage、Camera、Render、Create、Voxelize、Symmetry、Draw、Paint、XForm、Groups、Bakery、PBR、Export、Animation。
-- 模式栏提供 model/render/export 切换；按钮使用 `aria-pressed` 表达当前模式。
+- 模式栏提供 object/edit 切换；`workspaceMode` 的 model/render/export 是另一组面板可见性，不得与编辑器模式混用。
 - 每个工具按钮通过 `data-tool-id` 发出 `tool.select`，不直接调用工具状态机。
 - 顶部快捷栏和悬浮层只发出 view model 中允许的动作。
 
@@ -80,6 +80,12 @@ type PanelDescriptor = {
 - 调色板由 `palette-panel.ts` 实现，`panels.ts` 只负责注册、显示和互斥。
 - 面板显示当前颜色、唯一颜色网格、隐藏颜色状态和列数偏好。
 - 点击颜色选择当前颜色；右键或双击切换该颜色可见性；这些行为通过 `palette.selectColor` / `palette.toggleVisibility` 动作完成。
+
+### 场景 Outliner 与对象属性
+
+- Outliner 按 `SceneSnapshot` 的节点树显示稳定节点/对象 ID、名称和有效可见性；点击对象只发 `object.select`，双击或显式 Enter Edit 发 `editor.setMode("edit")`。
+- 对象属性面板显示选中对象的节点变换、局部包围盒、体素数量和渲染可见性；修改只发 `object.transform`/`object.setVisibility` 等 Object 模式动作。
+- Outliner 可以选中隐藏对象，但 Edit 模式必须通过显式模式切换进入；第一版进入 Edit 要求对象有效可见，隐藏对象需先显式显示，不会因渲染过滤而从 Outliner 消失。
 
 ### 项目、File 与 Storage 面板
 
