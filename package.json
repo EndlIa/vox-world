@@ -16,6 +16,8 @@
   "license": "UNLICENSED",
   "devDependencies": {
     "@types/node": "^24.13.3",
+    "@types/three": "^0.185.4",
+    "three": "^0.185.1",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   }

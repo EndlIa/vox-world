@@ -2,7 +2,7 @@
 
 `vox-world` 是 `shithill` 向严格 TypeScript + Three.js 重构后的新项目。本目录记录目标架构和各模块的工程契约，是理解、实现和维护该项目的入口。
 
-开发代理的工作流程和非协商规则见仓库根目录的 `AGENTS.md`。本文件负责说明整体架构、契约关系和跨层边界；单个模块的详细职责与接口由对应契约负责。
+本文件负责说明整体架构、契约关系和跨层边界；单个模块的详细职责与接口由对应契约负责。
 
 ## 文档定位
 
@@ -126,9 +126,9 @@ util ──────────────→ util
 | 类型 | 唯一 owner | 边界 |
 | --- | --- | --- |
 | `Result` | `util/result` | 所有层的可恢复失败容器 |
-| `ColorHex`、`Rgb`、`LinearRgb`、`ColorParseError`、`ColorChannelError`、`ColorScalarError`、`ColorError` | `util/color` | 无 alpha 的领域颜色及错误 |
+| `ColorHex`、`Rgb`、`LinearRgb`、`ColorParseError`、`ColorChannelError`、`ColorScalarError`、`ColorError` | `util/color` | 无 alpha 的领域颜色及错误；`Rgb`/`LinearRgb` 带 brand，互相不可赋值 |
 | `VoxelKey`、`PackedIntError` | `util/packed-int` | 16-bit 体素坐标打包键及错误 |
-| `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值 |
+| `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值；`Quat` 带 brand（值域恒为单位四元数），`Plane` 带 brand（法向量恒为单位向量） |
 | `SceneNodeId`、`VoxObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`VoxObjectSnapshot`、`SceneSnapshot`、`ObjectVoxelRef` | `domain/scene/scene-types` | 场景图、对象身份和对象局部体素引用 |
 | `ScenePatch`、`ScenePatchOp` | `domain/scene/scene-patch` | 场景级可逆补丁 |
 | `AnimationDocumentV1`、`AnimationTrackV1`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |
@@ -137,7 +137,7 @@ util ──────────────→ util
 类型收敛规则：
 
 - 只有出现在跨模块公共签名或稳定边界契约中的类型才导出；模块内部辅助类型保持私有。
-- `Rgb` 与 `LinearRgb` 虽同形，但分别表示 sRGB 8-bit 和线性 sRGB，禁止合并。
+- `Rgb` 与 `LinearRgb` 虽同形，但分别表示 sRGB 8-bit 和线性 sRGB。两者必须带各自 brand（`__brand: "Rgb"` / `__brand: "LinearRgb"`），互相不可赋值；`Rgb` 只能由 `parseRgb` 成功返回，`LinearRgb` 只能由 `linearize` 返回。禁止互相别名、合并、声明同形副本，或在调用方就地构造带 brand 的值。
 - `Vec3` 与领域 `GridPosition`、`Aabb` 与领域 `Bounds3i` 语义不同，禁止互相别名或合并。
 - `VoxelKey`、`ColorHex` 只能由 `util/packed-int`、`util/color` 定义；domain 只能 re-export，`VoxelColor` 只能作为 `ColorHex` 的领域别名。
 - `SceneSnapshot` 是场景根快照；`VoxelSnapshot` 只表示单个 `VoxObject` 的局部数据。任何跨对象操作都不得退化为全局 `VoxelKey` 查找。
@@ -155,6 +155,15 @@ util ──────────────→ util
 - 架构决策、全局例外或暂缓事项发生变化。
 
 契约应描述当前目标状态，而不是记录任务过程。示例和路径必须与实际仓库一致；新增、重命名或删除契约文件时，同步更新所有引用。
+
+### 【用户确认】标记
+
+契约条目标注 **【用户确认】** 表示该语义由用户显式裁定，**不是 AI 生成的结论**，也不是从相邻条款推演出来的默认值。
+
+- 它优先于本目录中其他未标注的条目：当它与别的条款或实现冲突时，以它为准。
+- 它不适用“契约由 AI 编写、可以重新判定”的默认态度。改动前必须先取得用户同意。
+- 不得为了让实现、测试或相邻条款自洽而顺手修改、放宽或删除带此标记的条目。
+- 使用时应写明确认日期与用户当时选择的取舍，保留可追溯的裁定记录。
 
 ## 验证
 

@@ -185,6 +185,7 @@ export type PackedIntError =
 - 坐标超出 16-bit 范围时返回 `coordinate_out_of_range`。
 - `neighbor` 的 `delta` 不是有限安全整数时返回 `invalid_delta`。
 - `neighbor` 计算后的坐标越界时返回 `coordinate_out_of_range`。
+- 多个坐标同时非法，或 `neighbor` 的 `delta` 非法且结果坐标同时越界时，**报告哪一个错误未定义**：本模块不承诺校验顺序，也不承诺 `invalid_delta` 与 `coordinate_out_of_range` 的优先级。调用方不得依赖 `error.code` 或 `error.axis` 推断"哪个输入先出错"；需要按轴给出输入级反馈时，由调用方逐轴调用 `boundsCheck` 或逐轴调用 `pack`。
 - `pack` 失败时不返回部分结果，也不修改输入。
 - 错误值必须是普通、可序列化、可判别数据。
 - 不把原生 `Error` 作为正常业务失败值。

@@ -8,13 +8,17 @@ export type Rgb = Readonly<{
   r: number;
   g: number;
   b: number;
-}>;
+}> & {
+  readonly __brand: "Rgb";
+};
 
 export type LinearRgb = Readonly<{
   r: number;
   g: number;
   b: number;
-}>;
+}> & {
+  readonly __brand: "LinearRgb";
+};
 
 export type ColorParseError = Readonly<{
   code: "invalid_hex";
@@ -81,9 +85,9 @@ export function parseHex(
   return ok(`#${digits.toUpperCase()}` as ColorHex);
 }
 
-export function toHex(
-  rgb: Rgb,
-): Result<ColorHex, ColorChannelError> {
+export function parseRgb(
+  rgb: Readonly<{ r: number; g: number; b: number }>,
+): Result<Rgb, ColorChannelError> {
   if (!isValidChannel(rgb.r)) {
     return invalidChannel("r", rgb.r);
   }
@@ -96,9 +100,11 @@ export function toHex(
     return invalidChannel("b", rgb.b);
   }
 
-  return ok(
-    `#${channelToHex(rgb.r)}${channelToHex(rgb.g)}${channelToHex(rgb.b)}` as ColorHex,
-  );
+  return ok({ r: rgb.r, g: rgb.g, b: rgb.b } as Rgb);
+}
+
+export function toHex(rgb: Rgb): ColorHex {
+  return `#${channelToHex(rgb.r)}${channelToHex(rgb.g)}${channelToHex(rgb.b)}` as ColorHex;
 }
 
 export function srgbToLinear(
@@ -123,7 +129,7 @@ export function linearize(color: ColorHex): LinearRgb {
     r: srgbChannelToLinear(r),
     g: srgbChannelToLinear(g),
     b: srgbChannelToLinear(b),
-  };
+  } as LinearRgb;
 }
 
 export function equals(a: ColorHex, b: ColorHex): boolean {
