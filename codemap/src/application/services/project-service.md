@@ -10,8 +10,8 @@
 现有占位只写“保存和自动保存”。必须明确：
 
 - shithill 只有手动项目下载、Quick Save 和命名 Snapshot，没有自动保存定时器；autosave 是目标架构新增能力，不能伪装成原行为。
-- 项目保存必须包含统一的 `animation: AnimationDocumentV1`、当前 `camera`/`render` 设置和自持久化的 Bake Mesh manifest/资产。
-- `AnimationDocumentV1` 的类型与校验规则由 `domain/animation` 唯一拥有；ProjectService 只捕获/替换该文档，不声明并行轨道 DTO，也不把求值结果当成项目数据。
+- 项目保存必须包含统一的 `animation: AnimationDocument`、当前 `camera`/`render` 设置和自持久化的 Bake Mesh manifest/资产。
+- `AnimationDocument` 的类型与校验规则由 `domain/animation` 唯一拥有；ProjectService 只捕获/替换该文档，不声明并行轨道 DTO，也不把求值结果当成项目数据。
 - localStorage 配额失败不能清除 dirty、不能报告成功、不能破坏原快照。
 - 加载、保存、另存为和 Snapshot 恢复都必须以不可变快照和原子提交为基础。
 
@@ -46,7 +46,7 @@ SaveRequest {
 }
 ```
 
-1. 捕获项目元数据、完整 authored/base `SceneSnapshot`、`AnimationDocumentV1`、`render-settings-service.toProjectSettings()` 返回的 camera/render 普通数据，以及 Bake Mesh manifest 的不可变快照；不得捕获播放状态、当前时间、`AnimationEvaluation` 或运行时 override。
+1. 捕获项目元数据、完整 authored/base `SceneSnapshot`、`AnimationDocument`、`render-settings-service.toProjectSettings()` 返回的 camera/render 普通数据，以及 Bake Mesh manifest 的不可变快照；不得捕获播放状态、当前时间、`AnimationEvaluation` 或运行时 override。
 2. 调用注入的 `ProjectDocumentPort.encode()` 编码并校验；若包含 Bake Mesh，先由该端口的资产 codec 适配器编码几何/材质/纹理资产，再通过 repository-port 写入。
 3. repository 执行原子替换。文件系统写临时文件后 rename；IndexedDB 使用单事务；失败保留原项目。
 4. 成功后才更新 `savedProjectVersion`、`lastSavedAt` 和 dirty 状态；失败返回 typed error，dirty 保持。
@@ -56,7 +56,7 @@ SaveRequest {
 
 ## 打开与新项目
 
-- `load` 先读取字节/文档，再由 `ProjectDocumentPort.decode()` 校验当前格式、SceneSnapshot、`AnimationDocumentV1` 与 Bake Mesh 资产，并通过 `render-settings-service` 校验完整的 camera/render 设置；动画必须使用同一解码文档的 `data.scene` 调用 `validateAnimation`，拒绝悬空或根节点目标、重复轨道/关键帧 ID、重复 `target` + `channel`、空轨道、`durationMs` 非有限或 `<= 0` 和非法关键帧。全部成功后才一次性替换 SceneDocument、EditorState、选择、动画和项目设置。
+- `load` 先读取字节/文档，再由 `ProjectDocumentPort.decode()` 校验当前格式、SceneSnapshot、`AnimationDocument` 与 Bake Mesh 资产，并通过 `render-settings-service` 校验完整的 camera/render 设置；动画必须使用同一解码文档的 `data.scene` 调用 `validateAnimation`，拒绝悬空或根节点目标、重复轨道/关键帧 ID、重复 `target` + `channel`、空轨道、`durationMs` 非有限或 `<= 0` 和非法关键帧。全部成功后才一次性替换 SceneDocument、EditorState、选择、动画和项目设置。
 - 未知项目版本、缺失必填字段、旧 `cameraAnimation` 字段、非法关键帧或非法 camera/render 值必须拒绝整个文档；不得在加载时补齐字段、迁移旧字段或过滤坏数据。
 - 加载失败必须保留当前项目、当前渲染设置和当前会话，不得部分提交；恢复后 Camera Control 和播放状态重置。
 - 缺资产、场景不变量失败或对象引用错误返回对应 typed error，保留当前项目和当前会话，不自动清理项目 manifest。
@@ -68,7 +68,7 @@ SaveRequest {
 
 - autosave 默认关闭，由用户设置启用；启用后建议间隔 60 秒，并只在 `dirty` 时运行。
 - autosave 写入 repository 的内部 `autosave` 项目记录，包含完整 ProjectDocument（含 camera/render）和 Bake Mesh 资产，不覆盖命名 Snapshot、Quick Save、项目文件或用户选择的另存为目标。
-- 若后端不支持二进制资产，只能经用户显式同意退化为仅 SceneSnapshot/`AnimationDocumentV1` 的 Quick Save，并在 UI 说明 Bake Mesh 不会自动保存；不得静默降级。
+- 若后端不支持二进制资产，只能经用户显式同意退化为仅 SceneSnapshot/`AnimationDocument` 的 Quick Save，并在 UI 说明 Bake Mesh 不会自动保存；不得静默降级。
 - 每次持久化提交更新 `projectVersion`；autosave 启动时捕获该版本，只有保存成功且版本未变化时才清除 dirty。保存期间发生编辑则继续 dirty，并在下一个节流窗口重试。
 - 同一时刻最多一个 autosave。失败返回 `QUOTA_EXCEEDED`/repository error 并保留 dirty，UI 必须可见；禁止静默重试覆盖错误。
 - 启动时发现 autosave 比最近手动保存更新时，只提示恢复，不自动覆盖用户项目。
@@ -76,7 +76,7 @@ SaveRequest {
 
 ## Quick Save 与命名 Snapshot
 
-- `saveQuick`/`restoreQuick` 委托注入的 `SnapshotPort`（由 snapshot-service 适配）；Quick Save 持久化 `SceneSnapshot` 和完整 `AnimationDocumentV1`，不持久化 Bake Mesh 资产、运行时 Camera Control 或播放状态。
+- `saveQuick`/`restoreQuick` 委托注入的 `SnapshotPort`（由 snapshot-service 适配）；Quick Save 持久化 `SceneSnapshot` 和完整 `AnimationDocument`，不持久化 Bake Mesh 资产、运行时 Camera Control 或播放状态。
 - 命名 Snapshot 支持名称、时间戳和缩略图；保存、恢复、删除的配额与回滚规则由 `SnapshotPort` 实现保证。
 - Snapshot 恢复先严格解码并校验当前格式，再一次性替换场景和动画；Snapshot 不保存 camera/render，因此恢复时保留当前项目的 camera/render 设置。失败时当前项目与槽位均不变。
 - Snapshot 归档写出是本地备份能力。外部 ZIP 导入明确属于 import 边界，本服务不提供任意归档导入入口。

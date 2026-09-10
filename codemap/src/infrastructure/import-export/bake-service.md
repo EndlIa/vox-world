@@ -26,7 +26,7 @@ BakeRequest {
 BakeResult {
   operationId: string;
   sourceSceneVersion: number;
-  meshes: BakedMeshManifestV1[];
+  meshes: BakedMeshManifest[];
   warnings: Array<{
     code: "COLOR_LIMIT" | "DEGENERATE_FACE" | "EMPTY_GROUP";
     detail?: string;
@@ -74,7 +74,7 @@ BakeProgress {
 | deleteAll | 原子清空池并释放独占资源；共享纹理仍有其他引用时不得 dispose |
 | dispose | 页面卸载/项目替换时释放所有独占 geometry、material、texture、BVH 和 Worker 资源 |
 
-所有列表 API 返回只读 `BakedMeshManifestV1`，不暴露可变 Three.js 对象。对象名称用于显示/导出，不作为持久化主键。
+所有列表 API 返回只读 `BakedMeshManifest`，不暴露可变 Three.js 对象。对象名称用于显示/导出，不作为持久化主键。
 
 ## 持久化与项目恢复
 
