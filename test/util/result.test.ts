@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   err,
@@ -70,13 +70,28 @@ describe("result", () => {
     expect(unwrapOr(err("failed"), 0)).toBe(0);
   });
 
-  it("does not catch callback errors", () => {
-    const callbackError = new Error("callback failed");
+  const callbackError = new Error("callback failed");
+  const boom = (): never => {
+    throw callbackError;
+  };
 
-    expect(() =>
-      map(ok(1), () => {
-        throw callbackError;
-      }),
-    ).toThrow(callbackError);
+  it.each([
+    ["map", () => map(ok(1), boom)],
+    ["mapErr", () => mapErr(err("failed"), boom)],
+    ["flatMap", () => flatMap(ok(1), boom)],
+  ])("does not catch errors thrown by the %s callback", (_name, call) => {
+    expect(call).toThrow(callbackError);
+  });
+
+  it("types ok() as Result<void, never> with exclusive branches", () => {
+    expectTypeOf(ok()).toEqualTypeOf<Result<void, never>>();
+    expectTypeOf<Extract<Result<number, string>, { ok: true }>>().toEqualTypeOf<{
+      readonly ok: true;
+      readonly value: number;
+    }>();
+    expectTypeOf<Extract<Result<number, string>, { ok: false }>>().toEqualTypeOf<{
+      readonly ok: false;
+      readonly error: string;
+    }>();
   });
 });

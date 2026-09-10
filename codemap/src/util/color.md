@@ -1,7 +1,7 @@
 # color.ts
 
 **职责**：定义与渲染器无关的领域颜色类型，负责十六进制颜色解析、规范化和 sRGB 线性化。
-**接口**：`parseHex`、`toHex`、`linearize`、`srgbToLinear`、`equals`。
+**接口**：`parseHex`、`parseRgb`、`toHex`、`linearize`、`srgbToLinear`、`equals`。
 **内部**：领域颜色是无 alpha 的规范化 `#RRGGBB`；不持有 Three.js 类型；所有公开函数均为纯函数。
 **依赖**：util/result。
 
@@ -16,18 +16,24 @@ export type Rgb = Readonly<{
   r: number;
   g: number;
   b: number;
-}>;
+}> & {
+  readonly __brand: "Rgb";
+};
 
 export type LinearRgb = Readonly<{
   r: number;
   g: number;
   b: number;
-}>;
+}> & {
+  readonly __brand: "LinearRgb";
+};
 ```
 
 - `ColorHex` 是规范化后的领域颜色，格式固定为大写、带 `#` 的 `#RRGGBB`。
 - `Rgb` 表示 sRGB 8-bit 通道；每个分量必须是有限整数，范围为 `0..255`。
 - `LinearRgb` 表示线性 sRGB 通道；每个分量范围为 `0..1`。
+- `Rgb` 与 `LinearRgb` 形同名不同，必须带各自 brand，互相不可赋值；禁止互相别名、合并或声明同形副本。brand 只用于让 TypeScript 追踪“已经过校验”和“处于哪个色彩空间”，运行时仍是普通对象。
+- `Rgb` 只能由 `parseRgb` 成功返回；`LinearRgb` 只能由 `linearize` 返回。两者都不提供公开的 unchecked cast，调用方不得用类型断言就地构造带 brand 的值；新增其他构造入口必须先在本契约登记。
 - 三者都不包含 alpha。
 - 只使用 TypeScript 的 `readonly` 表达不可变约束，不依赖运行时 `Object.freeze`。
 
@@ -35,15 +41,19 @@ export type LinearRgb = Readonly<{
 
 ```ts
 export function parseHex(input: string): Result<ColorHex, ColorParseError>;
-export function toHex(rgb: Rgb): Result<ColorHex, ColorChannelError>;
+export function parseRgb(
+  rgb: Readonly<{ r: number; g: number; b: number }>,
+): Result<Rgb, ColorChannelError>;
+export function toHex(rgb: Rgb): ColorHex;
 export function linearize(color: ColorHex): LinearRgb;
 export function srgbToLinear(channel: number): Result<number, ColorScalarError>;
 export function equals(a: ColorHex, b: ColorHex): boolean;
 ```
 
 - `parseHex` 解析并规范化输入字符串。
-- `toHex` 把 8-bit sRGB 通道编码为规范化 `ColorHex`。
-- `linearize` 把规范化 sRGB 颜色逐通道转换为 `LinearRgb`。
+- `parseRgb` 校验 8-bit sRGB 通道并构造带 brand 的 `Rgb`，是 `Rgb` 的唯一构造入口。
+- `toHex` 把已经通过 `parseRgb` 校验的 `Rgb` 编码为规范化 `ColorHex`；因为 `Rgb` 的合法性由构造入口保证，`toHex` 不返回 `Result`。
+- `linearize` 把规范化 sRGB 颜色逐通道转换为 `LinearRgb`，是 `LinearRgb` 的唯一构造入口。
 - `srgbToLinear` 是逐通道的底层转换函数。
 - `equals` 比较两个已经规范化的领域颜色。
 
@@ -66,7 +76,7 @@ ffaa00  -> #FFAA00
 #FFAA0080 -> invalid
 ```
 
-`ColorHex` 只能由 `parseHex` 或 `toHex` 成功返回。生产代码不得用无检查的类型断言绕过解析；brand 仅用于让 TypeScript 追踪“已经验证并规范化”的字符串。
+`ColorHex` 只能由 `parseHex` 或 `toHex` 返回。生产代码不得用无检查的类型断言绕过解析；brand 仅用于让 TypeScript 追踪“已经验证并规范化”的字符串。
 
 ## Alpha 边界
 
@@ -104,8 +114,10 @@ export type ColorError =
 ```
 
 - 非法 hex 返回 `ColorParseError`，并保留原始输入。
-- `toHex` 遇到非有限、非整数或超出 `0..255` 的通道时返回 `ColorChannelError`。
+- `parseRgb` 遇到非有限、非整数或超出 `0..255` 的通道时返回 `ColorChannelError`。
 - `srgbToLinear` 遇到非有限或超出 `0..1` 的通道时返回 `ColorScalarError`。
+- 多个通道同时非法时，**报告哪一个通道未定义**：本模块不承诺校验顺序，调用方不得依赖 `error.channel` 推断“哪个输入先出错”；需要按通道给出输入级反馈时，由调用方逐通道自行校验。
+- `toHex` 不产生错误：它的输入 `Rgb` 已由 `parseRgb` 保证合法。
 - 不静默 clamp、截断、四舍五入或返回 `NaN`。
 - 错误值必须是普通、可序列化、可判别数据；不得把原生 `Error` 作为跨边界错误值。
 

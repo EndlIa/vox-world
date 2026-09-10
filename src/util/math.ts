@@ -28,12 +28,16 @@ export type Quat = Readonly<{
   y: number;
   z: number;
   w: number;
-}>;
+}> & {
+  readonly __brand: "Quat";
+};
 
 export type Plane = Readonly<{
   normal: Vec3;
   constant: number;
-}>;
+}> & {
+  readonly __brand: "Plane";
+};
 
 export type Aabb =
   | Readonly<{ isEmpty: true }>
@@ -55,7 +59,7 @@ export const MAT4_IDENTITY: Mat4 = [
   0, 0, 0, 1,
 ];
 
-export const QUAT_IDENTITY: Quat = { x: 0, y: 0, z: 0, w: 1 };
+export const QUAT_IDENTITY: Quat = { x: 0, y: 0, z: 0, w: 1 } as Quat;
 
 export const EMPTY_AABB: Aabb = { isEmpty: true };
 
@@ -141,14 +145,39 @@ export function vec3Distance(a: Vec3, b: Vec3): number {
   return vec3Length(vec3Subtract(a, b));
 }
 
-export function vec3Normalize(vector: Vec3): Vec3 {
-  const length = vec3Length(vector);
+/**
+ * Largest absolute component of a vector.
+ *
+ * Used as the zero-vector test in the normalization helpers instead of the
+ * vector length: the length comes from squared components, which overflow to
+ * `Infinity` for huge finite inputs and underflow to `0` for tiny finite
+ * inputs, while the largest absolute component stays finite and nonzero for
+ * every finite nonzero vector.
+ */
+function vec3MaxAbsComponent(vector: Vec3): number {
+  return Math.max(Math.abs(vector.x), Math.abs(vector.y), Math.abs(vector.z));
+}
 
-  if (length === 0) {
+export function vec3Normalize(vector: Vec3): Vec3 {
+  const maxComponent = vec3MaxAbsComponent(vector);
+
+  if (maxComponent === 0) {
     return VEC3_ZERO;
   }
 
-  return vec3Scale(vector, 1 / length);
+  // Divide by the largest component first so the scaled components stay in
+  // [-1, 1] and the squared sum cannot overflow.
+  const scaledX = vector.x / maxComponent;
+  const scaledY = vector.y / maxComponent;
+  const scaledZ = vector.z / maxComponent;
+  const inverseScaledLength =
+    1 / Math.sqrt(scaledX * scaledX + scaledY * scaledY + scaledZ * scaledZ);
+
+  return {
+    x: scaledX * inverseScaledLength,
+    y: scaledY * inverseScaledLength,
+    z: scaledZ * inverseScaledLength,
+  };
 }
 
 export function vec3Lerp(a: Vec3, b: Vec3, t: number): Vec3 {
@@ -438,26 +467,39 @@ export function mat4Equals(
   return true;
 }
 
-export function quatNormalize(rotation: Quat): Quat {
-  const length = Math.sqrt(
-    rotation.x * rotation.x +
-      rotation.y * rotation.y +
-      rotation.z * rotation.z +
-      rotation.w * rotation.w,
+export function quatNormalize(
+  rotation: Readonly<{ x: number; y: number; z: number; w: number }>,
+): Quat {
+  const maxComponent = Math.max(
+    vec3MaxAbsComponent(rotation),
+    Math.abs(rotation.w),
   );
 
-  if (length === 0) {
+  if (maxComponent === 0) {
     return QUAT_IDENTITY;
   }
 
-  const inverseLength = 1 / length;
+  // Divide by the largest component first so the scaled components stay in
+  // [-1, 1] and the squared sum cannot overflow.
+  const scaledX = rotation.x / maxComponent;
+  const scaledY = rotation.y / maxComponent;
+  const scaledZ = rotation.z / maxComponent;
+  const scaledW = rotation.w / maxComponent;
+  const inverseScaledLength =
+    1 /
+    Math.sqrt(
+      scaledX * scaledX +
+        scaledY * scaledY +
+        scaledZ * scaledZ +
+        scaledW * scaledW,
+    );
 
   return {
-    x: rotation.x * inverseLength,
-    y: rotation.y * inverseLength,
-    z: rotation.z * inverseLength,
-    w: rotation.w * inverseLength,
-  };
+    x: scaledX * inverseScaledLength,
+    y: scaledY * inverseScaledLength,
+    z: scaledZ * inverseScaledLength,
+    w: scaledW * inverseScaledLength,
+  } as Quat;
 }
 
 export function quatMultiply(a: Quat, b: Quat): Quat {
@@ -466,7 +508,7 @@ export function quatMultiply(a: Quat, b: Quat): Quat {
     y: a.y * b.w + a.w * b.y + a.z * b.x - a.x * b.z,
     z: a.z * b.w + a.w * b.z + a.x * b.y - a.y * b.x,
     w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
-  };
+  } as Quat;
 }
 
 export function quatConjugate(rotation: Quat): Quat {
@@ -475,10 +517,17 @@ export function quatConjugate(rotation: Quat): Quat {
     y: -rotation.y,
     z: -rotation.z,
     w: rotation.w,
-  };
+  } as Quat;
 }
 
-export function quatFromAxisAngle(axis: Vec3, radians: number): Quat {
+export function quatFromAxisAngle(
+  axis: Vec3,
+  radians: number,
+): Quat | null {
+  if (vec3MaxAbsComponent(axis) === 0) {
+    return null;
+  }
+
   const normalizedAxis = vec3Normalize(axis);
   const halfRadians = radians / 2;
   const sine = Math.sin(halfRadians);
@@ -488,7 +537,7 @@ export function quatFromAxisAngle(axis: Vec3, radians: number): Quat {
     y: normalizedAxis.y * sine,
     z: normalizedAxis.z * sine,
     w: Math.cos(halfRadians),
-  };
+  } as Quat;
 }
 
 export function quatToMat4(rotation: Quat): Mat4 {
@@ -597,35 +646,49 @@ export function quatEquals(
   );
 }
 
-export function planeNormalize(plane: Plane): Plane | null {
-  const length = vec3Length(plane.normal);
+export function planeNormalize(
+  plane: Readonly<{ normal: Vec3; constant: number }>,
+): Plane | null {
+  const maxComponent = vec3MaxAbsComponent(plane.normal);
 
-  if (length === 0) {
+  if (maxComponent === 0) {
     return null;
   }
 
-  const inverseLength = 1 / length;
+  // Divide by the largest component first so the scaled components stay in
+  // [-1, 1] and the squared sum cannot overflow.
+  const scaledX = plane.normal.x / maxComponent;
+  const scaledY = plane.normal.y / maxComponent;
+  const scaledZ = plane.normal.z / maxComponent;
+  const inverseScaledLength =
+    1 / Math.sqrt(scaledX * scaledX + scaledY * scaledY + scaledZ * scaledZ);
 
+  // |normal| = maxComponent * scaledLength, so scaling the constant by both
+  // factors keeps it relative to the unit normal without overflow.
   return {
-    normal: vec3Scale(plane.normal, inverseLength),
-    constant: plane.constant * inverseLength,
-  };
+    normal: {
+      x: scaledX * inverseScaledLength,
+      y: scaledY * inverseScaledLength,
+      z: scaledZ * inverseScaledLength,
+    },
+    constant: (plane.constant * inverseScaledLength) / maxComponent,
+  } as Plane;
 }
 
 export function planeFromPointNormal(
   point: Vec3,
   normal: Vec3,
 ): Plane | null {
-  const normalizedNormal = vec3Normalize(normal);
-
-  if (vec3LengthSquared(normalizedNormal) === 0) {
+  if (vec3MaxAbsComponent(normal) === 0) {
     return null;
   }
+
+  const normalizedNormal = vec3Normalize(normal);
 
   return {
     normal: normalizedNormal,
     constant: -vec3Dot(normalizedNormal, point),
-  };
+  } as Plane;
 }
 
 export function planeDistanceToPoint(plane: Plane, point: Vec3): number {

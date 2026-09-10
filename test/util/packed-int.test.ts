@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   MAX_COORDINATE,
@@ -268,5 +268,10 @@ describe("packed-int", () => {
         max: MAX_COORDINATE,
       },
     });
+  });
+
+  it("cannot be produced from a bare number", () => {
+    expectTypeOf<number>().not.toExtend<VoxelKey>();
+    expectTypeOf(packSuccess(0, 0, 0)).toEqualTypeOf<VoxelKey>();
   });
 });
