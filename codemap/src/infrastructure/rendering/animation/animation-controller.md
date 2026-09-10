@@ -1,6 +1,6 @@
 # animation-controller.ts
 
-**职责**：实现 `application/ports/animation-port` 的 `AnimationSessionPort`（包括 `AnimationPreviewPort`），协调统一 `AnimationDocumentV1`、运行时播放时钟、Camera Control、相机路径、Follow/Observe 预览和编辑器状态恢复。每帧只调用一次领域求值，并把同一个完整 `AnimationEvaluation` 交给注入的 `AnimationApplyPort`；控制器不实现插值、离线编码，也不绕过应用端口直接写 `scene` 或相机变换。
+**职责**：实现 `application/ports/animation-port` 的 `AnimationSessionPort`（包括 `AnimationPreviewPort`），协调统一 `AnimationDocument`、运行时播放时钟、Camera Control、相机路径、Follow/Observe 预览和编辑器状态恢复。每帧只调用一次领域求值，并把同一个完整 `AnimationEvaluation` 交给注入的 `AnimationApplyPort`；控制器不实现插值、离线编码，也不绕过应用端口直接写 `scene` 或相机变换。
 
 **接口**：实现 `AnimationSessionPort`，方法名和返回身份必须与端口完全一致。
 - 数据与编辑：`load(document)`、`getSnapshot()`、`serialize()`、`hasTracksForNode(nodeId)`、`setDuration(durationMs)`、`setLoop(enabled)`、`createTrack(target, channel, timeMs, value, easing): Result<string, AnimationError>`、`deleteTrack(trackId)`、`addKeyframe(trackId, timeMs, value, easing): Result<string, AnimationError>`、`replaceKeyframe(trackId, keyframeId, timeMs, value, easing)`、`removeKeyframe(trackId, keyframeId)`、`moveKeyframe(trackId, keyframeId, timeMs)`。
@@ -16,7 +16,7 @@
 - `evaluateForFrame()` 不保留；离线渲染器自行冻结文档并调用 `domain/animation.evaluateAnimation`，避免形成第二套求值入口。
 
 **内部**：
-- 持有一个不可变 `AnimationDocumentV1`；duration、loop、track/keyframe 插入/替换/删除/移动全部委托 `domain/animation`。控制器只保存 `currentTimeMs`、`status = stopped|playing|paused`、`selectedTrackId`、`selectedKeyframeId`、`hasOverride` 和单调时钟起点，不得在 Three.js 层复制插值算法。
+- 持有一个不可变 `AnimationDocument`；duration、loop、track/keyframe 插入/替换/删除/移动全部委托 `domain/animation`。控制器只保存 `currentTimeMs`、`status = stopped|playing|paused`、`selectedTrackId`、`selectedKeyframeId`、`hasOverride` 和单调时钟起点，不得在 Three.js 层复制插值算法。
 - `load(document)` 先读取 `SceneDocument.snapshot()`，针对同一时刻的只读 `SceneSnapshot` 严格校验；失败保持旧文档和全部运行时状态不变。成功后原子替换文档，复位为 stopped、`currentTimeMs = 0`、`hasOverride = false`、清空 track/keyframe selection，结束 Camera Control/Follow/Observe preview，并调用 `AnimationApplyPort.clearEvaluation()`。
 - 动画数据编辑属于项目作用域变更：成功修改文档后通过 `subscribe()` 发布文档变更，由 ProjectService 增加 `projectVersion` 并驱动 dirty；不得修改 `SceneDocument.version`。播放、seek、Follow/Observe、路径可见性、Camera Control 姿态/可见性/选择、`cameraToView`/`viewToCamera` 和 override 变化只属于运行时，不修改项目数据、`SceneDocument.version` 或 dirty 状态；只有 `addCameraKeyframeFromControl()` 实际写入动画文档时才触发 dirty。
 - `setDuration()`、`setLoop()`、`createTrack()`、`deleteTrack()`、`addKeyframe()`、`replaceKeyframe()`、`removeKeyframe()`、`moveKeyframe()` 和 `addCameraKeyframeFromControl()` 统一执行端口门禁：`status !== 'stopped'` 或 `hasOverride` 时返回 `animation-playback-active`，不得产生部分文档变更。调用方必须先执行 `stopAndClearOverride()`；控制器不得自动停播或建立平行门禁。

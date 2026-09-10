@@ -7,12 +7,12 @@
 
 ## 本重构必须补齐
 
-shithill 的 Bake Mesh 只存在于内存，项目文件只保存体素和动画文档。目标架构必须新增可持久化资产模型，使项目保存后能恢复自己生成的 Bake Mesh；这不等于 Load Bakes 或外部 GLB 导入。Bake Mesh 持久化不得新增相机专用动画字段或第二份动画文档，动画始终由项目顶层统一的 `AnimationDocumentV1` 拥有。
+shithill 的 Bake Mesh 只存在于内存，项目文件只保存体素和动画文档。目标架构必须新增可持久化资产模型，使项目保存后能恢复自己生成的 Bake Mesh；这不等于 Load Bakes 或外部 GLB 导入。Bake Mesh 持久化不得新增相机专用动画字段或第二份动画文档，动画始终由项目顶层统一的 `AnimationDocument` 拥有。
 
 ## 项目 manifest
 
 ```text
-BakedMeshManifestV1 {
+BakedMeshManifest {
   version: 1;
   id: string;
   name: string;
@@ -40,7 +40,7 @@ BakedMeshManifestV1 {
 ## 资产 DTO
 
 ```text
-BakedGeometryAssetV1 {
+BakedGeometryAsset {
   version: 1;
   geometry: {
     layout: "separate-arrays";
@@ -53,7 +53,7 @@ BakedGeometryAssetV1 {
   };
 }
 
-BakedMaterialAssetV1 {
+BakedMaterialAsset {
   version: 1;
   material: {
     baseColorFactor: "#RRGGBB" | [number, number, number];

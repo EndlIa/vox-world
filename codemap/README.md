@@ -38,7 +38,7 @@ Project
   │     ├── SceneNode（层级与变换）
   │     └── VoxObject（局部体素网格）
   ├── Camera / Render settings
-  └── AnimationDocumentV1
+  └── AnimationDocument
 
 SceneNode
   ├── id / parentId / childIds
@@ -66,7 +66,7 @@ VoxObject
 
 ### 动画模型
 
-- `AnimationDocumentV1` 是项目级唯一动画文档，包含一个共享时间轴和若干轨道；Camera 轨道与 SceneNode 轨道使用同一求值器。
+- `AnimationDocument` 是项目级唯一动画文档，包含一个共享时间轴和若干轨道；Camera 轨道与 SceneNode 轨道使用同一求值器。
 - Node 轨道绑定稳定 `SceneNodeId`，只驱动该节点相对父节点的 `position`、`rotation`、`scale`；父子矩阵组合负责得到世界变换。
 - Camera 轨道驱动 `position`、`rotation`、`fov`。相机不是 SceneNode，不参与场景层级。
 - `SceneSnapshot` 只保存作者设置的节点基础变换；动画求值产生只读 `AnimationEvaluation`。Renderer 使用“作者态 + 运行时 override”的有效节点/相机状态，播放不得写回 `SceneDocument`、相机作者态或项目数据。
@@ -115,7 +115,7 @@ util ──────────────→ util
 - 可预期、可恢复的失败使用 `Result`；编程错误、内部不变量破坏和理论上不可能的状态使用 `throw Error`。
 - Worker、持久化、IPC、项目文件和其他序列化边界只能传递普通可序列化数据，不得传递函数、类实例、DOM/Three.js 对象或原生 `Error`。
 - 跨边界错误使用普通数据表示，通常为 `{ code, message, details? }`。
-- 持久化格式从当前 `V1` 开始定义，只支持当前版本并拒绝其他版本；不设计迁移链、旧字段别名或宽松兼容解析。
+- 持久化格式版本由 DTO 的 `version: 1` 字段表达；只支持当前版本并拒绝其他版本，不设计迁移链、旧字段别名或宽松兼容解析。
 - 不削弱 `tsconfig.json` 中的严格 TypeScript 设置，不通过无约束的 `any` 或强制类型断言绕过类型检查。
 - `Result` 的具体契约见 `codemap/src/util/result.md`；全局例外见 `IMPORTANT`。
 
@@ -131,7 +131,7 @@ util ──────────────→ util
 | `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值；`Quat` 带 brand（值域恒为单位四元数），`Plane` 带 brand（法向量恒为单位向量） |
 | `SceneNodeId`、`VoxObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`VoxObjectSnapshot`、`SceneSnapshot`、`ObjectVoxelRef` | `domain/scene/scene-types` | 场景图、对象身份和对象局部体素引用 |
 | `ScenePatch`、`ScenePatchOp` | `domain/scene/scene-patch` | 场景级可逆补丁 |
-| `AnimationDocumentV1`、`AnimationTrackV1`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |
+| `AnimationDocument`、`AnimationTrack`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |
 | `AnimationPreviewPort`、`AnimationSessionPort`、`AnimationApplyPort`、`AnimationOutputWriter`、`AnimationOutputMetadata`、`AnimationOutputResult` | `application/ports/animation-port` | 应用层动画预览/会话、运行时求值应用与离线输出契约 |
 
 类型收敛规则：
@@ -143,6 +143,7 @@ util ──────────────→ util
 - `SceneSnapshot` 是场景根快照；`VoxelSnapshot` 只表示单个 `VoxObject` 的局部数据。任何跨对象操作都不得退化为全局 `VoxelKey` 查找。
 - 跨模块的公开数据使用只读普通对象/数组；本项目的 `readonly` 是编译期约束，不依赖 `Object.freeze`，但不得把所有权状态对象或其底层 `Map`/`Set` 暴露给其他模块。
 - 序列化边界必须在输入侧接收 `unknown` 并做运行时校验；TypeScript brand 不提供运行时保证。
+- 版本信息只允许存在于持久化 DTO 的 `version` 字段；不得把格式版本号编进类型名或文件名（不出现 `XxxV1` 之类后缀）。同一格式的新版本通过新增 DTO 形状并对旧版本显式报错来表达，不做字段级兼容或迁移。
 
 ## 契约维护
 

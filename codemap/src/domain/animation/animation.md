@@ -7,7 +7,7 @@
 - `setDuration(document, durationMs)`、`setLoop(document, loop)`。
 - `createTrack(document, trackId, target, channel, keyframe)`、`insertKeyframe(document, trackId, keyframe)`、`replaceKeyframe`、`removeKeyframe(document, trackId, keyframeId)`、`moveKeyframe`、`removeTrack(document, trackId)`。
 - `evaluateAnimation(document, timeMs): AnimationEvaluation`。
-- `serializeAnimation(document): AnimationDocumentV1`、`restoreAnimation(value): Result<AnimationDocumentV1, AnimationError>`。
+- `serializeAnimation(document): AnimationDocument`、`restoreAnimation(value): Result<AnimationDocument, AnimationError>`。
 
 **统一格式与默认值**：
 ```json
@@ -44,14 +44,14 @@
 ```
 
 ```text
-AnimationDocumentV1 {
+AnimationDocument {
   version: 1;
   durationMs: number;
   loop: boolean;
-  tracks: AnimationTrackV1[];
+  tracks: AnimationTrack[];
 }
 
-AnimationTrackV1 =
+AnimationTrack =
   | NodePositionTrack
   | NodeRotationTrack
   | NodeScaleTrack
@@ -91,7 +91,7 @@ AnimationEvaluation {
 - `AnimationCameraPose` 是 `domain/animation` 自有的最小相机求值结构；渲染层只按 `position`、`rotation`、`fov` 三个普通字段消费，不得引入 Three.js 相机或第二套相机姿态 DTO。`fov` 的单位始终为弧度（默认 `0.8`），与 `camera-control`/`domain/render` 一致；Three.js 的角度制转换只能发生在渲染边界，不得写入动画文档或求值结果。
 
 - 默认 `durationMs = 5000`、`loop = false`、空 `tracks`。新项目必须显式调用 `createDefaultAnimation()`，不能依赖加载器补字段。空 `tracks` 是合法、可持久化的项目状态，求值返回空 `AnimationEvaluation`；播放与离线渲染必须拒绝启动空文档，具体门禁由 `animation-controller`/`animation-renderer` 执行。
-- 项目格式边界是顶层必填字段 `animation: AnimationDocumentV1`；`serializeAnimation` 只生成该值，`restoreAnimation` 只接受完整且自洽的 V1 文档，节点引用合法性另由 `validateAnimation(document, scene)` 校验。
+- 项目格式边界是顶层必填字段 `animation: AnimationDocument`；`serializeAnimation` 只生成该值，`restoreAnimation` 只接受完整且自洽的 V1 文档，节点引用合法性另由 `validateAnimation(document, scene)` 校验。
 - `cameraAnimation` 不是当前格式字段；项目 codec、Snapshot 和归档遇到它必须拒绝，不得迁移或兼容。
 
 **轨道规则**：
