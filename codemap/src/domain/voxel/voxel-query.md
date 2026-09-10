@@ -11,7 +11,7 @@
 
 **内部**：
 - 所有查询都以一个 `VoxelReadView` 为输入；该视图属于明确的 `VoxObjectId`，不得把一个对象的查询结果与另一个对象的键混用。
-- 优先使用空间索引按范围查询，退化时遍历只读视图；不复制全部体素，除非调用方明确要求快照。
+- 范围查询遍历只读视图；不复制全部体素，除非调用方明确要求快照。
 - `connectivity = 6` 使用六个轴向邻居；`26` 使用六轴加 20 个边/角方向。连通遍历默认只穿过 `visible === true` 的体素，隐藏体素阻断连通；Group by Islands 和 Bucket Island 共用该规则。
 - `isInternal` 的 neighborhood 只允许 6/18/26。当前体素在对应邻域内所有邻居都存在时为内部体素；隐藏体素仍算占用。不能把“不可见”误判为空。6 使用轴向、18 使用轴向与边方向、26 再加角方向。
 - `byColor` 使用规范化颜色的精确相等语义。颜色组不是单独实体；同一颜色的所有体素构成一个逻辑组，即使它们属于多个岛屿。
@@ -20,7 +20,7 @@
 - 查询不接受 renderer/pick 结果；屏幕可见表面集合由 PickService 提供，再由 Handler 与活动对象查询结果求交。
 - Edit 模式下调用方必须先通过 `EditorState.activeObjectId` 取得对应视图；查询模块不负责判断哪个对象可编辑。
 
-**依赖**：voxel-types、util/octree、util/packed-int。
+**依赖**：voxel-types、util/packed-int。
 
 ## 本重构必须补齐
 
