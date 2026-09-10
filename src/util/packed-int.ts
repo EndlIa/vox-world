@@ -25,22 +25,40 @@ export type PackedIntError =
       readonly value: number;
     };
 
+/** Bias that maps the signed 16-bit range onto `[0, 65535]`. */
+const COORDINATE_BIAS = MAX_COORDINATE + 1;
 const COORDINATE_BITS = 65536;
-const COORDINATE_Y_AND_Z_BITS = 4294967296;
+const COORDINATE_Y_AND_Z_BITS = COORDINATE_BITS * COORDINATE_BITS;
 
-function isCoordinate(value: number): boolean {
-  return (
-    Number.isSafeInteger(value) &&
-    value >= MIN_COORDINATE &&
-    value <= MAX_COORDINATE
-  );
+type CoordinateStatus = "valid" | "not_integer" | "out_of_range";
+
+/**
+ * Single owner of the coordinate rule: a safe integer inside the signed 16-bit
+ * range. Consumers map the status onto their own shape, boolean or error.
+ */
+function coordinateStatus(value: number): CoordinateStatus {
+  if (!Number.isSafeInteger(value)) {
+    return "not_integer";
+  }
+
+  if (value < MIN_COORDINATE || value > MAX_COORDINATE) {
+    return "out_of_range";
+  }
+
+  return "valid";
 }
 
 function validateCoordinate(
   value: number,
   axis: "x" | "y" | "z",
 ): PackedIntError | undefined {
-  if (!Number.isSafeInteger(value)) {
+  const status = coordinateStatus(value);
+
+  if (status === "valid") {
+    return undefined;
+  }
+
+  if (status === "not_integer") {
     return {
       code: "invalid_coordinate",
       axis,
@@ -48,17 +66,22 @@ function validateCoordinate(
     };
   }
 
-  if (value < MIN_COORDINATE || value > MAX_COORDINATE) {
-    return {
-      code: "coordinate_out_of_range",
-      axis,
-      value,
-      min: MIN_COORDINATE,
-      max: MAX_COORDINATE,
-    };
-  }
+  return {
+    code: "coordinate_out_of_range",
+    axis,
+    value,
+    min: MIN_COORDINATE,
+    max: MAX_COORDINATE,
+  };
+}
 
-  return undefined;
+/** Packs already validated coordinates; the only place the layout is written. */
+function computeKey(x: number, y: number, z: number): VoxelKey {
+  return (
+    ((x + COORDINATE_BIAS) * COORDINATE_BITS + (y + COORDINATE_BIAS)) *
+      COORDINATE_BITS +
+    (z + COORDINATE_BIAS)
+  ) as VoxelKey;
 }
 
 export function pack(
@@ -84,10 +107,7 @@ export function pack(
     return err(zError);
   }
 
-  return ok(
-    (((x + 32768) * COORDINATE_BITS + (y + 32768)) * COORDINATE_BITS +
-      (z + 32768)) as VoxelKey,
-  );
+  return ok(computeKey(x, y, z));
 }
 
 export function unpack(
@@ -98,9 +118,9 @@ export function unpack(
   const x = Math.floor(key / COORDINATE_Y_AND_Z_BITS) % COORDINATE_BITS;
 
   return [
-    x - 32768,
-    y - 32768,
-    z - 32768,
+    x - COORDINATE_BIAS,
+    y - COORDINATE_BIAS,
+    z - COORDINATE_BIAS,
   ] as const;
 }
 
@@ -117,7 +137,11 @@ export function compare(a: VoxelKey, b: VoxelKey): -1 | 0 | 1 {
 }
 
 export function boundsCheck(x: number, y: number, z: number): boolean {
-  return isCoordinate(x) && isCoordinate(y) && isCoordinate(z);
+  return (
+    coordinateStatus(x) === "valid" &&
+    coordinateStatus(y) === "valid" &&
+    coordinateStatus(z) === "valid"
+  );
 }
 
 export function neighbor(
@@ -162,7 +186,11 @@ export function neighbor(
     }
   }
 
-  if (!boundsCheck(nextX, nextY, nextZ)) {
+  // The moved axis is the only coordinate that can fail: the other two come from
+  // a valid `VoxelKey`. A sum that leaves the safe integer range still reports
+  // `coordinate_out_of_range`, not `invalid_coordinate`, because both inputs the
+  // caller supplied (`key`, `delta`) were valid.
+  if (coordinateStatus(nextValue) !== "valid") {
     return err({
       code: "coordinate_out_of_range",
       axis,
@@ -172,5 +200,5 @@ export function neighbor(
     });
   }
 
-  return pack(nextX, nextY, nextZ);
+  return ok(computeKey(nextX, nextY, nextZ));
 }
