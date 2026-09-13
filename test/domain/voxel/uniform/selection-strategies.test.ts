@@ -24,7 +24,7 @@ type Corner = readonly [x: number, y: number, z: number];
 
 function expectOk<T, E>(result: Result<T, E>): T {
   if (!result.ok) {
-    throw new Error(`Expected success: ${JSON.stringify(result.error)}`);
+    throw new Error(`Expected a successful result, got ${JSON.stringify(result.error)}`);
   }
 
   return result.value;
@@ -34,7 +34,7 @@ function color(input: string): ColorHex {
   return expectOk(parseHex(input));
 }
 
-function keyOf(x: number, y: number, z: number): VoxelKey {
+function packSuccess(x: number, y: number, z: number): VoxelKey {
   return expectOk(pack(x, y, z));
 }
 
@@ -106,7 +106,7 @@ describe("box strategy", () => {
       snapshot,
     );
 
-    expect(resolution.keys).toEqual([keyOf(1, 0, 0), keyOf(2, 0, 0)]);
+    expect(resolution.keys).toEqual([packSuccess(1, 0, 0), packSuccess(2, 0, 0)]);
   });
 
   it("returns nothing for an empty or disjoint range", () => {
@@ -127,7 +127,7 @@ describe("color strategy", () => {
     expect(
       resolveSelection({ kind: "color", color: color("#ff0000") }, snapshot)
         .keys,
-    ).toEqual([keyOf(0, 0, 0), keyOf(2, 0, 0)]);
+    ).toEqual([packSuccess(0, 0, 0), packSuccess(2, 0, 0)]);
   });
 
   it("returns nothing for a color the object does not use", () => {
@@ -140,10 +140,10 @@ describe("color strategy", () => {
 
 describe("rectangle strategy", () => {
   const projectedKeys = [
-    keyOf(2, 0, 0),
-    keyOf(0, 0, 0),
-    keyOf(2, 0, 0),
-    keyOf(9, 0, 0),
+    packSuccess(2, 0, 0),
+    packSuccess(0, 0, 0),
+    packSuccess(2, 0, 0),
+    packSuccess(9, 0, 0),
   ];
 
   it("intersects with surface keys when bypass is off", () => {
@@ -151,13 +151,13 @@ describe("rectangle strategy", () => {
       {
         kind: "rectangle",
         projectedKeys,
-        surfaceKeys: [keyOf(0, 0, 0), keyOf(5, 0, 0)],
+        surfaceKeys: [packSuccess(0, 0, 0), packSuccess(5, 0, 0)],
         bypass: false,
       },
       snapshot,
     );
 
-    expect(resolution.keys).toEqual([keyOf(0, 0, 0)]);
+    expect(resolution.keys).toEqual([packSuccess(0, 0, 0)]);
   });
 
   it("keeps the whole projected depth when bypass is on", () => {
@@ -173,9 +173,9 @@ describe("rectangle strategy", () => {
 
     // Empty positions stay in the set: Add writes into empty space.
     expect(resolution.keys).toEqual([
-      keyOf(0, 0, 0),
-      keyOf(2, 0, 0),
-      keyOf(9, 0, 0),
+      packSuccess(0, 0, 0),
+      packSuccess(2, 0, 0),
+      packSuccess(9, 0, 0),
     ]);
   });
 
@@ -185,7 +185,7 @@ describe("rectangle strategy", () => {
         {
           kind: "rectangle",
           projectedKeys: [],
-          surfaceKeys: [keyOf(0, 0, 0)],
+          surfaceKeys: [packSuccess(0, 0, 0)],
           bypass: false,
         },
         snapshot,

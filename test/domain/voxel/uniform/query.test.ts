@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 
 import {
   bounds,
@@ -21,16 +21,16 @@ import {
   uniformVoxSnapshot,
   type Bounds3i,
   type ColorHex,
-  type UniformVoxParts,
   type UniformVoxSnapshot,
   type VoxelScope,
+  type VoxelKey,
+  type VoxelSnapshot,
 } from "../../../../src/domain/voxel/uniform/types";
 import { parseHex } from "../../../../src/util/color";
 import {
   MAX_COORDINATE,
   MIN_COORDINATE,
   pack,
-  type VoxelKey,
 } from "../../../../src/util/packed-int";
 import type { Result } from "../../../../src/util/result";
 
@@ -39,7 +39,7 @@ type Corner = readonly [x: number, y: number, z: number];
 
 function expectOk<T, E>(result: Result<T, E>): T {
   if (!result.ok) {
-    throw new Error(`Expected success: ${JSON.stringify(result.error)}`);
+    throw new Error(`Expected a successful result, got ${JSON.stringify(result.error)}`);
   }
 
   return result.value;
@@ -49,11 +49,11 @@ function color(input: string): ColorHex {
   return expectOk(parseHex(input));
 }
 
-function keyOf(x: number, y: number, z: number): VoxelKey {
+function packSuccess(x: number, y: number, z: number): VoxelKey {
   return expectOk(pack(x, y, z));
 }
 
-function parts(entries: readonly Entry[]): UniformVoxParts {
+function voxelsOf(entries: readonly Entry[]): UniformVoxSnapshot {
   const x: number[] = [];
   const y: number[] = [];
   const z: number[] = [];
@@ -75,11 +75,7 @@ function parts(entries: readonly Entry[]): UniformVoxParts {
     colorIndex.push(index);
   }
 
-  return { x, y, z, colorIndex, palette };
-}
-
-function voxelsOf(entries: readonly Entry[]): UniformVoxSnapshot {
-  return expectOk(uniformVoxSnapshot(parts(entries)));
+  return expectOk(uniformVoxSnapshot({ x, y, z, colorIndex, palette }));
 }
 
 function boxed(min: Corner, max: Corner): Bounds3i {
@@ -102,6 +98,50 @@ const spread: readonly Entry[] = Array.from(
   ],
 );
 
+describe("query type contract", () => {
+  it("pins the public query signatures", () => {
+    expectTypeOf(bounds).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot) => Bounds3i
+    >();
+    expectTypeOf(count).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot) => number
+    >();
+    expectTypeOf(has).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot, key: VoxelKey) => boolean
+    >();
+    expectTypeOf(indexOfKey).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot, key: VoxelKey) => number
+    >();
+    expectTypeOf(colorAt).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot, key: VoxelKey) => ColorHex | undefined
+    >();
+    expectTypeOf(keys).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot) => Iterable<VoxelKey>
+    >();
+    // A box query takes the domain range, never a math `Aabb`.
+    expectTypeOf(withinBox).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot, bounds: Bounds3i) => Iterable<VoxelKey>
+    >();
+    expectTypeOf(byColor).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot, color: ColorHex) => Iterable<VoxelKey>
+    >();
+    // The palette is handed back as-is, so the read-only view is the contract
+    // that keeps callers from reordering what byColor binary-searches.
+    expectTypeOf(uniqueColors).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot) => readonly ColorHex[]
+    >();
+    expectTypeOf(resolveScope).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot, scope: VoxelScope) => Iterable<VoxelKey>
+    >();
+    expectTypeOf(voxelAt).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot, index: number) => VoxelSnapshot
+    >();
+    expectTypeOf(voxelRecords).toEqualTypeOf<
+      (snapshot: UniformVoxSnapshot) => Iterable<VoxelSnapshot>
+    >();
+  });
+});
+
 describe("scalar queries", () => {
   it("counts the container", () => {
     expect(count(voxelsOf([]))).toBe(0);
@@ -112,27 +152,27 @@ describe("scalar queries", () => {
     const snapshot = voxelsOf(spread);
 
     for (const entry of spread) {
-      const key = keyOf(entry[0], entry[1], entry[2]);
+      const key = packSuccess(entry[0], entry[1], entry[2]);
 
       expect(has(snapshot, key)).toBe(true);
       expect(indexOfKey(snapshot, key)).toBeGreaterThanOrEqual(0);
     }
 
-    expect(has(snapshot, keyOf(0, 0, 1))).toBe(false);
-    expect(indexOfKey(snapshot, keyOf(0, 0, 1))).toBe(-1);
-    expect(colorAt(snapshot, keyOf(0, 0, 1))).toBeUndefined();
+    expect(has(snapshot, packSuccess(0, 0, 1))).toBe(false);
+    expect(indexOfKey(snapshot, packSuccess(0, 0, 1))).toBe(-1);
+    expect(colorAt(snapshot, packSuccess(0, 0, 1))).toBeUndefined();
   });
 
   it("returns the normalized color of an existing key", () => {
     const snapshot = voxelsOf([[0, 0, 0, "#ff0000"]]);
 
-    expect(colorAt(snapshot, keyOf(0, 0, 0))).toBe(color("#FF0000"));
+    expect(colorAt(snapshot, packSuccess(0, 0, 0))).toBe(color("#FF0000"));
   });
 
   it("keeps binary search consistent with the ascending container", () => {
     const snapshot = voxelsOf(spread);
     const indexes = spread.map((entry) =>
-      indexOfKey(snapshot, keyOf(entry[0], entry[1], entry[2])),
+      indexOfKey(snapshot, packSuccess(entry[0], entry[1], entry[2])),
     );
 
     expect([...indexes].sort((left, right) => left - right)).toEqual(
@@ -181,15 +221,15 @@ describe("lazy sequences", () => {
     const second = Array.from(sequence);
 
     expect(first).toEqual([
-      keyOf(-1, 5, 0),
-      keyOf(0, 0, 3),
-      keyOf(2, 0, 0),
+      packSuccess(-1, 5, 0),
+      packSuccess(0, 0, 3),
+      packSuccess(2, 0, 0),
     ]);
     expect(second).toEqual(first);
     expect(Array.isArray(sequence)).toBe(false);
   });
 
-  it("keeps the box range closed and repeatable", () => {
+  it("keeps the box range closed, repeatable, and un-materialized", () => {
     const snapshot = voxelsOf([
       [0, 0, 0, "#ff0000"],
       [1, 0, 0, "#ff0000"],
@@ -199,8 +239,15 @@ describe("lazy sequences", () => {
 
     const sequence = withinBox(snapshot, boxed([1, 0, 0], [2, 0, 0]));
 
-    expect(Array.from(sequence)).toEqual([keyOf(1, 0, 0), keyOf(2, 0, 0)]);
-    expect(Array.from(sequence)).toEqual([keyOf(1, 0, 0), keyOf(2, 0, 0)]);
+    expect(Array.from(sequence)).toEqual([
+      packSuccess(1, 0, 0),
+      packSuccess(2, 0, 0),
+    ]);
+    expect(Array.from(sequence)).toEqual([
+      packSuccess(1, 0, 0),
+      packSuccess(2, 0, 0),
+    ]);
+    expect("length" in sequence).toBe(false);
   });
 
   it("yields nothing for an empty box or a box outside the model", () => {
@@ -212,7 +259,7 @@ describe("lazy sequences", () => {
     );
   });
 
-  it("matches colors exactly through the palette", () => {
+  it("matches colors exactly through the palette, un-materialized", () => {
     const snapshot = voxelsOf([
       [0, 0, 0, "#ff0000"],
       [1, 0, 0, "#00ff00"],
@@ -221,8 +268,15 @@ describe("lazy sequences", () => {
 
     const sequence = byColor(snapshot, color("#FF0000"));
 
-    expect(Array.from(sequence)).toEqual([keyOf(0, 0, 0), keyOf(2, 0, 0)]);
-    expect(Array.from(sequence)).toEqual([keyOf(0, 0, 0), keyOf(2, 0, 0)]);
+    expect(Array.from(sequence)).toEqual([
+      packSuccess(0, 0, 0),
+      packSuccess(2, 0, 0),
+    ]);
+    expect(Array.from(sequence)).toEqual([
+      packSuccess(0, 0, 0),
+      packSuccess(2, 0, 0),
+    ]);
+    expect(Array.isArray(sequence)).toBe(false);
     expect(Array.from(byColor(snapshot, color("#0000ff")))).toEqual([]);
   });
 
@@ -246,20 +300,25 @@ describe("resolveScope", () => {
   it("sorts and dedupes the keys variant", () => {
     const scope: VoxelScope = {
       kind: "keys",
-      keys: [keyOf(2, 0, 0), keyOf(0, 0, 0), keyOf(2, 0, 0), keyOf(1, 0, 0)],
+      keys: [
+        packSuccess(2, 0, 0),
+        packSuccess(0, 0, 0),
+        packSuccess(2, 0, 0),
+        packSuccess(1, 0, 0),
+      ],
     };
 
     const sequence = resolveScope(snapshot, scope);
 
     expect(Array.from(sequence)).toEqual([
-      keyOf(0, 0, 0),
-      keyOf(1, 0, 0),
-      keyOf(2, 0, 0),
+      packSuccess(0, 0, 0),
+      packSuccess(1, 0, 0),
+      packSuccess(2, 0, 0),
     ]);
     expect(Array.from(sequence)).toEqual([
-      keyOf(0, 0, 0),
-      keyOf(1, 0, 0),
-      keyOf(2, 0, 0),
+      packSuccess(0, 0, 0),
+      packSuccess(1, 0, 0),
+      packSuccess(2, 0, 0),
     ]);
   });
 
@@ -273,7 +332,13 @@ describe("resolveScope", () => {
     expect(() => Array.from(resolveScope(snapshot, scope))).toThrow();
   });
 
-  it("resolves bounds, color, and all to the matching sequences", () => {
+  it("resolves an empty keys variant to nothing", () => {
+    expect(Array.from(resolveScope(snapshot, { kind: "keys", keys: [] }))).toEqual(
+      [],
+    );
+  });
+
+  it("resolves the bounds variant through the box query", () => {
     expect(
       Array.from(
         resolveScope(snapshot, {
@@ -281,18 +346,20 @@ describe("resolveScope", () => {
           bounds: boxed([1, 0, 0], [2, 0, 0]),
         }),
       ),
-    ).toEqual([keyOf(1, 0, 0), keyOf(2, 0, 0)]);
-    expect(
-      Array.from(resolveScope(snapshot, { kind: "color", color: color("#ff0000") })),
-    ).toEqual([keyOf(0, 0, 0), keyOf(2, 0, 0)]);
-    expect(Array.from(resolveScope(snapshot, { kind: "all" }))).toEqual(
-      Array.from(keys(snapshot)),
-    );
+    ).toEqual([packSuccess(1, 0, 0), packSuccess(2, 0, 0)]);
   });
 
-  it("resolves an empty keys variant to nothing", () => {
-    expect(Array.from(resolveScope(snapshot, { kind: "keys", keys: [] }))).toEqual(
-      [],
+  it("resolves the color variant through the color query", () => {
+    expect(
+      Array.from(
+        resolveScope(snapshot, { kind: "color", color: color("#ff0000") }),
+      ),
+    ).toEqual([packSuccess(0, 0, 0), packSuccess(2, 0, 0)]);
+  });
+
+  it("resolves the all variant to every key", () => {
+    expect(Array.from(resolveScope(snapshot, { kind: "all" }))).toEqual(
+      Array.from(keys(snapshot)),
     );
   });
 });
@@ -303,7 +370,7 @@ describe("cold-path records", () => {
       [4, 5, 6, "#ff0000"],
       [-1, 0, 0, "#00ff00"],
     ]);
-    const index = indexOfKey(snapshot, keyOf(-1, 0, 0));
+    const index = indexOfKey(snapshot, packSuccess(-1, 0, 0));
 
     expect(voxelAt(snapshot, index)).toEqual({
       position: { x: -1, y: 0, z: 0 },

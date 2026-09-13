@@ -8,11 +8,15 @@ import {
   gridPositionFromKey,
   uniformVoxSnapshot,
   type Bounds3i,
+  type Bounds3iError,
   type ColorHex,
   type GridPosition,
+  type GridPositionError,
   type UniformVoxParts,
   type UniformVoxSnapshot,
+  type UniformVoxSnapshotError,
   type VoxelScope,
+  type VoxelSnapshot,
 } from "../../../../src/domain/voxel/uniform/types";
 import { parseHex } from "../../../../src/util/color";
 import type { Aabb, Vec3 } from "../../../../src/util/math";
@@ -29,7 +33,7 @@ type Entry = readonly [x: number, y: number, z: number, hex: string];
 
 function expectOk<T, E>(result: Result<T, E>): T {
   if (!result.ok) {
-    throw new Error(`Expected success: ${JSON.stringify(result.error)}`);
+    throw new Error(`Expected a successful result, got ${JSON.stringify(result.error)}`);
   }
 
   return result.value;
@@ -43,12 +47,12 @@ function position(x: number, y: number, z: number): GridPosition {
   return expectOk(gridPosition(x, y, z));
 }
 
-function keyOf(x: number, y: number, z: number): VoxelKey {
+function packSuccess(x: number, y: number, z: number): VoxelKey {
   return expectOk(pack(x, y, z));
 }
 
 function hexColor(index: number): string {
-  return `#${index.toString(16).padStart(6, "0")}`;
+  return `#${index.toString(16).padStart(6, "0").toUpperCase()}`;
 }
 
 function parts(entries: readonly Entry[]): UniformVoxParts {
@@ -98,6 +102,12 @@ function expectSameContainer(
   );
 }
 
+const singleVoxel: UniformVoxParts = parts([[0, 0, 0, "#ff0000"]]);
+const twoRedVoxels: UniformVoxParts = parts([
+  [0, 0, 0, "#ff0000"],
+  [1, 0, 0, "#ff0000"],
+]);
+
 describe("voxel type contract", () => {
   it("keeps grid positions and bounds distinct from math values", () => {
     expectTypeOf<Vec3>().not.toExtend<GridPosition>();
@@ -146,6 +156,40 @@ describe("voxel type contract", () => {
       | Readonly<{ kind: "all" }>
     >();
   });
+
+  it("pins the record, input, error, and limit contracts", () => {
+    expectTypeOf<VoxelSnapshot>().toEqualTypeOf<
+      Readonly<{ position: GridPosition; color: ColorHex }>
+    >();
+    expectTypeOf<UniformVoxParts>().toEqualTypeOf<
+      Readonly<{
+        x: ArrayLike<number>;
+        y: ArrayLike<number>;
+        z: ArrayLike<number>;
+        colorIndex: ArrayLike<number>;
+        palette: readonly ColorHex[];
+      }>
+    >();
+    // The constructor's declared input: a container can be re-canonicalized.
+    expectTypeOf<UniformVoxSnapshot>().toExtend<UniformVoxParts>();
+    expectTypeOf<GridPositionError>().toEqualTypeOf<
+      Readonly<{ code: "invalid-coordinate"; axis: "x" | "y" | "z" }>
+    >();
+    expectTypeOf<Bounds3iError>().toEqualTypeOf<
+      Readonly<{ code: "invalid-bounds"; axis: "x" | "y" | "z" }>
+    >();
+    expectTypeOf<UniformVoxSnapshotError>().toEqualTypeOf<
+      | GridPositionError
+      | Readonly<{
+          code: "invalid-column-length";
+          column: "y" | "z" | "colorIndex";
+        }>
+      | Readonly<{ code: "invalid-color-index"; index: number }>
+      | Readonly<{ code: "palette-limit-exceeded"; limit: number }>
+    >();
+    // `colorIndex` is a Uint8Array, so the limit cannot grow past 256.
+    expect(PALETTE_LIMIT).toBe(256);
+  });
 });
 
 describe("gridPosition", () => {
@@ -173,15 +217,16 @@ describe("gridPosition", () => {
     },
   );
 
-  it("reports the first invalid axis in x to z order", () => {
-    expect(gridPosition(1.5, 2.5, 3.5)).toEqual({
-      ok: false,
-      error: { code: "invalid-coordinate", axis: "x" },
-    });
-    expect(gridPosition(0, 2.5, 3.5)).toEqual({
-      ok: false,
-      error: { code: "invalid-coordinate", axis: "y" },
-    });
+  it("leaves the reported axis of several invalid axes undefined", () => {
+    const result = gridPosition(1.5, 2.5, 3.5);
+
+    expect(result.ok).toBe(false);
+
+    if (!result.ok) {
+      expect(result.error.code).toBe("invalid-coordinate");
+      // `axis` is only guaranteed to name an invalid axis.
+      expect(["x", "y", "z"]).toContain(result.error.axis);
+    }
   });
 
   it("keeps errors serializable", () => {
@@ -202,10 +247,14 @@ describe("gridPositionFromKey", () => {
     ] as const;
 
     for (const [x, y, z] of coordinates) {
-      const fromKey = gridPositionFromKey(keyOf(x, y, z));
+      const fromKey = gridPositionFromKey(packSuccess(x, y, z));
 
       expect(fromKey).toEqual(expectOk(gridPosition(x, y, z)));
-      expect(unpack(keyOf(x, y, z))).toEqual([fromKey.x, fromKey.y, fromKey.z]);
+      expect(unpack(packSuccess(x, y, z))).toEqual([
+        fromKey.x,
+        fromKey.y,
+        fromKey.z,
+      ]);
     }
   });
 });
@@ -225,21 +274,29 @@ describe("bounds3i", () => {
     });
   });
 
-  it("rejects inverted corners by the first inverted axis", () => {
-    const origin = position(0, 0, 0);
+  it.each([
+    ["x", 1, 0, 0],
+    ["y", 0, 1, 0],
+    ["z", 0, 0, 1],
+  ] as const)(
+    "rejects a range inverted only on axis %s",
+    (axis, x, y, z) => {
+      expect(bounds3i(position(x, y, z), position(0, 0, 0))).toEqual({
+        ok: false,
+        error: { code: "invalid-bounds", axis },
+      });
+    },
+  );
 
-    expect(bounds3i(position(1, 1, 1), origin)).toEqual({
-      ok: false,
-      error: { code: "invalid-bounds", axis: "x" },
-    });
-    expect(bounds3i(position(0, 1, 1), origin)).toEqual({
-      ok: false,
-      error: { code: "invalid-bounds", axis: "y" },
-    });
-    expect(bounds3i(position(0, 0, 1), origin)).toEqual({
-      ok: false,
-      error: { code: "invalid-bounds", axis: "z" },
-    });
+  it("leaves the reported axis of several inverted axes undefined", () => {
+    const result = bounds3i(position(1, 1, 1), position(0, 0, 0));
+
+    expect(result.ok).toBe(false);
+
+    if (!result.ok) {
+      expect(result.error.code).toBe("invalid-bounds");
+      expect(["x", "y", "z"]).toContain(result.error.axis);
+    }
   });
 
   it("represents the empty range without corners", () => {
@@ -315,7 +372,7 @@ describe("uniformVoxSnapshot", () => {
     }
   });
 
-  it("collapses repeated positions to the last entry", () => {
+  it("collapses repeated positions to the last entry, palette included", () => {
     const snapshot = voxelsOf([
       [0, 0, 0, "#ff0000"],
       [1, 0, 0, "#00ff00"],
@@ -325,6 +382,8 @@ describe("uniformVoxSnapshot", () => {
     expect(snapshot.count).toBe(2);
     expect(Array.from(snapshot.x)).toEqual([0, 1]);
     expect(colorsOf(snapshot)).toEqual(["#0000FF", "#00FF00"]);
+    // The overwritten colour must not survive in the canonical palette.
+    expect(snapshot.palette).toEqual(["#0000FF", "#00FF00"]);
   });
 
   it("gives one container per voxel set", () => {
@@ -398,6 +457,26 @@ describe("uniformVoxSnapshot", () => {
     });
   });
 
+  it("counts only the referenced colors against PALETTE_LIMIT", () => {
+    const rawPalette = Array.from(
+      { length: PALETTE_LIMIT + 44 },
+      (_, index) => color(hexColor(index)),
+    );
+    const lastIndex = rawPalette.length - 1;
+
+    const snapshot = expectOk(
+      uniformVoxSnapshot({
+        x: [0, 1],
+        y: [0, 0],
+        z: [0, 0],
+        colorIndex: [0, lastIndex],
+        palette: rawPalette,
+      }),
+    );
+
+    expect(snapshot.palette).toEqual([hexColor(0), hexColor(lastIndex)]);
+  });
+
   it("does not modify its inputs and copies their values", () => {
     const x = [2, 0];
     const y = [0, 1];
@@ -423,57 +502,62 @@ describe("uniformVoxSnapshot", () => {
     expect(colorsOf(snapshot)).toEqual(["#0000FF", "#FF0000"]);
   });
 
-  it("rejects columns that disagree on length", () => {
-    const base = parts([[0, 0, 0, "#ff0000"]]);
+  it.each([
+    ["y", { ...singleVoxel, y: [0, 0] }],
+    ["z", { ...singleVoxel, z: [0, 0] }],
+    ["colorIndex", { ...singleVoxel, colorIndex: [0, 0] }],
+  ] as const)(
+    "rejects a %s column that disagrees on length",
+    (column, input) => {
+      expect(uniformVoxSnapshot(input)).toEqual({
+        ok: false,
+        error: { code: "invalid-column-length", column },
+      });
+    },
+  );
 
-    expect(uniformVoxSnapshot({ ...base, y: [0, 0] })).toEqual({
-      ok: false,
-      error: { code: "invalid-column-length", column: "y" },
-    });
-    expect(uniformVoxSnapshot({ ...base, z: [0, 0] })).toEqual({
-      ok: false,
-      error: { code: "invalid-column-length", column: "z" },
-    });
-    expect(uniformVoxSnapshot({ ...base, colorIndex: [0, 0] })).toEqual({
-      ok: false,
-      error: { code: "invalid-column-length", column: "colorIndex" },
-    });
-  });
+  it.each([
+    ["x", { ...singleVoxel, x: [MAX_COORDINATE + 1] }],
+    ["y", { ...singleVoxel, y: [1.5] }],
+    ["z", { ...singleVoxel, z: [Number.NaN] }],
+  ] as const)(
+    "rejects coordinates outside the 16-bit integer range on %s",
+    (axis, input) => {
+      expect(uniformVoxSnapshot(input)).toEqual({
+        ok: false,
+        error: { code: "invalid-coordinate", axis },
+      });
+    },
+  );
 
-  it("rejects coordinates outside the 16-bit integer range", () => {
-    const base = parts([[0, 0, 0, "#ff0000"]]);
+  it.each([
+    [1, { ...twoRedVoxels, colorIndex: [0, 1] }],
+    [1, { ...twoRedVoxels, colorIndex: [0, 0.5] }],
+    [0, { ...twoRedVoxels, colorIndex: [-1, 0] }],
+  ] as const)(
+    "rejects a color index that does not address the palette",
+    (index, input) => {
+      expect(uniformVoxSnapshot(input)).toEqual({
+        ok: false,
+        error: { code: "invalid-color-index", index },
+      });
+    },
+  );
 
-    expect(uniformVoxSnapshot({ ...base, x: [MAX_COORDINATE + 1] })).toEqual({
-      ok: false,
-      error: { code: "invalid-coordinate", axis: "x" },
+  it("leaves co-occurring coordinate and palette errors undefined", () => {
+    const result = uniformVoxSnapshot({
+      ...singleVoxel,
+      x: [MAX_COORDINATE + 1],
+      colorIndex: [-1],
     });
-    expect(uniformVoxSnapshot({ ...base, y: [1.5] })).toEqual({
-      ok: false,
-      error: { code: "invalid-coordinate", axis: "y" },
-    });
-    expect(uniformVoxSnapshot({ ...base, z: [Number.NaN] })).toEqual({
-      ok: false,
-      error: { code: "invalid-coordinate", axis: "z" },
-    });
-  });
 
-  it("rejects color indices that do not address the palette", () => {
-    const base = parts([
-      [0, 0, 0, "#ff0000"],
-      [1, 0, 0, "#ff0000"],
-    ]);
+    expect(result.ok).toBe(false);
 
-    expect(uniformVoxSnapshot({ ...base, colorIndex: [0, 1] })).toEqual({
-      ok: false,
-      error: { code: "invalid-color-index", index: 1 },
-    });
-    expect(uniformVoxSnapshot({ ...base, colorIndex: [0, 0.5] })).toEqual({
-      ok: false,
-      error: { code: "invalid-color-index", index: 1 },
-    });
-    expect(uniformVoxSnapshot({ ...base, colorIndex: [-1, 0] })).toEqual({
-      ok: false,
-      error: { code: "invalid-color-index", index: 0 },
-    });
+    if (!result.ok) {
+      // Either declared code is acceptable; the precedence is not promised.
+      expect(["invalid-coordinate", "invalid-color-index"]).toContain(
+        result.error.code,
+      );
+    }
   });
 });

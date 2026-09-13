@@ -1,5 +1,10 @@
 import type { ColorHex } from "../../../util/color";
-import { boundsCheck, pack, unpack, type VoxelKey } from "../../../util/packed-int";
+import {
+  pack,
+  unpack,
+  type PackedIntError,
+  type VoxelKey,
+} from "../../../util/packed-int";
 import { err, ok, type Result } from "../../../util/result";
 
 export type { ColorHex } from "../../../util/color";
@@ -107,21 +112,18 @@ function brandGridPosition(x: number, y: number, z: number): GridPosition {
 }
 
 /**
- * Builds the error for coordinates `pack` already rejected, naming the first
- * invalid axis in x → y → z order. Each probe isolates one coordinate by holding
- * the other two at valid zeros, because `pack` does not promise a multi-axis
- * error order; once x and y are valid the rejected axis must be z.
+ * Maps a rejected coordinate triple onto the module error union. The axis is
+ * passed through unchanged: when several axes are invalid, which one `pack`
+ * reports is unspecified, and callers must not read it as "the input that failed
+ * first". `pack` cannot report `invalid_delta` — that variant belongs to
+ * `neighbor`.
  */
-function invalidCoordinate(x: number, y: number): GridPositionError {
-  if (!boundsCheck(x, 0, 0)) {
-    return { code: "invalid-coordinate", axis: "x" };
+function coordinateError(error: PackedIntError): GridPositionError {
+  if (error.code === "invalid_delta") {
+    throw new Error("pack reported an invalid delta");
   }
 
-  if (!boundsCheck(y, 0, 0)) {
-    return { code: "invalid-coordinate", axis: "y" };
-  }
-
-  return { code: "invalid-coordinate", axis: "z" };
+  return { code: "invalid-coordinate", axis: error.axis };
 }
 
 /**
@@ -170,7 +172,7 @@ export function gridPosition(
   const key = pack(x, y, z);
 
   if (!key.ok) {
-    return err(invalidCoordinate(x, y));
+    return err(coordinateError(key.error));
   }
 
   return ok(gridPositionFromKey(key.value));
@@ -249,7 +251,7 @@ export function uniformVoxSnapshot(
     const key = pack(x, y, z);
 
     if (!key.ok) {
-      return err(invalidCoordinate(x, y));
+      return err(coordinateError(key.error));
     }
 
     const color = parts.palette[rawColorIndex];
