@@ -76,6 +76,7 @@ export type SceneValidationError =
   | Readonly<{ code: "duplicate-object-id"; id: string }>
   | Readonly<{ code: "root-missing" }>
   | Readonly<{ code: "root-invalid"; nodeId: string }>
+  | Readonly<{ code: "parent-missing"; nodeId: string }>
   | Readonly<{ code: "parent-not-found"; nodeId: string; parentId: string }>
   | Readonly<{ code: "child-not-found"; nodeId: string; childId: string }>
   | Readonly<{ code: "duplicate-child"; nodeId: string; childId: string }>
@@ -97,11 +98,11 @@ export type SceneValidationError =
 - `sceneSnapshot` 是 `SceneSnapshot` 的唯一构造入口，也是场景结构不变量的唯一校验点：它校验全部结构不变量、产出 canonical 形式，并铸造 `SceneNodeId`/`SceneObjectId`/`Quat` 的 brand。查询、补丁、文档和持久化解码都不得另行实现这套校验，也不得用类型断言把未校验数据当作 `SceneSnapshot`。
 - 校验顺序即首错顺序，逐条如下；任一条失败立即返回对应的 `SceneValidationError`，不做部分修复，也不返回部分结果：
   1. `rootNodeId` 与每个 `nodes[i].id`、`objects[i].id` 必须非空（`empty-id`）；`nodes` 内 id 唯一（`duplicate-node-id`），`objects` 内 id 唯一（`duplicate-object-id`）。
-  2. `rootNodeId` 必须在 `nodes` 中（`root-missing`）；根节点的 `parentId` 必须为 `null`、`sceneObjectId` 必须为 `null`，且第一版根变换固定为单位变换（`position` 全零、`rotation` 与 `QUAT_IDENTITY` 等价、`scale` 全 `1`，按 `util/math` 的 `EPSILON` 判定），作为场景坐标系（`root-invalid`）。
-  3. 非根节点必须引用存在的父节点（`parent-not-found`）；`childIds` 必须引用存在的节点（`child-not-found`）；`childIds` 内不得重复（`duplicate-child`）；父子关系必须双向一致（`parent-child-mismatch`）；整张图不得有环（`cycle`）。
+  2. `rootNodeId` 必须在 `nodes` 中（`root-missing`）；根节点的 `parentId` 必须为 `null`、`sceneObjectId` 必须为 `null`，且第一版根变换固定为单位变换（`position` 全零、`rotation` 与 `QUAT_IDENTITY` 等价、`scale` 全 `1`，按 `util/math` 的 `EPSILON` 判定；`+w` 与 `-w` 表示同一旋转，两者都算单位变换），作为场景坐标系（`root-invalid`）。
+  3. 非根节点必须有父节点（`parent-missing`），且必须引用存在的父节点（`parent-not-found`）；`childIds` 必须引用存在的节点（`child-not-found`）；`childIds` 内不得重复（`duplicate-child`）；父子关系必须双向一致（`parent-child-mismatch`）；整张图不得有环（`cycle`，报告数组顺序中首个不在根可达集合内的节点）。
   4. `sceneObjectId` 非空时必须引用 `objects` 中存在的对象（`object-not-found`）；每个 `SceneObject` 必须由恰好一个节点绑定（`object-unbound`、`object-multiply-bound`）。
   5. 绑定了 `SceneObject` 的节点是叶节点，`childIds` 必须为空（`leaf-node-has-children`）。空组节点可以拥有子节点，用于未来层级组织。
-  6. `SceneTransform.position`、`rotation`、`scale` 必须是有限数值；旋转必须是单位四元数（长度的单位性按 `util/math` 的 `EPSILON` 判定）；`scale` 三分量不得为零（`invalid-transform`，按 position → rotation → scale 报告首个失败通道）。校验通过后经 `math.quatNormalize` 取得 `Quat` brand；不得用它静默修复非单位输入。变换顺序为 `T * R * S`，局部空间到父空间。
+  6. `SceneTransform.position`、`rotation`、`scale` 必须是有限数值；旋转必须是单位四元数（长度的单位性按 `util/math` 的 `EPSILON` 判定）；`scale` 三分量不得为零，任一分量为零即非法（`invalid-transform`，按 position → rotation → scale 报告首个失败通道）。校验通过后经 `math.quatNormalize` 取得 `Quat` brand；不得用它静默修复非单位输入。变换顺序为 `T * R * S`，局部空间到父空间。
     - 【用户确认】`scale` 三分量不得为零由用户于 2026-09-13 确认保留。`util/math` 中“节点 `scale` 为 0 时拾取必须能跳过该节点”是对不可逆矩阵的独立判断，允许在那里多判一次，不构成本条与 `util/math` 的冲突。修改本条必须先取得用户同意。
 - canonical 形式：输出的 `nodes` 按 `id` 字符串升序、`objects` 按 `id` 字符串升序排列（与 `project-codec` 的写出顺序一致）；`childIds` 保留输入给定的顺序，树顺序即显式语义。因此同一逻辑场景的任一合法输入顺序产出同一快照，快照等价、持久化 diff 与 golden 都以该顺序为准；`nodes`/`objects` 的数组顺序不构成身份，也不依赖对象枚举顺序。
 - `sceneNodeId`、`sceneObjectId` 只接受 `length > 0` 的字符串，不 trim、不做其他规范化。新身份的来源是 `application/ports/id-generator-port` 的 `IdGeneratorPort`；本模块只负责校验与铸造，不生成身份。
