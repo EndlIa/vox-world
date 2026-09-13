@@ -1,4 +1,4 @@
-# scene-object-selection-strategies.ts
+# scene-selection-strategies.ts
 
 **职责**：定义 Object 模式下对 `SceneObject` 的纯候选解析规则。
 
