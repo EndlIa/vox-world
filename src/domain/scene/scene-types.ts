@@ -1,7 +1,8 @@
 import {
-  EPSILON,
+  VEC3_ZERO,
   approximatelyEqual,
   quatNormalize,
+  vec3Equals,
   type Quat,
   type Vec3,
 } from "../../util/math";
@@ -90,13 +91,21 @@ export type SceneSnapshotInput = Readonly<{
 }>;
 
 /**
+ * Transform channel reported by `invalid-transform`, in validation order. A
+ * private alias: `SceneValidationError` is the public form.
+ */
+type SceneTransformChannel = "position" | "rotation" | "scale";
+
+/**
  * Every recoverable scene validation failure. Members are plain serializable
- * data and appear in the order `sceneSnapshot` reports them.
+ * data, listed in the implementation's check order. When several checks fail at
+ * once, which code is reported is unspecified: callers must not depend on that
+ * order.
  */
 export type SceneValidationError =
   | Readonly<{ code: "empty-id" }>
-  | Readonly<{ code: "duplicate-node-id"; id: string }>
-  | Readonly<{ code: "duplicate-object-id"; id: string }>
+  | Readonly<{ code: "duplicate-node-id"; nodeId: string }>
+  | Readonly<{ code: "duplicate-object-id"; sceneObjectId: string }>
   | Readonly<{ code: "root-missing" }>
   | Readonly<{ code: "root-invalid"; nodeId: string }>
   | Readonly<{ code: "parent-missing"; nodeId: string }>
@@ -116,7 +125,7 @@ export type SceneValidationError =
   | Readonly<{
       code: "invalid-transform";
       nodeId: string;
-      channel: "position" | "rotation" | "scale";
+      channel: SceneTransformChannel;
     }>;
 
 /**
@@ -131,11 +140,16 @@ function brandObjectId(raw: string): SceneObjectId {
   return raw as SceneObjectId;
 }
 
+/** An identity is any string with `length > 0`; nothing else is normalized. */
+function isEmptyId(raw: string): boolean {
+  return raw.length === 0;
+}
+
 /** Validating entry point for `SceneNodeId`: any non-empty string, nothing else. */
 export function sceneNodeId(
   raw: string,
 ): Result<SceneNodeId, SceneValidationError> {
-  if (raw.length === 0) {
+  if (isEmptyId(raw)) {
     return err({ code: "empty-id" });
   }
 
@@ -146,7 +160,7 @@ export function sceneNodeId(
 export function sceneObjectId(
   raw: string,
 ): Result<SceneObjectId, SceneValidationError> {
-  if (raw.length === 0) {
+  if (isEmptyId(raw)) {
     return err({ code: "empty-id" });
   }
 
@@ -173,18 +187,10 @@ function isFiniteVec3(vector: Vec3): boolean {
   );
 }
 
-/** Every component at the origin, as the root transform requires. */
-function isZeroVec3(vector: Vec3): boolean {
-  return (
-    approximatelyEqual(vector.x, 0) &&
-    approximatelyEqual(vector.y, 0) &&
-    approximatelyEqual(vector.z, 0)
-  );
-}
-
 /**
- * Any zero component makes the node matrix non-invertible, so the scale check
- * rejects `(0, 1, 1)` exactly like `(0, 0, 0)`.
+ * A zero component makes the node matrix non-invertible, and a component this
+ * small is treated as zero as well, so the scale check rejects `(0, 1, 1)`
+ * exactly like `(0, 0, 0)` and rejects `(1e-7, 1, 1)` too.
  */
 function hasZeroComponent(vector: Vec3): boolean {
   return (
@@ -202,7 +208,7 @@ function isIdentityTransform(transform: SceneTransformInput): boolean {
   const { position, rotation, scale } = transform;
 
   return (
-    isZeroVec3(position) &&
+    vec3Equals(position, VEC3_ZERO) &&
     approximatelyEqual(rotation.x, 0) &&
     approximatelyEqual(rotation.y, 0) &&
     approximatelyEqual(rotation.z, 0) &&
@@ -237,13 +243,13 @@ function isUnitQuaternion(
       rotation.w * rotation.w,
   );
 
-  return Math.abs(length - 1) <= EPSILON;
+  return approximatelyEqual(length, 1);
 }
 
 /** First failing transform channel in position → rotation → scale order. */
 function firstInvalidTransformChannel(
   transform: SceneTransformInput,
-): "position" | "rotation" | "scale" | null {
+): SceneTransformChannel | null {
   if (!isFiniteVec3(transform.position)) {
     return "position";
   }
@@ -301,27 +307,28 @@ function collectReachableNodeIds(
 
 /**
  * The only constructor of a `SceneSnapshot` and the only scene structure
- * validator. Checks run in the order of the `SceneValidationError` union and the
- * first failure is returned, so callers cannot observe a partially repaired
- * scene. Inputs are never modified; the result is canonical (`nodes` and
- * `objects` ascending by id, `childIds` as given) and mints every brand it
- * carries.
+ * validator. The first failing check is returned, so callers cannot observe a
+ * partially repaired scene; when several checks fail at once, which code is
+ * reported is unspecified. Inputs are never modified; the result is canonical
+ * (`nodes` and `objects` ascending by id, `childIds` as given) and mints every
+ * brand it carries. The `position`, `scale` and `voxels` containers are shared
+ * with the input instead of being copied.
  */
 export function sceneSnapshot(
   input: SceneSnapshotInput,
 ): Result<SceneSnapshot, SceneValidationError> {
-  if (input.rootNodeId.length === 0) {
+  if (isEmptyId(input.rootNodeId)) {
     return err({ code: "empty-id" });
   }
 
   for (const node of input.nodes) {
-    if (node.id.length === 0) {
+    if (isEmptyId(node.id)) {
       return err({ code: "empty-id" });
     }
   }
 
   for (const object of input.objects) {
-    if (object.id.length === 0) {
+    if (isEmptyId(object.id)) {
       return err({ code: "empty-id" });
     }
   }
@@ -330,7 +337,7 @@ export function sceneSnapshot(
 
   for (const node of input.nodes) {
     if (nodeById.has(node.id)) {
-      return err({ code: "duplicate-node-id", id: node.id });
+      return err({ code: "duplicate-node-id", nodeId: node.id });
     }
 
     nodeById.set(node.id, node);
@@ -340,7 +347,7 @@ export function sceneSnapshot(
 
   for (const object of input.objects) {
     if (objectById.has(object.id)) {
-      return err({ code: "duplicate-object-id", id: object.id });
+      return err({ code: "duplicate-object-id", sceneObjectId: object.id });
     }
 
     objectById.set(object.id, object);
@@ -486,7 +493,7 @@ export function sceneSnapshot(
       return err({
         code: "object-multiply-bound",
         sceneObjectId: object.id,
-        nodeIds: [...boundNodeIds],
+        nodeIds: [...boundNodeIds].sort(compareIds),
       });
     }
   }

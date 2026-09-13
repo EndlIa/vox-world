@@ -27,17 +27,9 @@ import {
   unpack,
   type VoxelKey,
 } from "../../../../src/util/packed-int";
-import type { Result } from "../../../../src/util/result";
+import { expectOk } from "../../../support/expect-result";
 
 type Entry = readonly [x: number, y: number, z: number, hex: string];
-
-function expectOk<T, E>(result: Result<T, E>): T {
-  if (!result.ok) {
-    throw new Error(`Expected a successful result, got ${JSON.stringify(result.error)}`);
-  }
-
-  return result.value;
-}
 
 function color(input: string): ColorHex {
   return expectOk(parseHex(input));

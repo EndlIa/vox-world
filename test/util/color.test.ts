@@ -13,15 +13,7 @@ import {
   type LinearRgb,
   type Rgb,
 } from "../../src/util/color";
-import type { Result } from "../../src/util/result";
-
-function expectOk<T, E>(result: Result<T, E>): T {
-  if (!result.ok) {
-    throw new Error(`Expected a successful result, got ${JSON.stringify(result.error)}`);
-  }
-
-  return result.value;
-}
+import { expectOk } from "../support/expect-result";
 
 function color(input: string): ColorHex {
   return expectOk(parseHex(input));

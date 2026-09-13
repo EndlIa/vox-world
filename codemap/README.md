@@ -129,7 +129,7 @@ util ──────────────→ util
 | `ColorHex`、`Rgb`、`LinearRgb`、`ColorParseError`、`ColorChannelError`、`ColorScalarError`、`ColorError` | `util/color` | 无 alpha 的领域颜色及错误；`Rgb`/`LinearRgb` 带 brand，互相不可赋值 |
 | `VoxelKey`、`PackedIntError` | `util/packed-int` | 16-bit 体素坐标打包键及错误 |
 | `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值；`Quat` 带 brand（值域恒为单位四元数），`Plane` 带 brand（法向量恒为单位向量） |
-| `SceneNodeId`、`SceneObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`SceneObjectSnapshot`、`SceneSnapshot`、`SceneValidationError` | `domain/scene/scene-types` | 场景图与对象身份；两个 ID 带 brand，`SceneSnapshot` 只能由 `sceneSnapshot` 构造，该入口是场景结构不变量的唯一校验点 |
+| `SceneNodeId`、`SceneObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`SceneObjectSnapshot`、`SceneSnapshot`、`SceneValidationError`、`SceneTransformInput`、`SceneNodeSnapshotInput`、`SceneObjectSnapshotInput`、`SceneSnapshotInput` | `domain/scene/scene-types` | 场景图与对象身份；两个 ID 带 brand，`SceneSnapshot` 只能由 `sceneSnapshot` 构造，该入口是场景结构不变量的唯一校验点；`*Input` 是该入口的未校验入参形状，不携带 brand |
 | `ScenePatch`、`ScenePatchOp` | `domain/scene/scene-patch` | 场景级可逆补丁 |
 | `VoxelPatch`、`PatchOp`、`PatchApplyError` | `domain/voxel/uniform/patch` | 单对象局部网格上的可逆体素变更及其纯应用语义 |
 | `AnimationDocument`、`AnimationTrack`、`AnimationKeyframe`、`AnimationTarget`、`AnimationChannelName`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |

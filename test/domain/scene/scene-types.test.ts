@@ -20,26 +20,9 @@ import {
   uniformVoxSnapshot,
   type UniformVoxSnapshot,
 } from "../../../src/domain/voxel/uniform/types";
-import { QUAT_IDENTITY, type Quat } from "../../../src/util/math";
+import { QUAT_IDENTITY, type Quat, type Vec3 } from "../../../src/util/math";
 import type { Result } from "../../../src/util/result";
-
-function expectOk<T, E>(result: Result<T, E>): T {
-  if (!result.ok) {
-    throw new Error(
-      `Expected a successful result, got ${JSON.stringify(result.error)}`,
-    );
-  }
-
-  return result.value;
-}
-
-function expectErr<T, E>(result: Result<T, E>): E {
-  if (result.ok) {
-    throw new Error("Expected a failed result");
-  }
-
-  return result.error;
-}
+import { expectErr, expectOk } from "../../support/expect-result";
 
 const EMPTY_VOXELS = expectOk(
   uniformVoxSnapshot({ x: [], y: [], z: [], colorIndex: [], palette: [] }),
@@ -159,21 +142,21 @@ describe("sceneSnapshot", () => {
 });
 
 describe("sceneSnapshot identity checks", () => {
-  it("rejects an empty root id, node id or object id", () => {
-    expect(expectErr(sceneSnapshot(scene("", [node("")])))).toEqual({
-      code: "empty-id",
-    });
-    expect(expectErr(sceneSnapshot(scene("b", [node("b"), node("")])))).toEqual({
-      code: "empty-id",
-    });
-    expect(
-      expectErr(sceneSnapshot(scene("b", [node("b")], [{ id: "", voxels: EMPTY_VOXELS }]))),
-    ).toEqual({ code: "empty-id" });
-  });
-
-  it("reports an empty id before a repeated one", () => {
-    const input = scene("b", [node("b"), node(""), node("")]);
-
+  it.each([
+    ["an empty root id", scene("", [node("")])],
+    [
+      "an empty node id",
+      scene("b", [node("b", { childIds: [""] }), node("", { parentId: "b" })]),
+    ],
+    [
+      "an empty object id",
+      scene(
+        "b",
+        [node("b", { childIds: ["a"] }), node("a", { parentId: "b", sceneObjectId: "" })],
+        [{ id: "", voxels: EMPTY_VOXELS }],
+      ),
+    ],
+  ] as const)("rejects %s", (_label, input) => {
     expect(expectErr(sceneSnapshot(input))).toEqual({ code: "empty-id" });
   });
 
@@ -186,29 +169,28 @@ describe("sceneSnapshot identity checks", () => {
 
     expect(expectErr(sceneSnapshot(repeatedNodes))).toEqual({
       code: "duplicate-node-id",
-      id: "a",
+      nodeId: "a",
     });
 
     const repeatedObjects = scene("b", [node("b")], [object("o1"), object("o1")]);
 
     expect(expectErr(sceneSnapshot(repeatedObjects))).toEqual({
       code: "duplicate-object-id",
-      id: "o1",
+      sceneObjectId: "o1",
     });
   });
 });
 
 describe("sceneSnapshot root checks", () => {
   it("requires the root to exist", () => {
-    expect(expectErr(sceneSnapshot(scene("ghost", [node("b")])))).toEqual({
+    expect(expectErr(sceneSnapshot(scene("ghost", [])))).toEqual({
       code: "root-missing",
     });
   });
 
   it("requires a null parent, a null binding and the unit transform", () => {
     const withParent = scene("b", [
-      node("b", { parentId: "a" }),
-      node("a", { parentId: "b" }),
+      node("b", { parentId: "b", childIds: ["b"] }),
     ]);
 
     expect(expectErr(sceneSnapshot(withParent))).toEqual({
@@ -236,6 +218,10 @@ describe("sceneSnapshot root checks", () => {
 
 describe("sceneSnapshot structure checks", () => {
   it("requires every non-root node to reference an existing parent", () => {
+    // A node without a parent is necessarily also unreachable from the root,
+    // so these two inputs trigger `cycle` as well. Which code wins is
+    // unspecified (codemap/src/domain/scene/scene-types.md); the assertions
+    // below only pin the current behavior, not a contract.
     const withoutParent = scene("b", [node("b"), node("a")]);
 
     expect(expectErr(sceneSnapshot(withoutParent))).toEqual({
@@ -351,20 +337,21 @@ describe("sceneSnapshot object binding checks", () => {
     });
   });
 
-  it("reports an unbound object before a multiply bound one", () => {
-    const input = scene(
+  it("reports multiply bound node ids in ascending order", () => {
+    const reversed = scene(
       "b",
       [
-        node("b", { childIds: ["a", "c"] }),
-        node("a", { parentId: "b", sceneObjectId: "o2" }),
-        node("c", { parentId: "b", sceneObjectId: "o2" }),
+        node("b", { childIds: ["c", "a"] }),
+        node("c", { parentId: "b", sceneObjectId: "o1" }),
+        node("a", { parentId: "b", sceneObjectId: "o1" }),
       ],
-      [object("o1"), object("o2")],
+      [object("o1")],
     );
 
-    expect(expectErr(sceneSnapshot(input))).toEqual({
-      code: "object-unbound",
+    expect(expectErr(sceneSnapshot(reversed))).toEqual({
+      code: "object-multiply-bound",
       sceneObjectId: "o1",
+      nodeIds: ["a", "c"],
     });
   });
 
@@ -396,32 +383,60 @@ describe("sceneSnapshot transform checks", () => {
     return expectErr(sceneSnapshot(input));
   }
 
-  it("rejects non-finite, non-unit and zero components per channel", () => {
-    expect(
-      errorFor(transformWith({ position: { x: Number.NaN, y: 0, z: 0 } })),
-    ).toEqual({ code: "invalid-transform", nodeId: "a", channel: "position" });
-
-    expect(errorFor(transformWith({ rotation: { x: 0, y: 0, z: 0, w: 2 } }))).toEqual({
+  it.each([
+    [
+      "non-finite position",
+      transformWith({ position: { x: Number.NaN, y: 0, z: 0 } }),
+      "position",
+    ],
+    [
+      "non-unit rotation",
+      transformWith({ rotation: { x: 0, y: 0, z: 0, w: 2 } }),
+      "rotation",
+    ],
+    [
+      "zero-length rotation",
+      transformWith({ rotation: { x: 0, y: 0, z: 0, w: 0 } }),
+      "rotation",
+    ],
+    [
+      "non-finite scale",
+      transformWith({ scale: { x: 1, y: Number.POSITIVE_INFINITY, z: 1 } }),
+      "scale",
+    ],
+    [
+      "zero scale component",
+      transformWith({ scale: { x: 0, y: 1, z: 1 } }),
+      "scale",
+    ],
+    // The contract treats a component within EPSILON of zero as zero, so a
+    // formally invertible but near-singular scale is rejected too.
+    [
+      "scale component within EPSILON of zero",
+      transformWith({ scale: { x: 1e-7, y: 1, z: 1 } }),
+      "scale",
+    ],
+  ] as const)("rejects %s", (_label, transform, channel) => {
+    expect(errorFor(transform)).toEqual({
       code: "invalid-transform",
       nodeId: "a",
-      channel: "rotation",
+      channel,
     });
+  });
 
-    expect(errorFor(transformWith({ rotation: { x: 0, y: 0, z: 0, w: 0 } }))).toEqual({
-      code: "invalid-transform",
-      nodeId: "a",
-      channel: "rotation",
-    });
+  it("accepts a scale component above the zero tolerance", () => {
+    const input = scene("b", [
+      node("b", { childIds: ["a"] }),
+      node("a", {
+        parentId: "b",
+        transform: transformWith({ scale: { x: 2e-6, y: 1, z: 1 } }),
+      }),
+    ]);
 
-    expect(errorFor(transformWith({ scale: { x: 0, y: 1, z: 1 } }))).toEqual({
-      code: "invalid-transform",
-      nodeId: "a",
-      channel: "scale",
-    });
+    const snapshot = expectOk(sceneSnapshot(input));
+    const child = snapshot.nodes.find((entry) => entry.id === "a");
 
-    expect(
-      errorFor(transformWith({ scale: { x: 1, y: Number.POSITIVE_INFINITY, z: 1 } })),
-    ).toEqual({ code: "invalid-transform", nodeId: "a", channel: "scale" });
+    expect(child?.transform.scale).toEqual({ x: 2e-6, y: 1, z: 1 });
   });
 
   it("reports the first failing channel in position, rotation, scale order", () => {
@@ -453,9 +468,46 @@ describe("scene-types type contract", () => {
     expectTypeOf<SceneSnapshotInput>().not.toExtend<SceneSnapshot>();
     expectTypeOf<SceneSnapshot>().toExtend<SceneSnapshotInput>();
     expectTypeOf<SceneTransformInput["rotation"]>().not.toExtend<Quat>();
+    expectTypeOf(expectOk(sceneNodeId("n1"))).toEqualTypeOf<SceneNodeId>();
+    expectTypeOf(expectOk(sceneObjectId("o1"))).toEqualTypeOf<SceneObjectId>();
+    expectTypeOf(expectOk(sceneSnapshot(scene("b", [node("b")])))).toEqualTypeOf<
+      SceneSnapshot
+    >();
+    expectTypeOf(sceneSnapshot).toEqualTypeOf<
+      (input: SceneSnapshotInput) => Result<SceneSnapshot, SceneValidationError>
+    >();
+  });
+
+  it("keeps the snapshot object types readonly", () => {
+    expectTypeOf<{
+      position: Vec3;
+      rotation: Quat;
+      scale: Vec3;
+    }>().not.toEqualTypeOf<SceneTransform>();
+    expectTypeOf<{
+      id: SceneNodeId;
+      parentId: SceneNodeId | null;
+      childIds: readonly SceneNodeId[];
+      name: string;
+      transform: SceneTransform;
+      visible: boolean;
+      sceneObjectId: SceneObjectId | null;
+    }>().not.toEqualTypeOf<SceneNodeSnapshot>();
+    expectTypeOf<{
+      id: SceneObjectId;
+      voxels: UniformVoxSnapshot;
+    }>().not.toEqualTypeOf<SceneObjectSnapshot>();
+    expectTypeOf<{
+      rootNodeId: SceneNodeId;
+      nodes: readonly SceneNodeSnapshot[];
+      objects: readonly SceneObjectSnapshot[];
+    }>().not.toEqualTypeOf<SceneSnapshot>();
   });
 
   it("pins the nullability, container and transform of a snapshot node", () => {
+    expectTypeOf<SceneNodeSnapshot["id"]>().toEqualTypeOf<SceneNodeId>();
+    expectTypeOf<SceneObjectSnapshot["id"]>().toEqualTypeOf<SceneObjectId>();
+    expectTypeOf<SceneSnapshot["rootNodeId"]>().toEqualTypeOf<SceneNodeId>();
     expectTypeOf<SceneNodeSnapshot["parentId"]>().toEqualTypeOf<SceneNodeId | null>();
     expectTypeOf<SceneNodeSnapshot["sceneObjectId"]>().toEqualTypeOf<SceneObjectId | null>();
     expectTypeOf<SceneNodeSnapshot["childIds"]>().toEqualTypeOf<readonly SceneNodeId[]>();
