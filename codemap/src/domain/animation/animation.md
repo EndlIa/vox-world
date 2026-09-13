@@ -95,7 +95,7 @@ AnimationEvaluation {
 - `cameraAnimation` 不是当前格式字段；项目 codec、Snapshot 和归档遇到它必须拒绝，不得迁移或兼容。
 
 **轨道规则**：
-- 轨道 ID 在整个文档内非空且唯一；关键帧 ID 在所属轨道内非空且唯一。
+- 轨道 ID 在整个文档内非空且唯一；关键帧 ID 在所属轨道内非空且唯一。ID 由 application 层注入的 `IdGeneratorPort` 分配；本模块只校验非空与唯一，不生成 ID。
 - Node 轨道只能绑定已存在、非根节点的 `SceneNodeId`。根节点变换固定为单位变换，不允许动画。
 - Camera 轨道是单例目标，只允许 `position`、`rotation`、`fov` 三个 channel。
 - 同一 `target + channel` 只能有一条轨道；重复轨道使整个文档校验失败。

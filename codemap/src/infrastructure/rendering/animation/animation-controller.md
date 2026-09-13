@@ -20,7 +20,7 @@
 - `load(document)` 先读取 `SceneDocument.snapshot()`，针对同一时刻的只读 `SceneSnapshot` 严格校验；失败保持旧文档和全部运行时状态不变。成功后原子替换文档，复位为 stopped、`currentTimeMs = 0`、`hasOverride = false`、清空 track/keyframe selection，结束 Camera Control/Follow/Observe preview，并调用 `AnimationApplyPort.clearEvaluation()`。
 - 动画数据编辑属于项目作用域变更：成功修改文档后通过 `subscribe()` 发布文档变更，由 ProjectService 增加 `projectVersion` 并驱动 dirty；不得修改 `SceneDocument.version`。播放、seek、Follow/Observe、路径可见性、Camera Control 姿态/可见性/选择、`cameraToView`/`viewToCamera` 和 override 变化只属于运行时，不修改项目数据、`SceneDocument.version` 或 dirty 状态；只有 `addCameraKeyframeFromControl()` 实际写入动画文档时才触发 dirty。
 - `setDuration()`、`setLoop()`、`createTrack()`、`deleteTrack()`、`addKeyframe()`、`replaceKeyframe()`、`removeKeyframe()`、`moveKeyframe()` 和 `addCameraKeyframeFromControl()` 统一执行端口门禁：`status !== 'stopped'` 或 `hasOverride` 时返回 `animation-playback-active`，不得产生部分文档变更。调用方必须先执行 `stopAndClearOverride()`；控制器不得自动停播或建立平行门禁。
-- `createTrack()` 只接受合法 target/channel 并返回新稳定 `trackId`；Node target 必须存在且不能是根节点。`addKeyframe()` 返回新稳定 `keyframeId`。`deleteTrack()`、关键帧替换/删除/移动和非法 target 均返回明确 `Result`。
+- `createTrack()` 只接受合法 target/channel 并返回新稳定 `trackId`；Node target 必须存在且不能是根节点。`addKeyframe()` 返回新稳定 `keyframeId`。`deleteTrack()`、关键帧替换/删除/移动和非法 target 均返回明确 `Result`。这些身份以及 `addCameraKeyframeFromControl()` 隐式创建的轨道/关键帧身份都必须经注入的 `IdGeneratorPort` 分配；控制器不得自造 id。
 - `selectTrack(trackId | null)` 只接受现有轨道或 `null`，选择轨道时清空不兼容的 `selectedKeyframeId`；`selectKeyframe(trackId, keyframeId | null)` 要求轨道存在，非空关键帧必须属于该轨道。删除选中关键帧时清空 `selectedKeyframeId`；删除选中轨道，或删除最后一个关键帧导致轨道消失时，再同步清空 `selectedTrackId`。选择是运行时状态，不写项目、History 或 `SceneDocument`。
 - `getPlaybackState()` 是命令门禁和应用层读取状态的唯一来源；`hasOverride` 仅在最近一次 `applyEvaluation()` 含至少一个 Node/Camera override 时为 `true`，在空 evaluation、`clearEvaluation()`、`stopAndClearOverride()`、`load()`、项目切换和 context restore 后为 `false`。应用层不得仅依赖 UI 事件判断是否可编辑。
 - `play()` 在空文档时拒绝启动并保持 stopped；位于末尾时从 `0` 重新开始。`pause()` 固化当前时间并保留 override；`stop()`/`stopAndClearOverride()` 回到 stopped 并清除全部运行时 override。`tick(nowMs)` 是唯一播放推进入口，循环时 `currentTimeMs = elapsed % durationMs`；非循环到达末尾后走同一停止清理事务。`EditorSession.tick()` 只委托此方法，不得在应用层再次调用 `evaluateAnimation` 或 `applyEvaluation`。
@@ -36,4 +36,4 @@
 - 项目新建时调用 `load(createDefaultAnimation())`；加载或 Storage/snapshot 恢复时只接受 `domain/animation` 针对当前 SceneSnapshot 严格校验通过的 V1 文档，缺字段、非法轨道、根节点 target 或悬空 Node target 由项目加载整体失败。Camera Control 不属于项目格式，加载后必须清空。
 - `hasTracksForNode(nodeId)` 供应用层删除预检；V1 不自动删除被引用节点的轨道，存在引用时删除命令必须失败。
 
-**依赖**：application/ports/animation-port、domain/animation、domain/scene/scene-types、state/scene-document、camera-controller、camera-control、overlays、util/math、util/result。
+**依赖**：application/ports/animation-port、application/ports/id-generator-port、domain/animation、domain/scene/scene-types、state/scene-document、camera-controller、camera-control、overlays、util/math、util/result。

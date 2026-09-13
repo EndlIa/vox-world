@@ -2,8 +2,8 @@
 
 **职责**：编码、解码并严格校验当前 V1 项目文档与 Snapshot 条目。
 **接口**：encode、decode、version、validate、encodeSnapshot、decodeSnapshot。
-**内部**：组合项目元数据、场景快照、`AnimationDocument`、camera/render 设置和 Bake Mesh manifest；只处理纯数据，不解释 Three.js 规则、不写 repository、不修改运行时状态。
-**依赖**：project、scene-types、scene-query、voxel-codec、baked-mesh-codec、animation。
+**内部**：组合项目元数据、场景快照、`AnimationDocument`、camera/render 设置和 Bake Mesh manifest；只处理纯数据，不解释 Three.js 规则、不写 repository、不修改运行时状态。`decode`/`decodeSnapshot` 在输入侧接收 `unknown` 并做运行时校验（JSON 原始类型、`version`、资产引用、`voxels` 字符串），产出形状化候选后交给 `scene-types.sceneSnapshot`；不得把未校验数据断言为领域类型。
+**依赖**：project、scene-types、voxel-codec、baked-mesh-codec、animation。
 
 ## 当前格式
 
@@ -67,9 +67,9 @@ PersistedScene {
 ## 严格校验
 
 - `format` 必须精确匹配，`version` 必须为数字 `1`；`data.scene.version` 也必须为 `1`。
-- 节点/对象 id 非空且唯一，父子关系双向一致、无环、每个对象恰好被一个节点引用，且满足 `scene-types` 全部不变量。
+- 场景必须能经 `scene-types.sceneSnapshot` 构造：id 非空与唯一、根节点规则、父子关系双向一致、无环、每个对象恰好被一个节点引用、变换值域，全部由该入口统一校验，本 codec 不重复实现。
 - 每个 `voxels` 字符串必须能由 `voxel-codec` 严格解析为局部快照；解析失败返回带对象 id 和段索引的错误。
-- 变换数值必须有限，rotation 为单位四元数，scale 三分量非零；根节点必须 `parentId === null` 且 `sceneObjectId === null`。
+- 根节点与变换规则同样由 `scene-types.sceneSnapshot` 判定，不在此复述。
 - `animation` 必须是完整的 `AnimationDocument`。`version` 必须为 `1`，`durationMs` 必须为有限正数，`loop` 必须为布尔值，`tracks` 必须是数组；未知版本、缺字段、非法字段或非法关键帧使整个文档失败，不进行关键帧过滤。
 - 场景相关校验必须调用 `domain/animation.validateAnimation(animation, data.scene)`；`restoreAnimation` 只能验证文档自身结构，不能证明 `nodeId` 存在。禁止用当前编辑器场景校验另一个项目或 Snapshot 条目的动画。
 - 每条轨道的 `id` 必须非空且在文档内唯一，`target` 与 `channel` 必须是 `domain/animation` 联合类型的精确成员。节点轨道只允许 `position`、`rotation`、`scale`，其 `nodeId` 必须存在于 `data.scene.nodes` 且不能是 `rootNodeId`；相机轨道只允许 `position`、`rotation`、`fov`，且不得携带 `nodeId`。同一 `target` + `channel` 在文档中只能出现一次，重复轨道直接拒绝。

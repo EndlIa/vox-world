@@ -12,6 +12,7 @@
 **内部**：
 - `AnimationSessionPort` 只暴露用例所需的纯数据和幂等操作，不暴露 Three.js 对象、播放时钟句柄、可变 `AnimationDocument` 或运行时 override 容器。
 - `getSnapshot()` 返回 `AnimationDocument` 的只读深快照；轨道和关键帧编辑返回明确 `Result`，失败不得产生部分文档变更。`createTrack()` 成功值是新分配的稳定 `trackId`；`addKeyframe()` 成功值是新分配的稳定 `keyframeId`，调用方不得猜测或用数组索引代替。
+- 所有新轨道/关键帧身份（含 `addCameraKeyframeFromControl()` 隐式创建的轨道）必须由实现经注入的 `IdGeneratorPort` 分配（`newAnimationTrackId()`/`newAnimationKeyframeId()`）；实现不得自造 id，也不得用计数器、索引或 `timeMs` 充当身份。
 - `load(document)` 必须先针对当前 `SceneSnapshot` 严格校验输入；失败保持旧文档、播放状态、override 和选择状态不变。成功后原子替换文档并复位为 `status = stopped`、`currentTimeMs = 0`、`hasOverride = false`、`selectedTrackId = null`、`selectedKeyframeId = null`，同时结束 Camera Control/Follow/Observe preview 并调用 `AnimationApplyPort.clearEvaluation()`。
 - 轨道和关键帧编辑必须委托 `domain/animation` 校验；Node target 必须存在且不能是根节点，非法 target 返回明确失败且不得改变文档或播放状态。`play()` 在空文档或无可播放轨道时不得启动，状态保持 `stopped`。
 - `setDuration()`、`setLoop()`、`createTrack()`、`deleteTrack()`、`addKeyframe()`、`replaceKeyframe()`、`removeKeyframe()`、`moveKeyframe()` 和 `addCameraKeyframeFromControl()` 必须由端口实现统一执行编辑门禁：`status !== 'stopped'` 或 `hasOverride === true` 时返回 `animation-playback-active`，且不得产生部分文档变更。调用方先执行 `stopAndClearOverride()`；application 层不得另建平行门禁，也不得假设端口会自动停播。
@@ -28,4 +29,4 @@
 - 播放和离线渲染的每一帧必须只调用一次 `domain/animation.evaluateAnimation`，再把同一个 `AnimationEvaluation` 交给 `AnimationApplyPort.applyEvaluation()`；禁止分别求值 Node/Camera 或跨帧拼接覆盖。
 - 端口不解释插值、target/channel 合法性或场景层级；这些规则由 `domain/animation` 和场景快照校验负责，实现方不得绕过。
 
-**依赖**：domain/animation、domain/scene/scene-types、util/result。
+**依赖**：domain/animation、domain/scene/scene-types、application/ports/id-generator-port、util/result。

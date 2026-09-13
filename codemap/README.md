@@ -44,7 +44,7 @@ SceneNode
   ├── id / parentId / childIds
   ├── transform（局部 -> 父空间）
   ├── visible（子树渲染开关）
-  └── sceneObjectId?（至多绑定一个 SceneObject）
+  └── sceneObjectId（至多绑定一个 SceneObject；无绑定为 null）
 
 SceneObject
   ├── id
@@ -129,11 +129,12 @@ util ──────────────→ util
 | `ColorHex`、`Rgb`、`LinearRgb`、`ColorParseError`、`ColorChannelError`、`ColorScalarError`、`ColorError` | `util/color` | 无 alpha 的领域颜色及错误；`Rgb`/`LinearRgb` 带 brand，互相不可赋值 |
 | `VoxelKey`、`PackedIntError` | `util/packed-int` | 16-bit 体素坐标打包键及错误 |
 | `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值；`Quat` 带 brand（值域恒为单位四元数），`Plane` 带 brand（法向量恒为单位向量） |
-| `SceneNodeId`、`SceneObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`SceneObjectSnapshot`、`SceneSnapshot` | `domain/scene/scene-types` | 场景图与对象身份 |
+| `SceneNodeId`、`SceneObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`SceneObjectSnapshot`、`SceneSnapshot`、`SceneValidationError` | `domain/scene/scene-types` | 场景图与对象身份；两个 ID 带 brand，`SceneSnapshot` 只能由 `sceneSnapshot` 构造，该入口是场景结构不变量的唯一校验点 |
 | `ScenePatch`、`ScenePatchOp` | `domain/scene/scene-patch` | 场景级可逆补丁 |
 | `VoxelPatch`、`PatchOp`、`PatchApplyError` | `domain/voxel/uniform/patch` | 单对象局部网格上的可逆体素变更及其纯应用语义 |
 | `AnimationDocument`、`AnimationTrack`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |
 | `AnimationPreviewPort`、`AnimationSessionPort`、`AnimationApplyPort`、`AnimationOutputWriter`、`AnimationOutputMetadata`、`AnimationOutputResult` | `application/ports/animation-port` | 应用层动画预览/会话、运行时求值应用与离线输出契约 |
+| `IdGeneratorPort` | `application/ports/id-generator-port` | 节点/对象/动画轨道/关键帧身份的唯一来源；场景身份必须经 `scene-types` 入口铸造 brand |
 
 类型收敛规则：
 

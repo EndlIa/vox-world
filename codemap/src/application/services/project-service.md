@@ -3,7 +3,7 @@
 **职责**：新建、打开、保存、另存为、自动保存项目，并协调 Quick Save 与命名 Snapshot。
 **接口**：newProject、load、save、saveAs、autosave、saveQuick、restoreQuick、listSnapshots、saveSnapshot、restoreSnapshot、deleteSnapshot、cancel、state。
 **内部**：通过注入的 repository-port、应用层 `ProjectDocumentPort`（基础设施适配器组合 project-codec 和 baked-mesh-codec）、`SnapshotPort`（基础设施适配器包装 snapshot-service）与 render-settings-service 处理当前格式文档、项目设置、资产和原子写入；只更新项目会话的 dirty 状态。
-**依赖**：repository-port、application/ports/animation-port、domain/animation、project、scene-document、render-settings-service、本文件定义的 `ProjectDocumentPort`/`SnapshotPort` 应用契约；具体 codec 和 snapshot-service 只由 app composition root 注入，application 不直接 import infrastructure。
+**依赖**：repository-port、application/ports/animation-port、application/ports/id-generator-port、domain/animation、project、scene-document、render-settings-service、本文件定义的 `ProjectDocumentPort`/`SnapshotPort` 应用契约；具体 codec 和 snapshot-service 只由 app composition root 注入，application 不直接 import infrastructure。
 
 ## 本重构必须补齐
 
@@ -60,7 +60,7 @@ SaveRequest {
 - 未知项目版本、缺失必填字段、旧 `cameraAnimation` 字段、非法关键帧或非法 camera/render 值必须拒绝整个文档；不得在加载时补齐字段、迁移旧字段或过滤坏数据。
 - 加载失败必须保留当前项目、当前渲染设置和当前会话，不得部分提交；恢复后 Camera Control 和播放状态重置。
 - 缺资产、场景不变量失败或对象引用错误返回对应 typed error，保留当前项目和当前会话，不自动清理项目 manifest。
-- `newProject` 原子重置为一个含根节点、零对象的空 `SceneSnapshot`、默认动画、camera/render 项目设置、Bake 池、EditorState、选择、History 和 `projectVersion`；项目设置通过 `render-settings-service` 生成默认值，但不重置工作区偏好。当前项目 dirty 时由调用方先确认保存/丢弃。
+- `newProject` 原子重置为一个含根节点的空 `SceneSnapshot`（根节点 `SceneNodeId` 经 `IdGeneratorPort` 分配，名称固定 `Root`，`visible = true`，零个对象）、默认动画、camera/render 项目设置、Bake 池、EditorState、选择、History 和 `projectVersion`；项目设置通过 `render-settings-service` 生成默认值，但不重置工作区偏好。当前项目 dirty 时由调用方先确认保存/丢弃。
 - 项目替换成功后清理原项目独占的临时资源和零引用资产，但不删除仍被其他项目引用的共享资产。
 - ProjectService 订阅 SceneDocument、动画文档、Bake Mesh manifest 和 render-settings-service 中项目作用域的持久化变更并增加 `projectVersion`；播放、暂停、seek、Follow/Observe、纯运行时相机移动或 override 变化只存在于运行时，不得推进 `SceneDocument.version`、`projectVersion` 或把项目标为 dirty。打开、新建和 Snapshot 恢复成功后重置 `projectVersion`/`savedProjectVersion` 并建立新的 History checkpoint。
 

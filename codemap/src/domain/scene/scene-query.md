@@ -7,7 +7,6 @@
 - `sceneObjectForNode(scene, nodeId)`、`nodeForSceneObject(scene, sceneObjectId)`。
 - `localTransform(scene, nodeId)`、`worldTransform(scene, nodeId)`、`worldBounds(scene, sceneObjectId)`。
 - `effectiveVisible(scene, nodeId)`、`objectVisible(scene, sceneObjectId)`。
-- `validateScene(scene)`。
 
 **内部**：
 - 查询只读 `SceneSnapshot`，不创建或修改 `SceneDocument`，不依赖 Three.js。
@@ -16,6 +15,6 @@
 - `effectiveVisible` 返回节点自身及全部祖先的可见性逻辑与。隐藏节点不参与渲染，但对象和体素数据仍存在。
 - 对象局部体素通过 `getSceneObject(scene, sceneObjectId).voxels` 读取，其坐标语义是该 `SceneObject` 的局部网格；不得把对象内部 `Map` 泄漏给调用方。
 - 场景查询不负责屏幕拾取、相机视锥判断或渲染表面选择；这些由 PickService 和渲染层处理。
-- `validateScene` 检查 `scene-types` 中的全部结构不变量，失败返回 `SceneValidationError`，不得自动修复输入。
+- 入参必须是经 `scene-types.sceneSnapshot` 构造的合法 `SceneSnapshot`（brand 即已校验）；查询不重复校验结构不变量，也不负责修复非法快照。
 
 **依赖**：scene-types、voxel/uniform/types、voxel/uniform/query、util/math、util/result。

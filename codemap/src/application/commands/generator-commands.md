@@ -12,6 +12,7 @@
 **内部**：
 - 命令不携带生成函数、Three.js SimplexNoise 实例、DOM 控件、Worker 对象或生成后的可变数组；Terrain 的噪声由 Handler/领域实现按 seed 构造。
 - 所有尺寸、半径、颜色和 seed 在命令创建时冻结；UI 后续变化只影响下一次命令。
+- `name` 只在 `placement = "new-object"` 时合法且必填，必须满足 `scene-types` 的名称规则（`trim` 后非空）；`active-object-xform` 不创建节点，不得携带 `name`。
 - 命令不自行判断是否先 Apply XFORM；EditorSession 在派发前统一处理活动会话，避免生成结果插入未提交的 working entries。
 - `baseSceneVersion` 用于对象创建或活动对象 XFORM 的陈旧版本检查；`operationId` 可选用于绑定进度和取消，不得放进持久化项目。
 - `new-object` 必须处于 Object 模式；`active-object-xform` 必须处于 Edit 模式且目标就是活动对象。命令不得隐式切换模式。
