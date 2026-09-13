@@ -4,12 +4,12 @@
 
 **接口**：
 - `EditorMode = "object" | "edit"`。
-- `EditorStateSnapshot`：`{ mode; activeObjectId; version }`。
-- `enterEdit(objectId)`、`exitEdit`、`setActiveObject(objectId)`、`snapshot`、`subscribe`。
+- `EditorStateSnapshot`：`{ mode; activeSceneObjectId; version }`。
+- `enterEdit(sceneObjectId)`、`exitEdit`、`setActiveSceneObject(sceneObjectId)`、`snapshot`、`subscribe`。
 
 **内部**：
-- Object 模式下 `activeObjectId` 必须为 `null`。选中对象只由 `ObjectSelection` 持有，EditorState 不复制它。
-- Edit 模式下 `activeObjectId` 必须非空，并且当前场景中必须存在该对象。ObjectSelection 的同步由 Scene Command Handler/EditorSession 保证；EditorState 不依赖也不复制另一个 state 模块。
+- Object 模式下 `activeSceneObjectId` 必须为 `null`。选中对象只由 `SceneObjectSelection` 持有，EditorState 不复制它。
+- Edit 模式下 `activeSceneObjectId` 必须非空，并且当前场景中必须存在该对象。SceneObjectSelection 的同步由 Scene Command Handler/EditorSession 保证；EditorState 不依赖也不复制另一个 state 模块。
 - 进入 Edit 模式前必须先结束或取消 Object XFORM；退出 Edit 模式前必须先提交或取消 Voxel XFORM，并按显式规则清空活动对象的体素 Selection。
 - 切换活动对象时必须清空旧对象的体素 Selection 和 XFORM；不得把对象 A 的局部 `VoxelKey` 带入对象 B。
 - 活动对象被删除、场景被替换或项目关闭时，EditorState 必须回到 Object 模式并清空活动对象。

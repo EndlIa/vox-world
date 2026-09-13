@@ -36,7 +36,7 @@ src/
 Project
   ├── SceneSnapshot
   │     ├── SceneNode（层级与变换）
-  │     └── VoxObject（局部体素网格）
+  │     └── SceneObject（局部体素网格）
   ├── Camera / Render settings
   └── AnimationDocument
 
@@ -44,25 +44,25 @@ SceneNode
   ├── id / parentId / childIds
   ├── transform（局部 -> 父空间）
   ├── visible（子树渲染开关）
-  └── objectId?（至多绑定一个 VoxObject）
+  └── sceneObjectId?（至多绑定一个 SceneObject）
 
-VoxObject
+SceneObject
   ├── id
   └── VoxelSnapshot（只使用该对象的局部 VoxelKey）
 ```
 
-跨对象引用体素时必须使用 `ObjectVoxelRef = { objectId, key }`。`VoxelKey` 不再是整个场景的全局唯一键，只保证在单个 `VoxObject` 的局部网格内唯一。
+跨对象引用体素时必须显式携带目标对象身份：`SceneObjectId` 加上该对象局部网格内的 `VoxelKey`。`VoxelKey` 不再是整个场景的全局唯一键，只保证在单个 `SceneObject` 的局部网格内唯一。
 
-每个 `VoxObject` 必须由恰好一个 `SceneNode` 绑定；不允许孤儿对象或重复绑定。绑定对象的节点第一版必须是叶节点，组节点只用于层级组织。场景 Patch 必须原子地保持这些不变量。
+每个 `SceneObject` 必须由恰好一个 `SceneNode` 绑定；不允许孤儿对象或重复绑定。绑定对象的节点第一版必须是叶节点，组节点只用于层级组织。场景 Patch 必须原子地保持这些不变量。
 
 ### 编辑器模式
 
-- **Object 模式**：选择和变换 `VoxObject`；变换由对象绑定的 `SceneNode` 承担。对象模式不直接编辑体素。
-- **Edit 模式**：必须恰好有一个 `activeObjectId`。体素查询、选择、绘制、XFORM 和模型算法只能作用于该活动对象。
+- **Object 模式**：选择和变换 `SceneObject`；变换由对象绑定的 `SceneNode` 承担。对象模式不直接编辑体素。
+- **Edit 模式**：必须恰好有一个 `activeSceneObjectId`。体素查询、选择、绘制、XFORM 和模型算法只能作用于该活动对象。
 - Edit 模式下其他对象可以按 `SceneNode.visible` 渲染，但不得进入体素拾取、选择、XFORM 或命令候选；渲染可见性与可编辑性是两个独立概念。
 - 进入 Edit 模式、退出 Edit 模式、切换活动对象和删除活动对象时，必须显式清理或取消不适用的体素 Selection/XFORM 状态。
 
-`ObjectSelection` 是对象选择的唯一可变所有者；`EditorState` 只保存模式和活动对象，不复制 `selectedObjectId`。进入 Edit 模式时由 Scene Command Handler 原子同步两者，退出 Edit 后保留对象选择。
+`SceneObjectSelection` 是对象选择的唯一可变所有者；`EditorState` 只保存模式和活动对象，不复制 `selectedSceneObjectId`。进入 Edit 模式时由 Scene Command Handler 原子同步两者，退出 Edit 后保留对象选择。
 
 ### 动画模型
 
@@ -76,7 +76,7 @@ VoxObject
 
 ### 坐标与可见性
 
-- `VoxObject` 的局部整数坐标由 `VoxelKey` 表示；对象的局部到世界变换由它绑定的 `SceneNode` 及其祖先组合得到。
+- `SceneObject` 的局部整数坐标由 `VoxelKey` 表示；对象的局部到世界变换由它绑定的 `SceneNode` 及其祖先组合得到。
 - `SceneNode.visible` 控制渲染子树；`VoxelValue.visible` 控制对象内部单个体素的渲染。有效可见性为两者及祖先可见性的逻辑与。
 - “其他对象不可编辑”由 EditorState、PickService 和命令校验共同保证，不能通过把对象设为不可见来伪装。
 - 对象级 Patch 与对象内体素 Patch 必须在同一场景版本下原子提交；Undo/Redo 保存场景感知的正反向补丁。
@@ -129,7 +129,7 @@ util ──────────────→ util
 | `ColorHex`、`Rgb`、`LinearRgb`、`ColorParseError`、`ColorChannelError`、`ColorScalarError`、`ColorError` | `util/color` | 无 alpha 的领域颜色及错误；`Rgb`/`LinearRgb` 带 brand，互相不可赋值 |
 | `VoxelKey`、`PackedIntError` | `util/packed-int` | 16-bit 体素坐标打包键及错误 |
 | `Vec3`、`Mat4`、`Quat`、`Plane`、`Aabb`、`Ray` | `util/math` | 与渲染器无关的纯数学值；`Quat` 带 brand（值域恒为单位四元数），`Plane` 带 brand（法向量恒为单位向量） |
-| `SceneNodeId`、`VoxObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`VoxObjectSnapshot`、`SceneSnapshot`、`ObjectVoxelRef` | `domain/scene/scene-types` | 场景图、对象身份和对象局部体素引用 |
+| `SceneNodeId`、`SceneObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`SceneObjectSnapshot`、`SceneSnapshot` | `domain/scene/scene-types` | 场景图与对象身份 |
 | `ScenePatch`、`ScenePatchOp` | `domain/scene/scene-patch` | 场景级可逆补丁 |
 | `AnimationDocument`、`AnimationTrack`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |
 | `AnimationPreviewPort`、`AnimationSessionPort`、`AnimationApplyPort`、`AnimationOutputWriter`、`AnimationOutputMetadata`、`AnimationOutputResult` | `application/ports/animation-port` | 应用层动画预览/会话、运行时求值应用与离线输出契约 |
@@ -140,7 +140,7 @@ util ──────────────→ util
 - `Rgb` 与 `LinearRgb` 虽同形，但分别表示 sRGB 8-bit 和线性 sRGB。两者必须带各自 brand（`__brand: "Rgb"` / `__brand: "LinearRgb"`），互相不可赋值；`Rgb` 只能由 `parseRgb` 成功返回，`LinearRgb` 只能由 `linearize` 返回。禁止互相别名、合并、声明同形副本，或在调用方就地构造带 brand 的值。
 - `Vec3` 与领域 `GridPosition`、`Aabb` 与领域 `Bounds3i` 语义不同，禁止互相别名或合并。
 - `VoxelKey`、`ColorHex` 只能由 `util/packed-int`、`util/color` 定义；domain 只能 re-export，`VoxelColor` 只能作为 `ColorHex` 的领域别名。
-- `SceneSnapshot` 是场景根快照；`VoxelSnapshot` 只表示单个 `VoxObject` 的局部数据。任何跨对象操作都不得退化为全局 `VoxelKey` 查找。
+- `SceneSnapshot` 是场景根快照；`VoxelSnapshot` 只表示单个 `SceneObject` 的局部数据。任何跨对象操作都不得退化为全局 `VoxelKey` 查找。
 - 跨模块的公开数据使用只读普通对象/数组；本项目的 `readonly` 是编译期约束，不依赖 `Object.freeze`，但不得把所有权状态对象或其底层 `Map`/`Set` 暴露给其他模块。
 - 序列化边界必须在输入侧接收 `unknown` 并做运行时校验；TypeScript brand 不提供运行时保证。
 - 版本信息只允许存在于持久化 DTO 的 `version` 字段；不得把格式版本号编进类型名或文件名（不出现 `XxxV1` 之类后缀）。同一格式的新版本通过新增 DTO 形状并对旧版本显式报错来表达，不做字段级兼容或迁移。

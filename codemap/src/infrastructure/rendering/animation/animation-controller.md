@@ -32,7 +32,7 @@
 - `Camera -> View`、`View -> Camera`、`Add Keyframe` 和 `setControlTransform` 只在 camera target 可用；Node target 不得借用 Camera Control。`addCameraKeyframeFromControl()` 在 `currentTimeMs` 原子插入/替换 camera position、rotation、fov 三条轨道的关键帧，缺失轨道先创建；无 control 时返回不可用，不得留下部分轨道或关键帧。
 - 路径只由 camera position track 采样生成白色 Line；采样点数量取 `min(128, (keyframeCount - 1) * 16 + 1)`，只在至少两个关键帧时显示。关键帧 marker 使用空心 billboard 圆。路径/marker 使用渲染辅助层，不进入体素拾取；截图和离线渲染期间必须隐藏并在 `finally` 恢复原开关。
 - `prepareOfflineCapture()` 先调用 `stopAndClearOverride()`，通过 `AnimationApplyPort.clearEvaluation()` 清除全部 Node/Camera override并恢复 authored/base view；随后保存编辑器状态、隐藏 Camera Control/路径/marker、切换到 cinematic camera。返回的 restore 必须幂等，在成功、取消、异常和 context lost 后都恢复播放前编辑器 view/投影、controls、Camera Control 作者姿态/可见性/选择、路径开关和后处理绑定；不得自动重新播放，也不得把 cinematic/Node 临时姿态写回作者数据。
-- `stopAndClearOverride()`、非循环自然结束、用户取消、进入 Object/Voxel XFORM、切换 Edit 模式和 context lost 走同一个恢复事务：先通过 `AnimationApplyPort.clearEvaluation()` 清除 Node/Camera override与 Follow/Observe 临时显示，再恢复编辑器相机、controls、Camera Control 与 path 状态；恢复函数只执行一次。
+- `stopAndClearOverride()`、非循环自然结束、用户取消、进入 Object/Uniform Voxel XFORM、切换内容编辑模式和 context lost 走同一个恢复事务：先通过 `AnimationApplyPort.clearEvaluation()` 清除 Node/Camera override与 Follow/Observe 临时显示，再恢复编辑器相机、controls、Camera Control 与 path 状态；恢复函数只执行一次。
 - 项目新建时调用 `load(createDefaultAnimation())`；加载或 Storage/snapshot 恢复时只接受 `domain/animation` 针对当前 SceneSnapshot 严格校验通过的 V1 文档，缺字段、非法轨道、根节点 target 或悬空 Node target 由项目加载整体失败。Camera Control 不属于项目格式，加载后必须清空。
 - `hasTracksForNode(nodeId)` 供应用层删除预检；V1 不自动删除被引用节点的轨道，存在引用时删除命令必须失败。
 

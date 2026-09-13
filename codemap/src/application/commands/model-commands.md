@@ -1,15 +1,15 @@
 # model-commands.ts
 
-**职责**：定义 Edit 模式中活动 `VoxObject` 的模型整理、体素算法和测量操作的纯数据命令。
+**职责**：定义 Edit 模式中活动 `SceneObject` 的模型整理、体素算法和测量操作的纯数据命令。
 
 **接口**：
-- 所有命令携带 `objectId: VoxObjectId` 和 `baseSceneVersion`；`objectId` 必须等于 `EditorState.activeObjectId`。
-- `OptimizeVoxelsCommand`：`{ objectId; neighborhood: 6 | 18 | 26; baseSceneVersion; operationId? }`。
-- `ResampleVoxelsCommand`：`{ objectId; factor?: number; targetResolution?: number; samplesPerAxis: 1 | 2 | 3; baseSceneVersion; operationId? }`；`factor` 与 `targetResolution` 必须且只能提供一个。
-- `FillHolesCommand`：`{ objectId; fallbackColor: VoxelColor; closing: true; baseSceneVersion; operationId? }`。
-- `NormalizeVoxelsCommand`、`CentralizeVoxelsCommand`：`{ objectId; baseSceneVersion; operationId? }`；只携带活动对象模型整理意图。
-- `MeasureVolumeCommand`：`{ objectId; scope: CommandScope; baseSceneVersion }`；返回报告，不修改模型。
-- `SymmetrizeModelCommand`、`MirrorModelCommand`、`RotateModelCommand`、`DeleteHalfModelCommand`：`{ objectId; axis: "x" | "y" | "z"; pivotMode: "bounds" | "world"; side?: 1 | -1; direction?: "cw" | "ccw"; baseSceneVersion }`；只作用于活动对象，XFORM 活动时 Mirror/Rotate 改用 voxel-transform-command 的 session 版本。
+- 所有命令携带 `sceneObjectId: SceneObjectId` 和 `baseSceneVersion`；`sceneObjectId` 必须等于 `EditorState.activeSceneObjectId`。
+- `OptimizeVoxelsCommand`：`{ sceneObjectId; neighborhood: 6 | 18 | 26; baseSceneVersion; operationId? }`。
+- `ResampleVoxelsCommand`：`{ sceneObjectId; factor?: number; targetResolution?: number; samplesPerAxis: 1 | 2 | 3; baseSceneVersion; operationId? }`；`factor` 与 `targetResolution` 必须且只能提供一个。
+- `FillHolesCommand`：`{ sceneObjectId; fallbackColor: VoxelColor; closing: true; baseSceneVersion; operationId? }`。
+- `NormalizeVoxelsCommand`、`CentralizeVoxelsCommand`：`{ sceneObjectId; baseSceneVersion; operationId? }`；只携带活动对象模型整理意图。
+- `MeasureVolumeCommand`：`{ sceneObjectId; scope: CommandScope; baseSceneVersion }`；返回报告，不修改模型。
+- `SymmetrizeModelCommand`、`MirrorModelCommand`、`RotateModelCommand`、`DeleteHalfModelCommand`：`{ sceneObjectId; axis: "x" | "y" | "z"; pivotMode: "bounds" | "world"; side?: 1 | -1; direction?: "cw" | "ccw"; baseSceneVersion }`；只作用于活动对象，XFORM 活动时 Mirror/Rotate 改用 voxel-transform-command 的 session 版本。
 - `ModelCommand` 为上述命令的可辨识联合；metadata 统一包含 `id`、`baseSceneVersion`、`source`。
 
 **内部**：
@@ -20,4 +20,4 @@
 - Normalize/Centralize/Optimize/Resample/Fill Holes 和模型级对称命令在派发前必须由 EditorSession 处理活动 Voxel XFORM；命令本身不读取 UI 的 Clone 或确认框状态。
 - Measure Volume 是只读查询命令；空范围合法，不要求确认，不写 History。
 
-**依赖**：scene-types、voxel-types、model-operations、util/color、util/result。
+**依赖**：scene-types、voxel/uniform/types、domain/voxel/uniform/model-operations、util/color、util/result。

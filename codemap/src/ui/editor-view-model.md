@@ -12,8 +12,8 @@
 - `editorMode`：object、edit；Object 模式显示对象选择和对象变换，Edit 模式显示活动对象和体素编辑工具。
 - `workspaceMode`：model、render、export；与 `editorMode` 正交，只控制工作区面板可见性。
 - `scene`：节点摘要、对象摘要、根节点、对象数量和当前可见对象数量。
-- `objectSelection`：当前选中的 `VoxObjectId` 和对象摘要。
-- `activeObject`：Edit 模式下活动对象的只读摘要；Object 模式为 `null`。
+- `objectSelection`：当前选中的 `SceneObjectId` 和对象摘要。
+- `activeSceneObject`：Edit 模式下活动对象的只读摘要；Object 模式为 `null`。
 - `voxelSelection`：活动对象的局部选择数量、锚点和版本；不得把完整键集合复制到 UI。
 - `activeTool`、`toolSettings`、`toolAvailability`。
 - `voxelSelection`、`objectTransformSession`、`voxelTransformSession` 的只读摘要和版本号。

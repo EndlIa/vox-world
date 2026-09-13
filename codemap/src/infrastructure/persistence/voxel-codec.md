@@ -1,9 +1,9 @@
 # voxel-codec.ts
 
-**职责**：读写当前项目格式中单个 `VoxObject` 的紧凑体素字符串，并在编解码边界完成严格结构校验。
+**职责**：读写当前项目格式中单个 `SceneObject` 的紧凑体素字符串，并在编解码边界完成严格结构校验。
 **接口**：parse、serialize、version。
 **内部**：处理 `x,y,z,RRGGBB,visible;` 分号格式，转换为只读 `VoxelSnapshot`；不访问 localStorage，不识别旧存储记录。
-**依赖**：voxel-types、voxel-patch、util/color。
+**依赖**：voxel/uniform/types、voxel/uniform/patch、util/color。
 
 ## 字符串格式
 

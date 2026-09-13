@@ -17,7 +17,7 @@ ExportJobRequest {
           "glb" | "gltf" | "obj" | "stl" | "ply";
   scope: "activeObjectRaw" | "sceneRaw" | "bakedAll" | "bakedSelected";
   fileName?: string;
-  objectId?: VoxObjectId;           // activeObjectRaw 必须提供
+  sceneObjectId?: SceneObjectId;           // activeObjectRaw 必须提供
   selectedMeshId?: string;
   sceneVersion: number;
   options?: ExportOptions;
@@ -42,7 +42,7 @@ ExportResult {
 
 ## 编排规则
 
-- `activeObjectRaw` 从指定 `VoxObject` 的不可变局部快照导出；`sceneRaw` 从完整 `SceneSnapshot` 导出并保留节点变换和对象边界。二者允许 `vox`、`obj_raw`、`stl_raw`、`ply_raw`；不得要求存在 Bake Mesh。
+- `activeObjectRaw` 从指定 `SceneObject` 的不可变局部快照导出；`sceneRaw` 从完整 `SceneSnapshot` 导出并保留节点变换和对象边界。二者允许 `vox`、`obj_raw`、`stl_raw`、`ply_raw`；不得要求存在 Bake Mesh。
 - `bakedAll`/`bakedSelected` 从 bake-service 的不可变 mesh manifest 和资产快照导出，允许 `glb`、`gltf`、`obj`、`stl`、`ply`。
 - `bakedSelected` 必须提供 `selectedMeshId`；对象在任务期间被删除或重命名不改变该 id 的选择语义。
 - 捕获的 `sceneVersion` 与当前场景不一致时，允许继续导出该历史快照，但结果必须标注 source version；若调用方要求最新版本则返回 `STALE_EXPORT_SOURCE`。

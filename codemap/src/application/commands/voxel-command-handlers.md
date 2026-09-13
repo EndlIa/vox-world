@@ -1,6 +1,6 @@
 # voxel-command-handlers.ts
 
-**职责**：解释活动 `VoxObject` 内的体素编辑、颜色组和可见性命令，并生成可逆、原子、稳定的对象级 `VoxelPatch` 或 `ScenePatch`。
+**职责**：解释活动 `SceneObject` 内的体素编辑、颜色组和可见性命令，并生成可逆、原子、稳定的对象级 `VoxelPatch` 或 `ScenePatch`。
 
 **接口**：
 - `AddVoxelsHandler`、`RemoveVoxelsHandler`、`PaintVoxelsHandler`、`SetVisibilityHandler`、`InvertVisibilityHandler`。
@@ -8,8 +8,8 @@
 - 每个 Handler 实现 `canHandle`、`validate(command, context)`、`execute(command, context) -> CommandOutcome`；context 只提供只读文档/选择快照、查询、颜色规范化、对称规则、显式注入的随机种子和 WorkerPort。
 
 **内部**：
-- 通用门禁：EditorState 必须处于 Edit 模式，`command.objectId` 必须等于 `activeObjectId`，对象必须存在；然后校验 `baseSceneVersion` 和所有局部整数范围。
-- 通用提交规则：所有候选只在活动对象的局部视图中解析，按稳定 `VoxelKey` 去重、排序；Handler 返回绑定该对象的 `ScenePatch.applyObjectVoxelPatch`，不直接修改 `SceneDocument`、Selection、History、渲染器或 UI。
+- 通用门禁：EditorState 必须处于 Edit 模式，`command.sceneObjectId` 必须等于 `activeSceneObjectId`，对象必须存在；然后校验 `baseSceneVersion` 和所有局部整数范围。
+- 通用提交规则：所有候选只在活动对象的局部视图中解析，按稳定 `VoxelKey` 去重、排序；Handler 返回绑定该对象的 `ScenePatch.applySceneObjectVoxelPatch`，不直接修改 `SceneDocument`、Selection、History、渲染器或 UI。
 - Add：
   - `positions` 直接使用候选；对称 Add 同时加入原位置和镜像位置，重复键只写一次。
   - `bridge` 必须恰好有一个非零轴向方向。未开启 Bypass 时遇到占用体素立即停止；开启后允许穿过占用，但始终不得越过 `modelBounds`。桥本身只写入空位置，不覆盖已有体素，并在一次 Patch 中提交整条路径。
@@ -37,4 +37,4 @@
   - 所有体素保留原位置并设为可见，颜色变更合成单个 Patch；超过 inline 阈值时通过 WorkerPort 处理纯快照，`operationId` 只用于进度/取消，Worker 原始消息不得直接提交。
 - 失败与取消：`stale-version`、`edit-mode-required`、`active-object-mismatch`、非法范围、非法方向、空结果和取消均不生成 Patch、不递增场景版本、不写 History；已开始的异步操作只能由 WorkerPort 取消，Handler 不得留下半提交状态。
 
-**依赖**：voxel-commands、scene-types、scene-patch、scene-document、editor-state、voxel-selection、symmetry、voxel-query、voxel-patch、model-operations、worker-port、util/color、util/packed-int、util/result。
+**依赖**：voxel-commands、scene-types、scene-patch、scene-document、editor-state、state/voxel/uniform/voxel-selection、domain/voxel/uniform/symmetry、domain/voxel/uniform/query、domain/voxel/uniform/patch、domain/voxel/uniform/model-operations、worker-port、util/color、util/packed-int、util/result。

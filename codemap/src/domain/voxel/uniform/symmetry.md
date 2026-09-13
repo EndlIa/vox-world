@@ -1,17 +1,17 @@
 # symmetry.ts
 
-**职责**：定义单个活动 `VoxObject` 内绘制对称、体素 XFORM 镜像、旋转、半区删除和 pivot 解析的纯规则；输出键始终是该对象的局部整数坐标。
+**职责**：定义单个活动 `SceneObject` 内绘制对称、体素 XFORM 镜像、旋转、半区删除和 pivot 解析的纯规则；输出键始终是该对象的局部整数坐标。
 
 **接口**：
 - `configure({ axis: "none" | "x" | "y" | "z"; pivotMode: "bounds" | "world" })`。
 - `SymmetrySnapshot`：`{ axis: "none" | "x" | "y" | "z"; pivotMode: "bounds" | "world" }`；命令只保存该快照，不保存可调用方法。
-- `PivotContext`：`{ pivotMode: "bounds" | "world"; inverseObjectWorldTransform?: Mat4 }`。
+- `PivotContext`：`{ pivotMode: "bounds" | "world"; inverseSceneObjectWorldTransform?: Mat4 }`。
 - `getPivot(readViewOrEntries, context)`、`mapPoint`、`mapKey`、`expand`、`validate`。
 - `symmetrize(snapshot, side, pivot)`、`mirror(snapshot, pivot)`、`rotate(snapshot, direction, pivot)`、`deleteHalf(snapshot, side, pivot)`。
 - `mapEntry(entry, operation)`：返回新的 workingPosition，不修改 entry。
 
 **内部**：
-- 所有模型级对称操作都以一个明确的 `VoxObjectId` 和其局部快照为上下文；不得跨对象共享 pivot 或把不同对象的局部键合并。
+- 所有模型级对称操作都以一个明确的 `SceneObjectId` 和其局部快照为上下文；不得跨对象共享 pivot 或把不同对象的局部键合并。
 - axis 为 `none` 时所有展开只返回原位置；模型级 Symmetrize/Mirror/Rotate/Delete Half 必须拒绝并返回 `symmetry-axis-required`。
 - 交互快捷键 `S` 按 `none → x → y → z → none` 循环，`X`、`Y`、`Z` 直接设置对应轴；快捷键只改变 `SymmetrySnapshot`，不生成 Patch、不写 History，并在一次指针手势开始时冻结到下一次手势。
 - Bounds pivot：活动对象局部占用包围盒中心的算术中点，坐标为 `(min + max) / 2`，允许半整数。
@@ -25,4 +25,4 @@
 - Symmetrize 先保留指定半区，再镜像保留部分；不改变颜色和可见性。操作前后对键去重，返回单次可逆 Patch 所需的数据。
 - `SymmetrySnapshot` 只保存模式，不保存 SceneDocument 引用或矩阵。Handler/Session 在命令或手势开始时把 world pivot 解析为局部 pivot 并冻结；领域函数不访问 UI、SceneDocument 或 Three.js。
 
-**依赖**：scene-types、voxel-types、voxel-query、util/math、util/packed-int、util/result。
+**依赖**：types、query、util/math、util/packed-int、util/result。

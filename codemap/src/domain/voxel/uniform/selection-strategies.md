@@ -1,6 +1,6 @@
 # selection-strategies.ts
 
-**职责**：定义 Edit 模式中活动 `VoxObject` 内部 Box、Rectangle、Color、Island、Visible 五种体素选择策略的纯候选解析规则。
+**职责**：定义 Edit 模式中活动 `SceneObject` 内部 Box、Rectangle、Color、Island、Visible 五种体素选择策略的纯候选解析规则。
 
 **接口**：
 - `SelectionStrategy` 可辨识联合：`box`、`rectangle`、`color`、`island`、`visible`。
@@ -8,7 +8,7 @@
 - `SelectionResolution`：`keys`、`anchor?`、`excludedHidden`、`truncated?`、`warnings`。
 
 **内部**：
-- `resolveSelection` 必须显式接收活动 `VoxObjectId` 和对应只读视图；返回结果只解释为该对象的局部 `VoxelKey`。
+- `resolveSelection` 必须显式接收活动 `SceneObjectId` 和对应只读视图；返回结果只解释为该对象的局部 `VoxelKey`。
 - Box：输入闭区间整数 Bounds，返回其中已存在体素键；是否纳入隐藏体素由 `includeHidden` 明确指定，默认只选可见。
 - Rectangle：输入屏幕矩形、投影候选键和 surfaceKeys。XFORM 活动时候选位置必须由调用方先用 `TransformSession.candidatePosition` 投影；`bypass = false` 时与 surfaceKeys 求交，`true` 时保留全部屏幕候选深度。
 - Color：输入规范化颜色，返回精确同色键；默认只选可见体素。颜色即逻辑组，不按岛屿拆分。
@@ -18,4 +18,4 @@
 - XFORM Add 模式需过滤 session 内已选 entry 和重复 working position；Subtract 模式只保留当前 session 成员。该过滤属于 XFORM 命令规则，不属于通用选择策略。
 - 非活动对象不得进入候选、表面键求交或连通遍历；Rectangle 的投影候选必须来自活动对象。
 
-**依赖**：scene-types、voxel-types、voxel-query、util/math。
+**依赖**：types、query、util/math。

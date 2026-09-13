@@ -7,12 +7,12 @@
 - `applyEnvironment(settings)`、`setEnvironmentMap(source | mapId)`、`setEnvironmentIntensity(value)`、`setBackground(settings)`。
 - `applyLighting(settings)`、`setDirectionalLight({ color, intensity, position, target })`。
 - `setPlane({ size, color, y })`、`setGrid`、`setHelpers`、`attach`、`detach`、`dispose`。
-- `syncScene(sceneSnapshot)`、`applyScenePatch(patch)`、`setNodeWorldTransform(nodeId, matrix)`、`setObjectRenderable(objectId, visible)`。
+- `syncScene(sceneSnapshot)`、`applyScenePatch(patch)`、`setNodeWorldTransform(nodeId, matrix)`、`setSceneObjectRenderable(sceneObjectId, visible)`。
 - `setNodeAnimationOverride(nodeId, transformPatch)`、`clearNodeAnimationOverrides()`；覆盖来自只读 `AnimationEvaluation.nodes` 中对应节点的 `Partial<SceneTransform>`。
 - `captureRuntimeState()`、`restoreRuntimeState(state)`，仅用于 context lost、截图和渲染模式切换，不用于项目序列化。
 
 **内部**：
-- 每个领域 `SceneNode` 对应一个 Three.js `Object3D`；每个 `VoxObject` 的实例渲染挂在其绑定节点的子树下。`SceneNode.transform` 是 `SceneDocument` 中的 authored/base 局部变换；渲染层不得反向修改 `SceneDocument`。
+- 每个领域 `SceneNode` 对应一个 Three.js `Object3D`；每个 `SceneObject` 的实例渲染挂在其绑定节点的子树下。`SceneNode.transform` 是 `SceneDocument` 中的 authored/base 局部变换；渲染层不得反向修改 `SceneDocument`。
 - 每个节点维护 base local TRS 和可选的运行时动画覆盖。有效局部 TRS 按通道合成：有 `position`、`rotation` 或 `scale` 覆盖时替换对应通道，没有覆盖时使用 base 值；最终矩阵为 `T * R * S`。
 - 世界矩阵必须按父子关系逐级组合 `parentEffectiveWorld * localEffective`。节点轨道只表达相对父节点的局部变换，不得把世界矩阵写进动画覆盖；父节点被动画驱动时，子节点自动继承其结果。
 - `setNodeAnimationOverride` 替换指定节点的运行时覆盖并重算该节点及其子树；未知 `SceneNodeId`、根节点或非法 TRS 必须拒绝，不能静默跳过。应用一个 `AnimationEvaluation` 前由调用方校验全部节点目标，再按稳定顺序写入，保证相同 evaluation 重复应用得到相同矩阵。scene 不调用 `domain/animation.evaluateAnimation`，只消费已经求值并校验的覆盖。

@@ -33,7 +33,7 @@ ExportRequest {
           "glb" | "gltf" | "obj" | "stl" | "ply";
   scope: "activeObjectRaw" | "sceneRaw" | "bakedAll" | "bakedSelected";
   fileName: string;
-  objectId?: VoxObjectId;
+  sceneObjectId?: SceneObjectId;
   sceneVersion: number;
   selectedMeshId?: string;
   options: {
@@ -45,18 +45,18 @@ ExportRequest {
 }
 ```
 
-`fileName` 去除路径分隔符和非法字符；空值回退为 `untitled`。`activeObjectRaw` 必须提供 `objectId`。导出必须基于开始时捕获的不可变 `SceneSnapshot`/对象局部快照，不允许在异步过程中读取正在变化的 SceneDocument 或 mesh pool。
+`fileName` 去除路径分隔符和非法字符；空值回退为 `untitled`。`activeObjectRaw` 必须提供 `sceneObjectId`。导出必须基于开始时捕获的不可变 `SceneSnapshot`/对象局部快照，不允许在异步过程中读取正在变化的 SceneDocument 或 mesh pool。
 
 ## VOX 导出
 
-**本重构必须补齐**：`vox` 只导出指定 `VoxObject` 的局部 Raw Voxels，不从 Baked Mesh 反向重建体素，也不跨对象合并。
+**本重构必须补齐**：`vox` 只导出指定 `SceneObject` 的局部 Raw Voxels，不从 Baked Mesh 反向重建体素，也不跨对象合并。
 
 - 输出 MagicaVoxel VOX 200，包含 `MAIN`、`SIZE`、`XYZI`、`RGBA` 块。
 - 尺寸映射为 `SIZE = { x: dim.x, y: dim.z, z: dim.y }`；每个体素先按文档包围盒中心平移，再映射为 `x = adjustedX + dim.x / 2`、`y = -adjustedZ + dim.z / 2`、`z = adjustedY + dim.y / 2`。
 - 颜色按 RGBA 去重；按 shithill 的调色板映射保留索引 0 和首个占位项，真实去重颜色从 2 开始，剩余槽填 `(0,0,0,255)`，RGBA 块始终写出 256 项。
 - 坐标必须落在 0..255；超过 255 或唯一颜色超过 255 返回 `VOX_CAPACITY_EXCEEDED`，不得截断、取模或丢体素。
 - 空对象返回 `EMPTY_EXPORT`。VOX 不表达体素可见性；为保持 shithill 行为，对象中的隐藏体素仍写出为普通体素。
-- 写入前先从目标 `VoxObject` 的只读局部快照重建体素缓冲，保证颜色与位置一致；不使用 Baked Mesh 的材质。
+- 写入前先从目标 `SceneObject` 的只读局部快照重建体素缓冲，保证颜色与位置一致；不使用 Baked Mesh 的材质。
 
 ## STL 导出
 

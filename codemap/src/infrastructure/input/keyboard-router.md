@@ -11,8 +11,8 @@
 type KeyboardContext = {
   editorMode: 'object' | 'edit';
   workspaceMode: 'model' | 'render' | 'export';
-  activeObjectId?: string;
-  selectedObjectId?: string;
+  activeSceneObjectId?: string;
+  selectedSceneObjectId?: string;
   activeToolId?: string;
   objectTransformActive: boolean;
   voxelTransformActive: boolean;
@@ -58,7 +58,7 @@ type Shortcut = {
 | 快捷键 | 语义 | 动作边界 |
 | --- | --- | --- |
 | Space / Alt（按住） | 临时 Free Camera | `tool.select(camera, { temporary: true })`，释放后恢复原工具 |
-| Enter | Apply 当前 XFORM | Object 模式应用 ObjectTransformSession；Edit 模式应用活动对象的 VoxelTransformSession；按钮聚焦时忽略 |
+| Enter | Apply 当前 XFORM | Object 模式应用 SceneObjectTransformSession；Uniform voxel object 内容编辑模式应用活动对象的 VoxelTransformSession；按钮聚焦时忽略 |
 | Ctrl（按住） | 相机平移修饰键 | 向导航输入端口发布 `camera.navigate` 的 modifier 状态，不直接改相机 |
 | Shift（按住） | Clone Transform / 修饰模式 | 记录到修饰键快照；工具在 pointerdown 时读取，不在手势中改变 |
 | Delete | 删除选中对象或活动对象体素 | `selection.delete()`，由应用层按 `editorMode` 解析 |

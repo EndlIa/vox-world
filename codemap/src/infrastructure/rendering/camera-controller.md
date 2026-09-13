@@ -20,7 +20,7 @@
 - `applyAnimationOverride` 只接收 `AnimationEvaluation.camera` 已经求值后的 `Partial<AnimationCameraPose>`，不读取 `AnimationDocument`、不调用 `evaluateAnimation`、不执行插值，也不修改项目相机设置。首次应用时保存当前 authored/base view；每次应用都以 base view 为底，只替换本次 patch 出现的 position/rotation/fov 通道，未出现通道恢复 base，禁止沿用上一帧 override。该方法只由 `AnimationApplyPort` 实现调用，并作为完整 Node/Camera evaluation 提交事务的一部分；若事务失败必须由调用方回滚。`clearAnimationOverride()` 幂等恢复 base view 与 controls 启用状态；`AnimationApplyPort.clearEvaluation()` 在停止播放、加载/切换项目或 context restore 时统一调用。
 - `captureView`、`captureProjectSettings` 只返回作者态，不得把动画覆盖写回 `SceneDocument`、`AnimationDocument`、项目 JSON 或 Camera Control 的作者姿态。只有 `AnimationApplyPort` 实现可在完整 evaluation 提交事务中触发覆盖应用/清除，本模块不自行决定播放时机，也不持有播放时钟。
 
-**依赖**：three、application/ports/animation-port、domain/animation、util/math、domain/voxel/voxel-types。
+**依赖**：three、application/ports/animation-port、domain/animation、util/math、domain/voxel/uniform/types。
 
 ## 本重构必须补齐
 

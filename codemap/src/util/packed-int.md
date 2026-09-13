@@ -103,7 +103,7 @@ export function neighbor(
 - `pack` 接收三个独立坐标，不接收对象或数组。
 - `unpack` 返回 `readonly [x, y, z]` 元组。
 - 不提供对象参数重载，也不提供两套重复 API。
-- 本模块不依赖 `domain/voxel/voxel-types.ts`，因此不导入 `GridPosition`。
+- 本模块不依赖 `domain/voxel/uniform/types.ts`，因此不导入 `GridPosition`。
 - 上层可以在 domain 边界把元组映射为 `GridPosition`。
 
 ## 解包
@@ -155,7 +155,7 @@ neighbor(key, axis, delta): Result<VoxelKey, PackedIntError>
 - 新坐标仍在支持范围内时返回成功键。
 - 新坐标越界时返回 `coordinate_out_of_range`，不 wrap-around。
 - `delta` 非法时返回 `invalid_delta`。
-- 6/18/26 邻域由上层 `voxel-query.neighbors` 根据邻域定义调用该原语，不在本模块重复实现。
+- 6/18/26 邻域由上层 `query.neighbors` 根据邻域定义调用该原语，不在本模块重复实现。
 
 ## 溢出与错误模型
 

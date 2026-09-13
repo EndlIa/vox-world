@@ -6,8 +6,8 @@
 
 **内部**：
 - 通用规则：工具只在其声明模式与当前 EditorState 一致时激活；仅主编辑按钮起笔；同一手势按稳定身份去重；预览不提交；提交只产生一个原子命令；导航、取消、失焦或工具切换必须清理 Draft 和预览。开始任何 Object/Voxel XFORM 或进入 Edit 工具前，由 EditorSession 执行 `stopPlaybackAndClearOverride()`，停止动画播放并清除全部 Node/Camera 运行时 override；工具不得读取 evaluated override 作为作者态。
-- Object Select/Object Transform：只拾取 `VoxObjectId`，先确保动画已停止且全部 Node/Camera override 已清除，再启动 ObjectTransformSession 并修改绑定 SceneNode 的基础局部变换；不返回或修改任何体素键，也不修改动画轨道。Object Visibility 只修改绑定节点的 `visible`。
-- Palette 交互：`palette.selectColor(hex)` 只更新当前编辑颜色，作为下一次手势冻结的颜色，不生成 Patch；`palette.toggleVisibility(hex)` 在 Edit 模式下通过 `SetVisibilityCommand({ objectId: activeObjectId, kind: "color", color: hex, visible })` 原子切换活动对象中该颜色组全部体素的可见性，XFORM 活动时忽略该操作。Eyedropper 只同步当前颜色，不代替 Palette 的显隐命令。
+- Object Select/Object Transform：只拾取 `SceneObjectId`，先确保动画已停止且全部 Node/Camera override 已清除，再启动 SceneObjectTransformSession 并修改绑定 SceneNode 的基础局部变换；不返回或修改任何体素键，也不修改动画轨道。Object Visibility 只修改绑定节点的 `visible`。
+- Palette 交互：`palette.selectColor(hex)` 只更新当前编辑颜色，作为下一次手势冻结的颜色，不生成 Patch；`palette.toggleVisibility(hex)` 在 Edit 模式下通过 `SetVisibilityCommand({ sceneObjectId: activeSceneObjectId, kind: "color", color: hex, visible })` 原子切换活动对象中该颜色组全部体素的可见性，XFORM 活动时忽略该操作。Eyedropper 只同步当前颜色，不代替 Palette 的显隐命令。
 - Freehand Add/Remove/Paint：按住拖动连续处理命中体素。Add 使用命中面法线偏移到相邻空格；Remove/Paint 只作用于已存在体素。Paint 对同一体素只上色一次。启用对称时，Add 展开镜像位置，Remove/Paint 只在镜像目标存在时加入。
 - Bridge：从活动对象的命中体素沿六个轴向法线逐格延伸。未开启 `Bypass Bridge` 时遇到占用体素立即停止；开启后允许穿过已有体素，但仍不得越过活动对象局部 AABB。到达 AABB 边界即停止。整条桥在手势结束时作为一个 Add 命令提交，并按对称展开；不覆盖已有体素。
 - Box Add/Remove/Paint：按下和当前位置形成整数闭区间。`Add Wall` 高度大于 1 时只对 Box Add 生效，将终点 Y 固定为起点 Y + height - 1，形成墙面。预览盒超过实现上限时隐藏盒预览并禁止提交，不能只提交部分范围。Remove/Paint 只处理区间内已存在体素。
@@ -26,4 +26,4 @@
 - Slice Y / MultiPlane：Slice Y 控件发送可见性命令，`0` 恢复全部可见，正数显示 `y = value - 1`，负数显示 `y = value`。Get MultiPlane 读取当前 MultiPlane 的 Y 位置并转换成 Slice Y；Set MultiPlane 把 Slice Y 转回 MultiPlane 的 Y 位置。MultiPlane 只在 `workplane-only` 或显式激活时作为 Add/Box Add/Remove/Paint 的工作平面，旋转/重置不修改体素或 Selection。
 - 工具预览与导航保护：plane 预览用于 Add/Bridge/Box Add；cube 预览用于 Remove/Paint/Eyedropper/Bucket/Visibility/Transform/Measure/Frame 类工具；矩形工具显示 marquee；XFORM working 高亮必须使用独立 working pick 层。导航按钮或动画播放开始时立即取消当前编辑手势；动画播放不得在活动 XFORM/Edit 会话中启动。
 
-**依赖**：tool、tool-context、scene-commands、voxel-commands、voxel-transform-command、model-commands、generator-commands、editor-state、voxel-query、symmetry、util/color、util/result。
+**依赖**：tool、tool-context、scene-commands、voxel-commands、voxel-transform-command、model-commands、generator-commands、editor-state、voxel/uniform/query、voxel/uniform/symmetry、util/color、util/result。

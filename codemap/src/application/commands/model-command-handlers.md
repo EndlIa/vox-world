@@ -1,13 +1,13 @@
 # model-command-handlers.ts
 
-**职责**：校验活动 `VoxObject` 的模型整理/体素算法命令，调度 Worker，并把结果物化为单个对象级可逆 `ScenePatch` 或只读报告。
+**职责**：校验活动 `SceneObject` 的模型整理/体素算法命令，调度 Worker，并把结果物化为单个对象级可逆 `ScenePatch` 或只读报告。
 
 **接口**：
 - `OptimizeVoxelsHandler`、`ResampleVoxelsHandler`、`FillHolesHandler`、`NormalizeVoxelsHandler`、`CentralizeVoxelsHandler`、`MeasureVolumeHandler`、`SymmetrizeModelHandler`、`MirrorModelHandler`、`RotateModelHandler`、`DeleteHalfModelHandler`。
 - 每个 Handler 实现 `canHandle`、`validate(command, context)`、`execute(command, context) -> Promise<CommandOutcome>`；context 提供只读快照、领域操作、WorkerPort 和 operation 注册表。
 
 **内部**：
-- 通用门禁：EditorState 必须处于 Edit 模式，`objectId` 必须等于 `activeObjectId` 且对象存在；EditorSession 先处理活动 XFORM，Handler 再校验 `baseSceneVersion`。版本冲突返回 `stale-version`，原 session/场景/History 不变。
+- 通用门禁：EditorState 必须处于 Edit 模式，`sceneObjectId` 必须等于 `activeSceneObjectId` 且对象存在；EditorSession 先处理活动 XFORM，Handler 再校验 `baseSceneVersion`。版本冲突返回 `stale-version`，原 session/场景/History 不变。
 - 对称命令先解析 pivot：`bounds` 直接使用活动对象局部占用包围盒中心；`world` 通过 `scene-query.worldTransform` 的逆矩阵把世界原点 `(-0.5, -0.5, -0.5)` 转为对象局部连续坐标。解析后的局部 pivot 一次冻结到本次纯算法调用，最终体素键必须是该对象局部整数键。
 - Optimize：从只读快照调用 `optimize`，支持 6/18/26。结果若超过 `inlineAlgorithmLimit` 则通过 WorkerPort 执行 `findInnerVoxels` 等价任务；完成后把输出快照转成 `replaceAll` Patch。隐藏体素参与占用判断，输出统一可见；空结果或全删除也生成可撤销 Patch。
 - Resample：校验 `factor > 0` 或 `targetResolution > 0`，且 `samplesPerAxis ∈ {1,2,3}`；由领域函数解析目标 factor、最小占用锚点和颜色投票。Worker 输入/输出都是纯快照；平票规则必须与领域函数一致，不能依赖 Map 插入顺序。
@@ -21,4 +21,4 @@
 - Worker 边界：所有长任务必须通过 `WorkerPort.run`，输入是活动对象的只读局部快照和纯参数，输出是局部快照/报告；Handler 不接受 Worker 原始消息，不直接把结果提交给 `SceneDocument`。进度、错误和取消以 `operationId` 关联。
 - 取消/失败：取消、Worker 异常、算法超限或非法参数都不生成 Patch、不递增版本、不写 History；成功后由 CommandBus/Transaction 原子提交，再由 RenderSync 消费最终 Patch。
 
-**依赖**：model-commands、model-operations、symmetry、scene-types、scene-query、scene-patch、scene-document、editor-state、voxel-patch、worker-port、util/math、util/result。
+**依赖**：model-commands、domain/voxel/uniform/model-operations、domain/voxel/uniform/symmetry、scene-types、scene-query、scene-patch、scene-document、editor-state、domain/voxel/uniform/patch、worker-port、util/math、util/result。

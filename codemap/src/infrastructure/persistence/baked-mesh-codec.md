@@ -26,7 +26,7 @@ BakedMeshManifest {
   visible: boolean;
   source: {
     scope: "scene" | "object";
-    objectId?: string;
+    sceneObjectId?: string;
     mode: "all" | "color" | "colors" | "islands";
     sourceSceneVersion: number;
     color?: "#RRGGBB";
@@ -35,7 +35,7 @@ BakedMeshManifest {
 }
 ```
 
-项目文档保存 manifest 数组；几何和材质 bytes 通过 `geometryAssetId`/`materialAssetId` 存入 repository。`scope = "object"` 时必须提供存在的 `objectId`；`scope = "scene"` 时不得提供。名称 trim 后非空，空名称拒绝并保留旧名称；重复名称在 manifest 写入前确定性添加 `_2`、`_3`，选中身份仍使用 `id`，不能依赖名称。
+项目文档保存 manifest 数组；几何和材质 bytes 通过 `geometryAssetId`/`materialAssetId` 存入 repository。`scope = "object"` 时必须提供存在的 `sceneObjectId`；`scope = "scene"` 时不得提供。名称 trim 后非空，空名称拒绝并保留旧名称；重复名称在 manifest 写入前确定性添加 `_2`、`_3`，选中身份仍使用 `id`，不能依赖名称。
 
 ## 资产 DTO
 

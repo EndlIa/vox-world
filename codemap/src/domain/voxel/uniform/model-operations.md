@@ -1,6 +1,6 @@
 # model-operations.ts
 
-**职责**：提供单个 `VoxObject` 内 Optimize、Resample、Fill Holes、Normalize、Centralize、Measure Volume、Group by Islands 和可见性批处理的纯模型规则。
+**职责**：提供单个 `SceneObject` 内 Optimize、Resample、Fill Holes、Normalize、Centralize、Measure Volume、Group by Islands 和可见性批处理的纯模型规则。
 
 **接口**：
 - `optimize(snapshot, neighborhood: 6 | 18 | 26) -> VoxelSnapshot`。
@@ -25,4 +25,4 @@
 - Group by Islands：先忽略隐藏状态，使用 6/26 连通分量；分量按最小 `VoxelKey` 排序。为每个分量分配唯一颜色，排除 `#000000`/`#FFFFFF`，颜色由 `seed + islandIndex` 确定性生成并解决碰撞。所有体素位置不变、`visible = true`，颜色替换为对应岛屿颜色。
 - Invert/Unhide/Delete Hidden：Invert 翻转所有体素的 `visible`；Slice 规则为 `0 => 全部可见`、`sliceY > 0 => y = sliceY - 1`、`sliceY < 0 => y = sliceY`；Unhide All 等价于全部 `visible = true`；Delete Hidden 只移除隐藏体素，不改变其余颜色/可见性。
 
-**依赖**：scene-types、voxel-types、voxel-query、util/color、util/math、util/packed-int、util/result。
+**依赖**：types、query、util/color、util/math、util/packed-int、util/result。

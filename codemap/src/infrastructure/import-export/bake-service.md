@@ -1,6 +1,6 @@
 # bake-service.ts
 
-**职责**：把指定 `VoxObject` 或整个场景的 Raw Voxels 烘焙成可编辑、可导出、可持久化的 Baked Mesh，并管理其运行时生命周期。
+**职责**：把指定 `SceneObject` 或整个场景的 Raw Voxels 烘焙成可编辑、可导出、可持久化的 Baked Mesh，并管理其运行时生命周期。
 **接口**：bake、rename、select、deselect、setVisibility、setTransform、updateMaterial、deleteSelected、deleteAll、list、dispose、cancel。
 **内部**：按全量/颜色/岛分组生成 mesh，处理内部面剔除、PBR 材质克隆、命名、进度和原子提交；不导入外部网格、不执行 Unbake。
 **依赖**：scene-document、scene-types、baked-mesh-codec、repository-port、renderer-port、worker-port。
@@ -14,7 +14,7 @@
 ```text
 BakeRequest {
   scope: "scene" | "object";
-  objectId?: VoxObjectId;
+  sceneObjectId?: SceneObjectId;
   mode: "all" | "color" | "colors" | "islands";
   sourceSceneVersion: number;
   color?: "#RRGGBB";
@@ -43,7 +43,7 @@ BakeProgress {
 
 ## 几何契约
 
-- `scope = "object"` 时只为目标对象局部网格生成三角，并保留该对象 `objectId`；`scope = "scene"` 时按场景节点世界变换组合所有可见对象，并保留每个源对象/节点身份。`objectId` 在 object scope 必填，在 scene scope 禁止。
+- `scope = "object"` 时只为目标对象局部网格生成三角，并保留该对象 `sceneObjectId`；`scope = "scene"` 时按场景节点世界变换组合所有可见对象，并保留每个源对象/节点身份。`sceneObjectId` 在 object scope 必填，在 scene scope 禁止。
 - 只为“邻接体素不存在”或“邻接体素颜色不同”的面生成三角；共享且同色的内部面必须剔除。不同对象的相邻体素不得跨对象错误剔除。
 - `all` 生成一个合并 mesh；`color` 生成指定颜色；`colors` 按唯一颜色分组，最多 100 个颜色对象，超限返回 `BAKE_COLOR_LIMIT` 且不修改现有池；`islands` 默认按 26 邻域分组，调用方可显式改为 6 邻域。
 - 每个生成 mesh 使用稳定对象 id，重置 pivot 后名称默认为 `m1`、`m2`……；重名通过 `_2`、`_3` 确定性去重。

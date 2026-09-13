@@ -13,7 +13,7 @@
 **内部**：
 - 创建 `WebGLRenderer`，设置尺寸、像素比、阴影、颜色空间和输出色彩空间；主视口默认透明清屏，具体背景由 `scene.ts` 控制。
 - 使用统一的应用渲染调度器，不允许渲染器、动画播放和 Sandbox 各自创建互不协调的长期 `requestAnimationFrame` 循环。编辑器、Sandbox 与离线捕获通过 `requestRender` 串行驱动。
-- `applyPatch` 消费 `ScenePatch`，按 `SceneNodeId`/`VoxObjectId` 更新 authored/base 节点层级、局部变换和对象实例资源；不得把所有对象合并成一个无身份的全局面缓冲。补丁只修改 `SceneDocument` 的 base transform，应用后必须用当前动画覆盖重新计算有效局部/世界矩阵。
+- `applyPatch` 消费 `ScenePatch`，按 `SceneNodeId`/`SceneObjectId` 更新 authored/base 节点层级、局部变换和对象实例资源；不得把所有对象合并成一个无身份的全局面缓冲。补丁只修改 `SceneDocument` 的 base transform，应用后必须用当前动画覆盖重新计算有效局部/世界矩阵。
 - `applyEvaluation` 是播放和离线渲染共用的唯一运行时应用入口：先校验所有目标节点存在且非根、通道值合法，并在暂存结构中构造本次完整有效状态；校验全部通过后再按稳定顺序提交到 `scene`，存在 `evaluation.camera` 时同时提交到 `camera-controller`，否则清除相机覆盖。提交过程必须可回滚或等价原子，全部成功后请求重绘；失败时不得留下半应用状态。本方法只消费 `AnimationEvaluation`，不调用 `evaluateAnimation`。
 - 节点覆盖只表达相对父节点的局部 `position`、`rotation`、`scale` 通道；每个通道未出现时沿用 `SceneDocument` 的 authored/base 值，出现时替换该通道。有效局部矩阵为 `T * R * S`，世界矩阵由有效父矩阵逐级组合，子节点必须继承父节点动画结果。
 - 相机覆盖只驱动当前活动相机的位置、四元数和垂直 FOV，不修改项目 `camera` 设置。存在相机轨道时，Follow 播放由 cinematic camera 接收覆盖；只有节点轨道时相机保持 authored/base view。

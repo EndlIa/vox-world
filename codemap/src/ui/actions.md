@@ -10,8 +10,8 @@
 ### 工具与编辑
 
 - `editor.setMode(mode)`：在 object/edit 之间切换；Edit 模式必须已有选中对象，切换前由应用层处理未完成的 XFORM，并在进入 Edit 前停止动画播放、清除运行时 override。
-- `object.select(objectId)`、`object.create(options)`、`object.delete(objectId)`、`object.rename(nodeId, name)`、`object.setVisibility(objectId, visible)`、`object.transform(...)`：只作用于 Object 模式。
-- `object.delete(objectId)` 会删除对象绑定的 `SceneNode`；应用层必须先停止动画并清除 override，再检查动画引用。若该节点仍被任一 track 引用，返回 `node-referenced-by-animation` 并提示先删除相关轨道，UI 不得自行级联删除动画数据。
+- `object.select(sceneObjectId)`、`object.create(options)`、`object.delete(sceneObjectId)`、`object.rename(nodeId, name)`、`object.setVisibility(sceneObjectId, visible)`、`object.transform(...)`：只作用于 Object 模式。
+- `object.delete(sceneObjectId)` 会删除对象绑定的 `SceneNode`；应用层必须先停止动画并清除 override，再检查动画引用。若该节点仍被任一 track 引用，返回 `node-referenced-by-animation` 并提示先删除相关轨道，UI 不得自行级联删除动画数据。
 - `tool.select(toolId, options?: { temporary?: boolean })`：切换工具；不可用工具不得激活。`temporary` 只用于 Space/Alt 等按住式相机模式，应用层负责记录和恢复原工具。
 - `command.dispatch(command)`：发送不可变命令数据。
 - `history.undo()` / `history.redo()`：只作用于场景 `ScenePatch`；应用前由应用层先停止动画并清除全部 Node/Camera 运行时 override。动画轨道/关键帧编辑不进入 V1 场景 History。若候选补丁会删除仍被动画引用的节点，应用层返回 `node-referenced-by-animation` 且不移动 History 游标。
