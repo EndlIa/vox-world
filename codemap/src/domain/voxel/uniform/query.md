@@ -8,6 +8,7 @@
 - `uniqueColors(snapshot) -> readonly ColorHex[]`：直接返回 `snapshot.palette`，零分配。
 - `resolveScope(snapshot, scope: VoxelScope) -> Iterable<VoxelKey>`：`VoxelScope` 的唯一解析入口。
 - `voxelAt(snapshot, index) -> VoxelSnapshot`：冷路径记录视图，`index` 来自 `indexOfKey`。
+- `voxelRecords(snapshot) -> Iterable<VoxelSnapshot>`：按升序键遍历全部冷路径记录；与 `voxelAt` 共用同一读取路径。
 - `visibleKeys`【暂不实现】。
 - `neighbors(key, neighborhood: Neighborhood)`、`isInternal(key, neighborhood: Neighborhood)`【暂不实现】：依赖 `Neighborhood`。
 - `connectedComponent(seed, connectivity: Connectivity, options)`、`components(connectivity: Connectivity, options)`【暂不实现】：依赖 `Connectivity`。
@@ -20,8 +21,12 @@
 - 集合查询返回懒序列：升序、唯一、**可重复遍历**（同一个返回值多次 `for...of` 结果一致）；不提供 `length`，需要计数用 `count` 或 `measure`。不得返回内部 `Map`/`Set`、可变数组或一次性生成器。
 - 物化由调用方决定：选择策略、Patch 构造等需要数组时自行 `Array.from`，物化只发生一次并发生在它们自己的边界。
 - 本阶段没有空间索引：`keys`/`withinBox`/`byColor`/`resolveScope` 只线性遍历容器，不复制全部体素；后续引入索引时不得改变公开签名。
+- 容器只存坐标，不存键：懒序列按需用 `util/packed-int.pack` 从坐标重建 `VoxelKey`（`VoxelKey` 只能由 `pack`/`neighbor` 成功返回），不得在 query 内重写打包布局；重建失败属容器不变量被破坏，抛错而不返回部分序列。
+- 标量查询的逐轴比较与容器升序 `VoxelKey` 等价（打包布局 x 高位），因此无需为每次探测重新打包：`indexOfKey` 解包目标键一次后逐轴比较，`byColor` 先在 `palette` 上二分、再按 `colorIndex` 扫描。
 - `bounds` 返回该对象的局部 `Bounds3i`；`withinBox` 接收 `Bounds3i`；`count` 等于容器字段。
-- `resolveScope` 是 `VoxelScope` 的唯一解析入口，命令 Handler、选择策略与测量共用，不得各自重写 switch：`keys` 变体先按 `VoxelKey` 升序去重后迭代，且每个键必须是该对象的局部键并在 `MIN_COORDINATE..MAX_COORDINATE` 内（越界或跨对象键拒绝）；`bounds` → `withinBox`；`color` → `byColor`；`all` → `keys`；`visible`/`hidden`/`slice-y`【暂不实现】。
+- `bounds` 需要各轴分量极值，而容器按键序排序，端点只是 (x,y,z) 字典序极值，因此本阶段按线性扫描实现（不是二分查询）；空容器直接返回 `EMPTY_BOUNDS3I`，非空盒由扫描结果直接构造（`min <= max` 由构造过程保证）。
+- 冷路径 `voxelAt`/`voxelRecords` 用 `types.gridPositionFromSnapshot` 从容器坐标取 `GridPosition`，不在 query 内做品牌断言。
+- `resolveScope` 是 `VoxelScope` 的唯一解析入口，命令 Handler、选择策略与测量共用，不得各自重写 switch：`keys` 变体先按 `VoxelKey` 升序去重后迭代，且每个键必须在 `MIN_COORDINATE..MAX_COORDINATE` 内；越界键属调用方契约错误，`resolveScope` 抛错而不是静默丢弃或 clamp（跨对象键在值上不可区分，由上层禁止）；`bounds` → `withinBox`；`color` → `byColor`；`all` → `keys`；`visible`/`hidden`/`slice-y`【暂不实现】。
 - 单键记录读取用 `indexOfKey` + `voxelAt`；本模块不提供在热路径分配记录对象的 `get`。
 - 【暂不实现】`connectivity = 6` 使用六个轴向邻居；`26` 使用六轴加 20 个边/角方向。连通遍历默认只穿过 `visible === true` 的体素，隐藏体素阻断连通；Group by Islands 和 Bucket Island 共用该规则。
 - 【暂不实现】`isInternal` 的 neighborhood 只允许 6/18/26。当前体素在对应邻域内所有邻居都存在时为内部体素；隐藏体素仍算占用。不能把“不可见”误判为空。6 使用轴向、18 使用轴向与边方向、26 再加角方向。
@@ -36,8 +41,8 @@
 
 ## 本重构必须补齐
 
-- 必须实现标量查询 `bounds`/`count`/`has`/`indexOfKey`/`colorAt`（二分，不得全量扫描）、懒序列 `keys`/`withinBox`/`byColor`、`uniqueColors`、`resolveScope` 与 `voxelAt`，覆盖本阶段 Box / Rectangle / Color 三类选择与 `VoxelScope` 的四个本阶段变体。
-- 懒序列必须可重复遍历且两次结果一致，输出升序、唯一；跨对象键与越界键必须拒绝。
+- 必须实现标量查询 `bounds`/`count`/`has`/`indexOfKey`/`colorAt`（二分，不得全量扫描）、懒序列 `keys`/`withinBox`/`byColor`、`uniqueColors`、`resolveScope` 与冷路径读取 `voxelAt`/`voxelRecords`，覆盖本阶段 Box / Rectangle / Color 三类选择与 `VoxelScope` 的四个本阶段变体。
+- 懒序列必须可重复遍历且两次结果一致，输出升序、唯一；`resolveScope` 的 `keys` 变体对越界键抛错，跨对象键由上层禁止。
 - `byColor` 必须先经 `palette` 定位颜色，再按 `colorIndex` 扫描。
 - 【暂不实现】Island、Visible 两类选择所需的只读查询，以及可见组、隐藏组、`visibleKeys`。
 - 【暂不实现】`isInternal` 的 6/18/26 邻域；隐藏体素仍视为占用的规则随可见性一并挂起。

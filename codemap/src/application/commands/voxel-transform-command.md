@@ -4,7 +4,7 @@
 
 **接口**：
 - `SelectVoxelsCommand`：`{ sceneObjectId: SceneObjectId; strategy: SelectionStrategy; mode: "replace" | "add" | "subtract"; includeHidden: boolean; baseSceneVersion }`。strategy 为 Box、Rectangle、Color；`includeHidden` 与 Island/Visible 策略【暂不实现】。
-- `BeginTransformCommand`：`{ sceneObjectId; sourceKind: "builder" | "clone" | "new"; source: { keys } | { strategy, input }; baseSceneVersion }`。`new` 只表示把生成/复制结果插入当前活动对象，不表示替换场景。
+- `BeginTransformCommand`：`{ sceneObjectId; sourceKind: "builder" | "clone" | "new"; source: { keys } | { strategy }; baseSceneVersion }`。`new` 只表示把生成/复制结果插入当前活动对象，不表示替换场景。`SelectionStrategy` 自含候选（见 `selection-strategies`），因此 source 不再配对额外的 `input`。
 - `SetTransformSelectionModeCommand`、`MoveSelectionCommand`、`RotateSelectionCommand`、`MirrorSelectionCommand`【暂不实现】（依赖 `symmetry`）、`ScaleSelectionCommand`、`DuplicateSelectionCommand`：均携带 `sceneObjectId` 和 `baseSceneVersion`，坐标/偏移均为活动对象局部网格的整数数据。
 - `ApplyTransformCommand`、`CancelTransformCommand`、`DeleteTransformSelectionCommand`、`CommitTransformEntriesCommand`：只携带 `sceneObjectId`、`baseSceneVersion` 和可选 entry 子集。
 - 所有命令 metadata 至少包含 `id`、`baseSceneVersion` 和 `source`；命令对象不可变、可序列化。
