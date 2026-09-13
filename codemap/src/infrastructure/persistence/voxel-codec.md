@@ -2,7 +2,7 @@
 
 **职责**：读写当前项目格式中单个 `SceneObject` 的紧凑体素字符串，并在编解码边界完成严格结构校验。
 **接口**：parse、serialize、version。
-**内部**：处理 `x,y,z,RRGGBB,visible;` 分号格式，转换为只读 `VoxelSnapshot`；不访问 localStorage，不识别旧存储记录。
+**内部**：处理 `x,y,z,RRGGBB,visible;` 分号格式，转换为只读 `UniformVoxSnapshot`；不访问 localStorage，不识别旧存储记录。
 **依赖**：voxel/uniform/types、voxel/uniform/patch、util/color。
 
 ## 字符串格式
@@ -23,6 +23,6 @@ visibility := "0" | "1"
 ## 原子性与生命周期
 
 - `parse` 与 `serialize` 是纯操作；`serialize` 只输出规范形式，`parse` 只接受规范形式。
-- 每个字符串只解释为一个对象的局部 `VoxelSnapshot`；不同对象可以使用相同局部坐标。
+- 每个字符串只解释为一个对象的局部 `UniformVoxSnapshot`；不同对象可以使用相同局部坐标。
 - 调用方必须通过 `project-codec` 或 `snapshot-service` 完成对象身份与场景结构校验；解析失败不能清空当前场景。
 - Raw Voxels 导出消费目标对象的只读局部快照，不经过 Baked Mesh。

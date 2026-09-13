@@ -48,7 +48,7 @@ SceneNode
 
 SceneObject
   ├── id
-  └── VoxelSnapshot（只使用该对象的局部 VoxelKey）
+  └── UniformVoxSnapshot（只使用该对象的局部 VoxelKey）
 ```
 
 跨对象引用体素时必须显式携带目标对象身份：`SceneObjectId` 加上该对象局部网格内的 `VoxelKey`。`VoxelKey` 不再是整个场景的全局唯一键，只保证在单个 `SceneObject` 的局部网格内唯一。
@@ -77,7 +77,7 @@ SceneObject
 ### 坐标与可见性
 
 - `SceneObject` 的局部整数坐标由 `VoxelKey` 表示；对象的局部到世界变换由它绑定的 `SceneNode` 及其祖先组合得到。
-- `SceneNode.visible` 控制渲染子树；`VoxelValue.visible` 控制对象内部单个体素的渲染。有效可见性为两者及祖先可见性的逻辑与。
+- `SceneNode.visible` 控制渲染子树；`VoxelSnapshot.visible` 控制对象内部单个体素的渲染。有效可见性为两者及祖先可见性的逻辑与。
 - “其他对象不可编辑”由 EditorState、PickService 和命令校验共同保证，不能通过把对象设为不可见来伪装。
 - 对象级 Patch 与对象内体素 Patch 必须在同一场景版本下原子提交；Undo/Redo 保存场景感知的正反向补丁。
 - `SceneDocument.version` 是场景命令的并发令牌；`ProjectService.projectVersion` 是项目聚合的持久化修订号，还覆盖动画、项目设置和 Bake Mesh。两者不得混用。
@@ -139,9 +139,10 @@ util ──────────────→ util
 - 只有出现在跨模块公共签名或稳定边界契约中的类型才导出；模块内部辅助类型保持私有。
 - `Rgb` 与 `LinearRgb` 虽同形，但分别表示 sRGB 8-bit 和线性 sRGB。两者必须带各自 brand（`__brand: "Rgb"` / `__brand: "LinearRgb"`），互相不可赋值；`Rgb` 只能由 `parseRgb` 成功返回，`LinearRgb` 只能由 `linearize` 返回。禁止互相别名、合并、声明同形副本，或在调用方就地构造带 brand 的值。
 - `Vec3` 与领域 `GridPosition`、`Aabb` 与领域 `Bounds3i` 语义不同，禁止互相别名或合并。
-- `VoxelKey`、`ColorHex` 只能由 `util/packed-int`、`util/color` 定义；domain 只能 re-export，`VoxelColor` 只能作为 `ColorHex` 的领域别名。
-- `SceneSnapshot` 是场景根快照；`VoxelSnapshot` 只表示单个 `SceneObject` 的局部数据。任何跨对象操作都不得退化为全局 `VoxelKey` 查找。
+- `VoxelKey`、`ColorHex` 只能由 `util/packed-int`、`util/color` 定义；domain 只能显式 re-export，不得另起别名或声明同形副本。使用方直接从 `util/color`、`util/packed-int` 导入，不在 domain 内引入第二个颜色或键类型名。
+- `SceneSnapshot` 是场景根快照；`UniformVoxSnapshot` 只表示单个 `SceneObject` 的局部数据。任何跨对象操作都不得退化为全局 `VoxelKey` 查找。
 - 跨模块的公开数据使用只读普通对象/数组；本项目的 `readonly` 是编译期约束，不依赖 `Object.freeze`，但不得把所有权状态对象或其底层 `Map`/`Set` 暴露给其他模块。
+- 例外：体素快照容器（`domain/voxel/uniform/types` 的 `UniformVoxSnapshot`）用 typed array（`Int16Array`/`Uint8Array`）表达，属可结构化克隆的普通数据，不是所有权状态；typed array 无法冻结，其不可变性由“只允许所有者产出新容器”的约定保证。
 - 序列化边界必须在输入侧接收 `unknown` 并做运行时校验；TypeScript brand 不提供运行时保证。
 - 版本信息只允许存在于持久化 DTO 的 `version` 字段；不得把格式版本号编进类型名或文件名（不出现 `XxxV1` 之类后缀）。同一格式的新版本通过新增 DTO 形状并对旧版本显式报错来表达，不做字段级兼容或迁移。
 
@@ -165,6 +166,14 @@ util ──────────────→ util
 - 它不适用“契约由 AI 编写、可以重新判定”的默认态度。改动前必须先取得用户同意。
 - 不得为了让实现、测试或相邻条款自洽而顺手修改、放宽或删除带此标记的条目。
 - 使用时应写明确认日期与用户当时选择的取舍，保留可追溯的裁定记录。
+
+### 【暂不实现】标记
+
+契约条目标注 **【暂不实现】** 表示该条目仍属于目标状态，但当前阶段不实现、不测试，任何实现与上层契约不得依赖它。
+
+- 标记由用户裁定产生；解除标记必须先取得用户同意，并同步修改实现、测试与所有上层契约。
+- 标注期间不得用改写措辞让依赖消失：受影响的条款必须显式挂起，而不是被删除或弱化。
+- 每个标记必须写明挂起范围（连带哪些函数、命令、操作）；全局暂缓清单汇总在 `IMPORTANT`。
 
 ## 验证
 

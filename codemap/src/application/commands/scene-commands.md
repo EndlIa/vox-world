@@ -5,7 +5,7 @@
 **接口**：
 - `SceneCommand` 可辨识联合：`select-scene-object`、`create-scene-object`、`delete-scene-object`、`rename-scene-node`、`set-scene-object-visibility`、`reparent-scene-node`、`begin-scene-object-transform`、`update-scene-object-transform`、`apply-scene-object-transform`、`cancel-scene-object-transform`、`enter-edit-mode`、`exit-edit-mode`、`set-active-scene-object`。
 - `SelectObjectCommand`：`{ sceneObjectId: SceneObjectId; baseSceneVersion }`。
-- `CreateSceneObjectCommand`：`{ parentNodeId; name; transform: SceneTransform; voxels: VoxelSnapshot; baseSceneVersion }`；原子创建一个 `SceneNode` 和一个绑定到它的 `SceneObject`。`transform` 相对 `parentNodeId`，父节点必须是组节点。
+- `CreateSceneObjectCommand`：`{ parentNodeId; name; transform: SceneTransform; voxels: UniformVoxSnapshot; baseSceneVersion }`；原子创建一个 `SceneNode` 和一个绑定到它的 `SceneObject`。`transform` 相对 `parentNodeId`，父节点必须是组节点。
 - `DeleteSceneObjectCommand`：`{ sceneObjectId; baseSceneVersion }`；删除对象及其绑定节点。若绑定节点仍被任一 animation track 引用，Handler 必须返回 `node-referenced-by-animation` 和全部相关 `trackId`，不得自动删除轨道或生成部分 ScenePatch。
 - `RenameSceneNodeCommand`：`{ nodeId; name; baseSceneVersion }`。
 - `SetObjectVisibilityCommand`：`{ sceneObjectId; visible: boolean; baseSceneVersion }`；修改绑定节点的渲染可见性，不修改任何体素。

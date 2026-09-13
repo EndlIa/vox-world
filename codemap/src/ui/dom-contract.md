@@ -37,7 +37,7 @@
 | `#toolbar-screen-material` | 当前颜色/材质快捷区 |
 | `#toolbar-screen-render` | render 快捷区 |
 | `#toolbar-screen-export` | export 快捷区 |
-| `#toolbar-screen-toggles` | 平面、symmetry、投影等开关 |
+| `#toolbar-screen-toggles` | 平面、投影等开关（symmetry【暂不实现】） |
 | `#hover` | DOM hover 浮层 |
 | `#palette` / `#canvas_palette` | 调色板容器与 canvas |
 | `#meshlist` | 已烘焙 mesh 列表 |

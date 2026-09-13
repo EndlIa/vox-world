@@ -7,15 +7,14 @@
 - `sceneObjectForNode(scene, nodeId)`、`nodeForSceneObject(scene, sceneObjectId)`。
 - `localTransform(scene, nodeId)`、`worldTransform(scene, nodeId)`、`worldBounds(scene, sceneObjectId)`。
 - `effectiveVisible(scene, nodeId)`、`objectVisible(scene, sceneObjectId)`。
-- `objectVoxelReadView(scene, sceneObjectId)`。
 - `validateScene(scene)`。
 
 **内部**：
 - 查询只读 `SceneSnapshot`，不创建或修改 `SceneDocument`，不依赖 Three.js。
 - `worldTransform` 从根到目标节点依次组合父变换；结果只用于只读计算，不写回快照。
-- `worldBounds` 先把对象局部占用包围盒转换为世界 AABB；空对象返回空 AABB。旋转或非均匀缩放后的结果必须是包含真实几何的世界轴对齐包围盒。
+- `worldBounds` 先把对象局部占用包围盒转换为世界 AABB；空对象返回空 AABB。旋转或非均匀缩放后的结果必须是包含真实几何的世界轴对齐包围盒。局部占用包围盒由 `query.bounds(getSceneObject(scene, sceneObjectId).voxels)` 取得，体素遍历不在此模块重复实现。
 - `effectiveVisible` 返回节点自身及全部祖先的可见性逻辑与。隐藏节点不参与渲染，但对象和体素数据仍存在。
-- `objectVoxelReadView` 返回只读视图，其坐标语义是该 `SceneObject` 的局部网格；不得把对象内部 `Map` 泄漏给调用方。
+- 对象局部体素通过 `getSceneObject(scene, sceneObjectId).voxels` 读取，其坐标语义是该 `SceneObject` 的局部网格；不得把对象内部 `Map` 泄漏给调用方。
 - 场景查询不负责屏幕拾取、相机视锥判断或渲染表面选择；这些由 PickService 和渲染层处理。
 - `validateScene` 检查 `scene-types` 中的全部结构不变量，失败返回 `SceneValidationError`，不得自动修复输入。
 

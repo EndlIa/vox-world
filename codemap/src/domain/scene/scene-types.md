@@ -6,7 +6,7 @@
 - `SceneNodeId`、`SceneObjectId`：稳定、不透明、非空字符串身份；不得由名称、数组索引或当前坐标推导。
 - `SceneTransform`：`{ position: Vec3; rotation: Quat; scale: Vec3 }`，表示节点局部空间到父空间的变换。
 - `SceneNodeSnapshot`：`{ id; parentId; childIds; name; transform; visible; sceneObjectId }`。
-- `SceneObjectSnapshot`：`{ id; voxels: VoxelSnapshot }`。
+- `SceneObjectSnapshot`：`{ id; voxels: UniformVoxSnapshot }`。
 - `SceneSnapshot`：`{ rootNodeId; nodes; objects }`。
 - `SceneValidationError`、`SceneTransformError`。
 
@@ -17,11 +17,11 @@
 - 每个节点最多绑定一个 `SceneObject`，且每个 `SceneObject` 必须由恰好一个节点绑定；`sceneObjectId` 非空时必须引用 `objects` 中存在的对象，不得存在未绑定或重复绑定的对象。
 - 第一版中，绑定了 `SceneObject` 的节点是叶节点，`childIds` 必须为空。空组节点可以拥有子节点，用于未来层级组织。
 - `SceneObjectSnapshot.voxels` 使用该对象自己的局部 `VoxelKey` 网格。`VoxelKey` 不在场景级唯一；跨对象引用必须显式携带目标对象身份（`SceneObjectId` 与该对象的局部 `VoxelKey`）。
-- 当前 V1 的 `SceneObjectSnapshot` 采用 Uniform voxel baseline：`voxels` 直接是局部 `VoxelSnapshot`。Scene 层只依赖 `SceneObject` 的快照边界，不读取 Uniform 网格内部结构；未来其他对象类型应在其自身契约中定义原生操作，并在需要通用体素处理时显式 flatten/bake 为该 Uniform 表示。
+- 当前 V1 的 `SceneObjectSnapshot` 采用 Uniform voxel baseline：`voxels` 直接是局部 `UniformVoxSnapshot`。Scene 层只依赖 `SceneObject` 的快照边界，不读取 Uniform 网格内部结构；未来其他对象类型应在其自身契约中定义原生操作，并在需要通用体素处理时显式 flatten/bake 为该 Uniform 表示。
 - `SceneTransform.position`、`rotation`、`scale` 必须是有限数值；旋转必须是有效单位四元数；`scale` 三分量不得为零。变换顺序为 `T * R * S`，局部空间到父空间。
 - `SceneNodeSnapshot.visible` 只控制节点及其子树的渲染参与。最终有效可见性是自身及所有祖先 `visible` 的逻辑与；它不表示可编辑性，也不删除任何对象或体素。
 - 快照只包含普通可序列化数据，可直接结构化克隆给 Worker 或持久化边界；禁止 Three.js、DOM、类实例、函数和可变集合。
-- `nodes`、`objects` 和每个 `VoxelSnapshot` 输出必须稳定排序；节点身份和 `childIds` 顺序必须保留显式语义，不依赖对象枚举顺序。
+- `nodes`、`objects` 和每个 `UniformVoxSnapshot` 输出必须稳定排序；节点身份和 `childIds` 顺序必须保留显式语义，不依赖对象枚举顺序。
 - 可恢复的校验失败返回 `Result` 和具体错误码；不得静默丢弃节点、对象、父子关系或非法变换。
 
 **依赖**：voxel/uniform/types、util/math、util/result。

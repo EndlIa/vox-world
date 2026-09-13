@@ -5,3 +5,13 @@
 # Future Work
 
 - Property-based testing: evaluate and introduce `fast-check` after the Batch A APIs have stabilized.
+
+# Deferred (【暂不实现】)
+
+Contract-level deferrals marked with `【暂不实现】` in the codemap; the marker rules live in `codemap/README.md`.
+While a marker is in place the item is still the target state, but no implementation, test, or upper-layer contract may depend on it.
+
+- `codemap/src/domain/voxel/uniform/types.md`: `BoxSpec`; `Neighborhood` / `Connectivity`; voxel visibility (`VoxelValue.visible`), together with its connected items — `VoxelReadView.visibleKeys`, `query.visibleGroup` / `hiddenGroup` / `neighbors` / `isInternal` / `connectedComponent` / `components`, the `visible` / `hidden` / `slice-y` variants of `CommandScope`, the `setVisibility` op in `domain/voxel/uniform/patch.md`, and the visibility command family in `application/commands/voxel-commands.md`.
+- `codemap/src/domain/voxel/uniform/symmetry.md`: the whole contract — `SymmetrySnapshot`, `PivotContext`, `configure` / `getPivot` / `mapPoint` / `mapKey` / `expand` / `validate` / `symmetrize` / `mirror` / `rotate` / `deleteHalf` / `mapEntry` — plus its consumers (draw-symmetry in Add/Remove/Paint, XFORM mirror/rotate, model-level Symmetrize/Mirror/Rotate/Delete Half, the `S`/`X`/`Y`/`Z` shortcuts and the UI symmetry toggles).
+- Node-level `SceneNodeSnapshot.visible` in `domain/scene/scene-types.md` is a different concept (rendering subtree switch) and is NOT deferred.
+- Plan-level deferrals (spatial index / octree, `generator.ts`, `model-operations.ts`, `voxel-patch`) are tracked in `codex_sessions/plans_rules/stage01.md`.

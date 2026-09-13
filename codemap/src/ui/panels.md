@@ -70,7 +70,7 @@ type PanelDescriptor = {
 
 ### 工具箱与模式栏
 
-- 左侧工具箱按稳定顺序提供 File、Storage、Camera、Render、Create、Voxelize、Symmetry、Draw、Paint、XForm、Groups、Bakery、PBR、Export、Animation。
+- 左侧工具箱按稳定顺序提供 File、Storage、Camera、Render、Create、Voxelize、Draw、Paint、XForm、Groups、Bakery、PBR、Export、Animation（Symmetry【暂不实现】）。
 - 模式栏提供 object/edit 切换；`workspaceMode` 的 model/render/export 是另一组面板可见性，不得与编辑器模式混用。
 - 每个工具按钮通过 `data-tool-id` 发出 `tool.select`，不直接调用工具状态机。
 - 顶部快捷栏和悬浮层只发出 view model 中允许的动作。
@@ -79,7 +79,7 @@ type PanelDescriptor = {
 
 - 调色板由 `palette-panel.ts` 实现，`panels.ts` 只负责注册、显示和互斥。
 - 面板显示当前颜色、唯一颜色网格、隐藏颜色状态和列数偏好。
-- 点击颜色选择当前颜色；右键或双击切换该颜色可见性；这些行为通过 `palette.selectColor` / `palette.toggleVisibility` 动作完成。
+- 点击颜色选择当前颜色；右键或双击切换该颜色可见性【暂不实现】；这些行为通过 `palette.selectColor` / `palette.toggleVisibility` 动作完成。
 
 ### 场景 Outliner 与对象属性
 

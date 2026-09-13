@@ -1,12 +1,14 @@
 # symmetry.ts
 
+**【暂不实现】**本契约整体挂起（用户裁定）：本阶段不实现 `symmetry.ts`。其类型（`SymmetrySnapshot`、`PivotContext`）与全部函数（`configure`、`getPivot`、`mapPoint`、`mapKey`、`expand`、`validate`、`symmetrize`、`mirror`、`rotate`、`deleteHalf`、`mapEntry`）不得被实现或上层契约引用；解除标记必须先取得用户同意。以下条款保留为目标状态。
+
 **职责**：定义单个活动 `SceneObject` 内绘制对称、体素 XFORM 镜像、旋转、半区删除和 pivot 解析的纯规则；输出键始终是该对象的局部整数坐标。
 
 **接口**：
 - `configure({ axis: "none" | "x" | "y" | "z"; pivotMode: "bounds" | "world" })`。
 - `SymmetrySnapshot`：`{ axis: "none" | "x" | "y" | "z"; pivotMode: "bounds" | "world" }`；命令只保存该快照，不保存可调用方法。
 - `PivotContext`：`{ pivotMode: "bounds" | "world"; inverseSceneObjectWorldTransform?: Mat4 }`。
-- `getPivot(readViewOrEntries, context)`、`mapPoint`、`mapKey`、`expand`、`validate`。
+- `getPivot(snapshotOrEntries, context)`、`mapPoint`、`mapKey`、`expand`、`validate`。
 - `symmetrize(snapshot, side, pivot)`、`mirror(snapshot, pivot)`、`rotate(snapshot, direction, pivot)`、`deleteHalf(snapshot, side, pivot)`。
 - `mapEntry(entry, operation)`：返回新的 workingPosition，不修改 entry。
 

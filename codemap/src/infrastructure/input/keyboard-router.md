@@ -66,7 +66,7 @@ type Shortcut = {
 | F | Frame 相机/当前选择 | 按上下文发送 `camera.frame(target)` |
 | O | 切换正交/透视 | `camera.setProjection('toggle')` |
 | R | 切换 Render 模式 | `panel.setMode('render')` |
-| S | 切换对称轴 | `symmetry.nextAxis()` |
+| S | 切换对称轴【暂不实现】 | —（`symmetry.nextAxis()`【暂不实现】） |
 | T | 当前模式变换工具 | Object 模式选择对象变换；Edit 模式选择体素 Transform Box |
 | 1 | Add | 仅 Edit 模式 `tool.select('add')` |
 | 2 | Remove | `tool.select('remove')` |

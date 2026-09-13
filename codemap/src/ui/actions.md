@@ -17,7 +17,7 @@
 - `history.undo()` / `history.redo()`：只作用于场景 `ScenePatch`；应用前由应用层先停止动画并清除全部 Node/Camera 运行时 override。动画轨道/关键帧编辑不进入 V1 场景 History。若候选补丁会删除仍被动画引用的节点，应用层返回 `node-referenced-by-animation` 且不移动 History 游标。
 - `transform.apply()` / `transform.cancel()` / `transform.deleteSelection()`。
 - `selection.delete()`：Edit 模式删除活动对象的体素选择；Object 模式删除选中对象并遵循 `object.delete` 的停播与动画引用检查。由应用层按 EditorState 解析，UI/输入层不自行判断选择类型。
-- `symmetry.nextAxis()`：按稳定顺序切换对称轴。
+- 【暂不实现】`symmetry.nextAxis()`：按稳定顺序切换对称轴。
 
 ### 面板与布局
 
@@ -54,7 +54,7 @@
 
 ### 控件与反馈
 
-- `palette.selectColor(hex)`、`palette.toggleVisibility(hex)`。
+- `palette.selectColor(hex)`；`palette.toggleVisibility(hex)`【暂不实现】。
 - `colorPicker.preview(hex)`、`colorPicker.commit(hex)`、`colorPicker.cancel()`。
 - `confirm.respond(accepted)`。
 - `notification.dismiss(id)`。

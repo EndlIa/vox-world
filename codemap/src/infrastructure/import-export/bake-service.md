@@ -45,7 +45,7 @@ BakeProgress {
 
 - `scope = "object"` 时只为目标对象局部网格生成三角，并保留该对象 `sceneObjectId`；`scope = "scene"` 时按场景节点世界变换组合所有可见对象，并保留每个源对象/节点身份。`sceneObjectId` 在 object scope 必填，在 scene scope 禁止。
 - 只为“邻接体素不存在”或“邻接体素颜色不同”的面生成三角；共享且同色的内部面必须剔除。不同对象的相邻体素不得跨对象错误剔除。
-- `all` 生成一个合并 mesh；`color` 生成指定颜色；`colors` 按唯一颜色分组，最多 100 个颜色对象，超限返回 `BAKE_COLOR_LIMIT` 且不修改现有池；`islands` 默认按 26 邻域分组，调用方可显式改为 6 邻域。
+- `all` 生成一个合并 mesh；`color` 生成指定颜色；`colors` 按唯一颜色分组，最多 100 个颜色对象，超限返回 `BAKE_COLOR_LIMIT` 且不修改现有池；`islands` 默认按 26 邻域分组、调用方可显式改为 6 邻域【暂不实现】（依赖 `Connectivity`）。
 - 每个生成 mesh 使用稳定对象 id，重置 pivot 后名称默认为 `m1`、`m2`……；重名通过 `_2`、`_3` 确定性去重。
 - geometry 保留 position、normal、uv、可用顶点色和 index。颜色仍按 shithill 语义进入顶点色，不把颜色写入 metallic/roughness 数据属性。
 - 生成完成后设置非碰撞、接收阴影，并创建独立 PBR material clone。材质名与纹理名跟随对象名，例如 `mat_m1`、`tex_m1`；共享纹理按引用管理。
