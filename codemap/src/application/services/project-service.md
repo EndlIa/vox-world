@@ -56,7 +56,7 @@ SaveRequest {
 
 ## 打开与新项目
 
-- `load` 先读取字节/文档，再由 `ProjectDocumentPort.decode()` 校验当前格式、SceneSnapshot、`AnimationDocument` 与 Bake Mesh 资产，并通过 `render-settings-service` 校验完整的 camera/render 设置；动画必须使用同一解码文档的 `data.scene` 调用 `validateAnimation`，拒绝悬空或根节点目标、重复轨道/关键帧 ID、重复 `target` + `channel`、空轨道、`durationMs` 非有限或 `<= 0` 和非法关键帧。全部成功后才一次性替换 SceneDocument、EditorState、选择、动画和项目设置。
+- `load` 先读取字节/文档，再由 `ProjectDocumentPort.decode()` 校验当前格式、SceneSnapshot、`AnimationDocument` 与 Bake Mesh 资产，并通过 `render-settings-service` 校验完整的 camera/render 设置；动画必须使用由同一解码文档的 `data.scene` 构造出的 `SceneSnapshot` 调用 `validateAnimation`，拒绝悬空或根节点目标、重复轨道/关键帧 ID、重复 `target` + `channel`、空轨道、`durationMs` 非有限或 `<= 0` 和非法关键帧。全部成功后才一次性替换 SceneDocument、EditorState、选择、动画和项目设置。
 - 未知项目版本、缺失必填字段、旧 `cameraAnimation` 字段、非法关键帧或非法 camera/render 值必须拒绝整个文档；不得在加载时补齐字段、迁移旧字段或过滤坏数据。
 - 加载失败必须保留当前项目、当前渲染设置和当前会话，不得部分提交；恢复后 Camera Control 和播放状态重置。
 - 缺资产、场景不变量失败或对象引用错误返回对应 typed error，保留当前项目和当前会话，不自动清理项目 manifest。

@@ -12,7 +12,7 @@
 
 **内部**：
 - 校验 `frameStart`、`frameEnd`、`width`、`height` 为整数，`fps`、尺寸为正有限数，`frameStart >= 0`、`frameEnd >= frameStart`。非法设置返回明确错误，不进入渲染。
-- `validate(settings)` 必须冻结当前 `AnimationDocument`，通过 `domain/animation.validateAnimation(document, sceneSnapshot)` 校验文档非空、每条轨道至少一个关键帧、关键帧合法、Node target 存在且不是根节点、Node/Camera target/channel 合法；不得只检查相机轨道或依赖 UI 已校验。已有任务运行时再次 `render()` 返回 `skipped: true`，不得并发创建第二个任务。
+- `validate(settings)` 必须冻结当前 `AnimationDocument`，通过 `domain/animation.validateAnimation(document, sceneSnapshot)` 校验每条轨道至少一个关键帧、关键帧合法、Node target 存在且不是根节点、Node/Camera target/channel 合法；不得只检查相机轨道或依赖 UI 已校验。空文档（`tracks` 为空）不是 `validateAnimation` 的失败判据——`domain/animation` 视空 `tracks` 为合法、可持久化状态——由本 renderer 在 `validate(settings)`/`render()` 的启动门禁中自行拒绝。已有任务运行时再次 `render()` 返回 `skipped: true`，不得并发创建第二个任务。
 - `render()` 开始时重新冻结并校验文档，强制 `loop = false`，确保渲染期间用户编辑轨道或关键帧不影响本次任务。节点轨道仍只保存相对父节点的局部 TRS，相机轨道保存相机状态；帧范围包含首尾，`totalFrames = frameEnd - frameStart + 1`。
 - renderer 只消费 application service 传入的 writer；不调用 picker、不创建输出句柄、不推导文件名策略。writer 的 `addFrame`、`finalize`、`abort` 调用必须由 renderer 串行管理。
 - 每帧时间固定为 `frame * 1000 / fps`，只调用同一个确定性 `domain/animation.evaluateAnimation(document, timeMs)`。禁止分别调用节点/相机求值器、另建插值器或依赖当前播放状态；Node 与 Camera 轨道共享这一个时间轴。

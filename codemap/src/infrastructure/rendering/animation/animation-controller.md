@@ -3,7 +3,7 @@
 **职责**：实现 `application/ports/animation-port` 的 `AnimationSessionPort`（包括 `AnimationPreviewPort`），协调统一 `AnimationDocument`、运行时播放时钟、Camera Control、相机路径、Follow/Observe 预览和编辑器状态恢复。每帧只调用一次领域求值，并把同一个完整 `AnimationEvaluation` 交给注入的 `AnimationApplyPort`；控制器不实现插值、离线编码，也不绕过应用端口直接写 `scene` 或相机变换。
 
 **接口**：实现 `AnimationSessionPort`，方法名和返回身份必须与端口完全一致。
-- 数据与编辑：`load(document)`、`getSnapshot()`、`serialize()`、`hasTracksForNode(nodeId)`、`setDuration(durationMs)`、`setLoop(enabled)`、`createTrack(target, channel, timeMs, value, easing): Result<string, AnimationError>`、`deleteTrack(trackId)`、`addKeyframe(trackId, timeMs, value, easing): Result<string, AnimationError>`、`replaceKeyframe(trackId, keyframeId, timeMs, value, easing)`、`removeKeyframe(trackId, keyframeId)`、`moveKeyframe(trackId, keyframeId, timeMs)`。
+- 数据与编辑：`load(document)`、`getSnapshot()`、`hasTracksForNode(nodeId)`、`setDuration(durationMs)`、`setLoop(enabled)`、`createTrack(target, channel, timeMs, value, easing): Result<string, AnimationError>`、`deleteTrack(trackId)`、`addKeyframe(trackId, timeMs, value, easing): Result<string, AnimationError>`、`replaceKeyframe(trackId, keyframeId, timeMs, value, easing)`、`removeKeyframe(trackId, keyframeId)`、`moveKeyframe(trackId, keyframeId, timeMs)`。
 - 选择与读取：`selectTrack(trackId | null)`、`selectKeyframe(trackId, keyframeId | null)`、`getPlaybackState()`。后者返回端口定义的只读 `{ status, currentTimeMs, hasOverride, followCamera, selectedTrackId, selectedKeyframeId }`，不返回动画文档。
 - 播放与清理：`play()`、`pause()`、`stop()`、`seek(timeMs)`、`tick(nowMs)`、`stopAndClearOverride()`；`tick()` 是 `EditorSession.tick()` 唯一可调用的播放推进入口，`stop()` 是 UI 停止入口并委托 `stopAndClearOverride()`，避免两种停止路径产生不同 override 状态。
 - 模式：`setFollowCamera(enabled)`、`setPathVisible(trackId, enabled)`。

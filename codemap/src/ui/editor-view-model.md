@@ -62,6 +62,8 @@ type NotificationEvent = {
 
 节点删除或场景 undo/redo 因动画引用被拒绝时，应用层发出 `node-referenced-by-animation` 错误通知，并在 payload/消息中列出相关 `trackId`；view model 不自动删除轨道，也不把错误降级成静默失败。
 
+Add Keyframe 命中已占用时间、按 `domain/animation` 的替换规则覆盖旧关键帧时，应用层必须发出 `warning` 通知：消息指出被覆盖的关键帧时间点、所属 `trackId` 以及替换后的新 `keyframeId`；该提示只属于应用的反馈通道，不在 `domain/animation` 内产生。UI 不得静默覆盖，也不得继续显示已作废的旧 `keyframeId`。
+
 ## 依赖方向
 
 `editor-view-model.ts` 可以依赖 application 的公开事件和只读类型，不能被 application 依赖。UI 控制器不得绕过它读取状态对象。

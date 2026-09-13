@@ -132,7 +132,7 @@ util ──────────────→ util
 | `SceneNodeId`、`SceneObjectId`、`SceneTransform`、`SceneNodeSnapshot`、`SceneObjectSnapshot`、`SceneSnapshot`、`SceneValidationError` | `domain/scene/scene-types` | 场景图与对象身份；两个 ID 带 brand，`SceneSnapshot` 只能由 `sceneSnapshot` 构造，该入口是场景结构不变量的唯一校验点 |
 | `ScenePatch`、`ScenePatchOp` | `domain/scene/scene-patch` | 场景级可逆补丁 |
 | `VoxelPatch`、`PatchOp`、`PatchApplyError` | `domain/voxel/uniform/patch` | 单对象局部网格上的可逆体素变更及其纯应用语义 |
-| `AnimationDocument`、`AnimationTrack`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |
+| `AnimationDocument`、`AnimationTrack`、`AnimationKeyframe`、`AnimationTarget`、`AnimationChannelName`、`AnimationEvaluation`、`AnimationCameraPose`、`AnimationError` | `domain/animation/animation` | 统一 Node/Camera 轨道和确定性求值 |
 | `AnimationPreviewPort`、`AnimationSessionPort`、`AnimationApplyPort`、`AnimationOutputWriter`、`AnimationOutputMetadata`、`AnimationOutputResult` | `application/ports/animation-port` | 应用层动画预览/会话、运行时求值应用与离线输出契约 |
 | `IdGeneratorPort` | `application/ports/id-generator-port` | 节点/对象/动画轨道/关键帧身份的唯一来源；场景身份必须经 `scene-types` 入口铸造 brand |
 

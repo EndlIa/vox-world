@@ -70,8 +70,8 @@ PersistedScene {
 - 场景必须能经 `scene-types.sceneSnapshot` 构造：id 非空与唯一、根节点规则、父子关系双向一致、无环、每个对象恰好被一个节点引用、变换值域，全部由该入口统一校验，本 codec 不重复实现。
 - 每个 `voxels` 字符串必须能由 `voxel-codec` 严格解析为局部快照；解析失败返回带对象 id 和段索引的错误。
 - 根节点与变换规则同样由 `scene-types.sceneSnapshot` 判定，不在此复述。
-- `animation` 必须是完整的 `AnimationDocument`。`version` 必须为 `1`，`durationMs` 必须为有限正数，`loop` 必须为布尔值，`tracks` 必须是数组；未知版本、缺字段、非法字段或非法关键帧使整个文档失败，不进行关键帧过滤。
-- 场景相关校验必须调用 `domain/animation.validateAnimation(animation, data.scene)`；`restoreAnimation` 只能验证文档自身结构，不能证明 `nodeId` 存在。禁止用当前编辑器场景校验另一个项目或 Snapshot 条目的动画。
+- `animation` 必须是完整的 `AnimationDocument`。`version` 必须为 `1`，`durationMs` 必须为有限正数，`loop` 必须为布尔值，`tracks` 必须是数组；未知版本、缺字段、非法字段或非法关键帧使整个文档失败，不进行关键帧过滤；文档自身结构与值合法性由 `domain/animation.decodeAnimation` 校验，场景引用另由 `validateAnimation` 校验。
+- 场景相关校验必须调用 `domain/animation.validateAnimation(animation, sceneSnapshot)`，其中 `sceneSnapshot` 由同一份 `data.scene` 经 `scene-types.sceneSnapshot` 构造；`decodeAnimation` 只能验证文档自身结构，不能证明 `nodeId` 存在。禁止用当前编辑器场景校验另一个项目或 Snapshot 条目的动画。
 - 每条轨道的 `id` 必须非空且在文档内唯一，`target` 与 `channel` 必须是 `domain/animation` 联合类型的精确成员。节点轨道只允许 `position`、`rotation`、`scale`，其 `nodeId` 必须存在于 `data.scene.nodes` 且不能是 `rootNodeId`；相机轨道只允许 `position`、`rotation`、`fov`，且不得携带 `nodeId`。同一 `target` + `channel` 在文档中只能出现一次，重复轨道直接拒绝。
 - 每条轨道至少包含一个关键帧；关键帧 `id` 必须非空且在同一轨道内唯一，`timeMs` 必须为有限数并按严格升序排列且位于 `0..durationMs`；`easing` 只能是 `linear` 或 `smooth`。节点/相机 `position` 的值必须是有限 `Vec3`，`rotation` 必须是单位 `Quat`，节点 `scale` 必须是三分量均非零的有限 `Vec3`，`fov` 必须是以弧度为单位的正有限数；`value` 类型必须与 target/channel 匹配。
 - 旧顶层 `cameraAnimation` 字段一律拒绝，即使同时存在 `animation` 也不得忽略或迁移；缺失 `animation` 属于无效文档。
