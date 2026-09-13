@@ -6,6 +6,7 @@ import {
   type Quat,
   type Vec3,
 } from "../../util/math";
+import { compareStrings } from "../../util/order";
 import { err, ok, type Result } from "../../util/result";
 import type { UniformVoxSnapshot } from "../voxel/uniform/types";
 
@@ -165,18 +166,6 @@ export function sceneObjectId(
   }
 
   return ok(brandObjectId(raw));
-}
-
-function compareIds(left: string, right: string): number {
-  if (left < right) {
-    return -1;
-  }
-
-  if (left > right) {
-    return 1;
-  }
-
-  return 0;
 }
 
 function isFiniteVec3(vector: Vec3): boolean {
@@ -493,7 +482,7 @@ export function sceneSnapshot(
       return err({
         code: "object-multiply-bound",
         sceneObjectId: object.id,
-        nodeIds: [...boundNodeIds].sort(compareIds),
+        nodeIds: [...boundNodeIds].sort(compareStrings),
       });
     }
   }
@@ -523,7 +512,7 @@ export function sceneSnapshot(
   }
 
   const nodes = [...input.nodes]
-    .sort((left, right) => compareIds(left.id, right.id))
+    .sort((left, right) => compareStrings(left.id, right.id))
     .map((node): SceneNodeSnapshot => {
       const transform = transformByNodeId.get(node.id);
 
@@ -545,7 +534,7 @@ export function sceneSnapshot(
     });
 
   const objects = [...input.objects]
-    .sort((left, right) => compareIds(left.id, right.id))
+    .sort((left, right) => compareStrings(left.id, right.id))
     .map(
       (object): SceneObjectSnapshot => ({
         id: brandObjectId(object.id),

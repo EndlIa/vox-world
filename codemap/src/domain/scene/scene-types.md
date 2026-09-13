@@ -104,7 +104,7 @@ export type SceneValidationError =
   5. 绑定了 `SceneObject` 的节点是叶节点，`childIds` 必须为空（`leaf-node-has-children`）。空组节点可以拥有子节点，用于未来层级组织。
   6. `SceneTransform.position`、`rotation`、`scale` 必须是有限数值；旋转必须是单位四元数（长度的单位性按 `util/math` 的 `EPSILON` 判定）；`scale` 三分量不得为零，且“为零”同样按 `util/math` 的 `EPSILON` 判定：任一分量满足 `|分量| <= EPSILON` 即视为零、判为非法（`invalid-transform`，按 position → rotation → scale 报告首个失败通道）。校验通过后经 `math.quatNormalize` 取得 `Quat` brand；不得用它静默修复非单位输入。变换顺序为 `T * R * S`，局部空间到父空间。
     - 【用户确认】`scale` 三分量不得为零由用户于 2026-09-13 确认保留，并同日确认“为零”按 `util/math` 的 `EPSILON` 判定：`|分量| <= EPSILON` 的分量即使矩阵形式上仍可逆也一律非法，实现保持 `approximatelyEqual(分量, 0)`，不改为严格 `=== 0`。`util/math` 中“节点 `scale` 为 0 时拾取必须能跳过该节点”是对不可逆矩阵的独立判断，允许在那里多判一次，不构成本条与 `util/math` 的冲突。修改本条必须先取得用户同意。
-- canonical 形式：输出的 `nodes` 按 `id` 字符串升序、`objects` 按 `id` 字符串升序排列（与 `project-codec` 的写出顺序一致）；`childIds` 保留输入给定的顺序，树顺序即显式语义。因此同一逻辑场景的任一合法输入顺序产出同一快照，快照等价、持久化 diff 与 golden 都以该顺序为准；`nodes`/`objects` 的数组顺序不构成身份，也不依赖对象枚举顺序。
+- canonical 形式：输出的 `nodes` 按 `id` 字符串升序、`objects` 按 `id` 字符串升序排列（与 `project-codec` 的写出顺序一致，升序比较共用 `util/order.compareStrings`）；`childIds` 保留输入给定的顺序，树顺序即显式语义。因此同一逻辑场景的任一合法输入顺序产出同一快照，快照等价、持久化 diff 与 golden 都以该顺序为准；`nodes`/`objects` 的数组顺序不构成身份，也不依赖对象枚举顺序。
 - `sceneNodeId`、`sceneObjectId` 只接受 `length > 0` 的字符串，不 trim、不做其他规范化。新身份的来源是 `application/ports/id-generator-port` 的 `IdGeneratorPort`；本模块只负责校验与铸造，不生成身份。
 - `sceneSnapshot` 不修改入参，也不自动修复输入：不补齐缺失的 `childIds`、不合并或改写重复 id、不对非法数值做 clamp。
 - 输出快照与入参共享容器引用：节点的 `position`/`scale` 对象和 `objects[i].voxels` 原样放进新快照，不做防御性复制。共享不转移所有权，也不改变本模块的不可变性约定——与 `UniformVoxSnapshot` 相同，只允许所有者产出新容器，不得就地改写已被快照引用的容器。
@@ -115,4 +115,4 @@ export type SceneValidationError =
 - 快照只包含可结构化克隆的普通数据，可直接传给 Worker 或持久化边界；禁止 Three.js、DOM、类实例和函数。容器是普通只读对象/数组；唯一例外是 `voxel/uniform/types` 的 `UniformVoxSnapshot`（typed array 无法冻结，其不可变性由“只允许所有者产出新容器”的约定保证，见 `codemap/README.md` 的类型收敛规则）。
 - 可恢复的校验失败返回 `Result` 和具体错误码；不得静默丢弃节点、对象、父子关系或非法变换。
 
-**依赖**：voxel/uniform/types、util/math、util/result。
+**依赖**：voxel/uniform/types、util/math、util/order、util/result。

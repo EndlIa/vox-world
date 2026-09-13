@@ -138,6 +138,7 @@ export type AnimationError =
 
 - 所有公开类型都是只读普通数据：对象用 `Readonly<{…}>`、数组用 `readonly T[]`，不使用 class、带方法的包装对象或可变集合；序列化边界只传普通数据。
 - `AnimationTrack` 的判别字段是 `target.kind` 与 `channel`，`channel` 与关键帧值类型必须按上面的成员类型一一对应（node `position`/`scale` → `Vec3`、node `rotation` → `Quat`、camera `fov` → `number`）；不存在第七种组合，`value` 类型必须与 `target` + `channel` 匹配。
+- 通道词表必须保持单一来源：`AnimationChannelName` 由成员列表派生，`isChannelName` 从同一列表判定，`NODE_CHANNELS`/`CAMERA_CHANNELS` 是按 target 划分的显式 allowlist（不得写成排除式判断）。`decodeTrack`、`rebuildTrack`、`isValueForChannel` 与 `evaluateAnimation` 的通道分派必须穷尽 `AnimationTrack`：新增通道或轨道成员必须编译失败，不得被静默跳过。
 - `Quat`/`Vec3` 的唯一 owner 是 `util/math`，`SceneNodeId`/`SceneTransform` 的唯一 owner 是 `domain/scene/scene-types`；本模块只 `import type`，不得声明同形副本或就地构造带 brand 的值。
 - `AnimationCameraPose` 是 `domain/animation` 自有的最小相机求值结构；渲染层只按 `position`、`rotation`、`fov` 三个普通字段消费，不得引入 Three.js 相机或第二套相机姿态 DTO。`fov` 的单位始终为弧度（默认 `0.8`），与 `camera-control`/`domain/render` 一致；Three.js 的角度制转换只能发生在渲染边界，不得写入动画文档或求值结果。
 - `AnimationEvaluation.nodes` 按 `nodeId` 升序稳定排序；同一节点的多个 channel 合并进一个 `Partial<SceneTransform>`，缺失 channel 通过**键不出现**表达，不得写入 `undefined`（`exactOptionalPropertyTypes`）。`transform` 保证至少含一个 channel，`camera` 键出现时也保证至少含一个 channel：`Partial` 只用于表达"缺席的 channel"，不表达空对象。
@@ -179,7 +180,7 @@ export type AnimationError =
 
 **求值规则**：
 
-- `evaluateAnimation` 是唯一插值入口，运行时播放、截图和离线渲染必须共用它。
+- `evaluateAnimation` 是唯一插值入口，运行时播放、截图和离线渲染必须共用它。`timeMs` 必须是有限数；非有限输入不属于本模块的契约范围、行为未定义，播放时钟、截图与离线渲染必须先保证传入有限时间。
 - `loop = true` 时先把时间折回 `0..durationMs)`（`durationMs` 折回 `0`，负值也按同一规则折回）；否则 clamp 到 `0..durationMs`。`AnimationEvaluation.timeMs` 报告**规范化或 clamp 之后的有效时间**，即采样值真正对应的时间。
 - 每个相邻关键帧区间只由左端关键帧的 `easing` 控制，右端关键帧的 `easing` 只影响下一段，末关键帧的 `easing` 不参与任何插值。段内参数 `t = (timeMs - left.timeMs) / (right.timeMs - left.timeMs)`；`left.easing = "linear"` 时直接使用 `t`，`left.easing = "smooth"` 时必须使用仓库 `util/math.smoothstep(t) = clamp(t, 0, 1)^2 * (3 - 2 * clamp(t, 0, 1))`，不得另写缓动公式。
 - Vec3 position/scale 使用逐分量 `linear` 或 `smooth` 插值；rotation 使用 `util/math.quatSlerp`，并对 slerp 参数应用同一个 easing 后结果；FOV 使用标量插值。预览与离线渲染必须得到相同结果。
@@ -192,6 +193,9 @@ export type AnimationError =
 
 - `encodeAnimation` 输出规范字段并稳定排序轨道/关键帧，是项目保存侧取动画文档的唯一入口；项目 codec 嵌入其返回值，本模块不写文件、不做资产解析。
 - `decodeAnimation` 只校验文档自身的版本、字段、唯一性、轨道/关键帧规则与值合法性，未知字段必须拒绝而不是忽略；它无法判断 `nodeId` 是否存在。反序列化边界必须先自行校验有限性与单位性，校验通过后经 `util/math.quatNormalize` 铸造 `Quat` brand；不得依赖 `quatNormalize` 把损坏数据静默修成单位四元数，也不得用类型断言绕过。
+- `decodeAnimation` 只接受普通对象：原型必须是 `Object.prototype` 或 `null`。原型链上的字段不属于文档字段，携带其它原型的输入按非法文档拒绝（`invalid-animation-field`），避免继承字段绕过未知字段白名单。
+- `invalid-animation-field` 的 `field` 字符串文法：文档级与轨道级字段用裸名（`"durationMs"`、`"id"`、未知键名），关键帧字段带 `keyframe.` 前缀（`"keyframe.id"`、`"keyframe.tension"`），非对象记录用 `"document"`、`"tracks[]"`、`"keyframes[]"` 哨兵。target 形状失败一律由 `invalid-track-target` 表达，不存在 `field: "target"`。
+- **多个检查同时失败时报告哪一个错误码未定义**：`AnimationError` 的联合成员顺序、`decodeAnimation` 与各编辑入口的检查语句顺序都不是契约，实现不承诺，调用方不得依赖它，更不得据此分支。
 - 项目加载与 Snapshot 恢复必须再调用 `validateAnimation(document, scene)`，其中 `scene` 必须是由同一份持久化场景构造出的 `SceneSnapshot`（同一文档来自同一条目）；`validateAnimation` 校验所有 Node 目标存在且非根，返回 `Result<void, AnimationError>`，不返回文档、不做规范化。
 - 节点删除或场景 undo/redo 的引用预检不能复用"校验当前场景"这一入口，必须由应用层通过只读 `hasTracksForNode(document, nodeId)` 查询：返回引用该节点的全部 node 轨道 `trackId`，未被引用时返回空数组，不修改文档、不修改播放状态。`node-referenced-by-animation`（携带 `nodeId` 与全部 `trackIds`）由应用层据此构造并返回；本模块不得自动级联删除轨道。
 - `AnimationError` 的唯一 owner 是本模块。`validateAnimation`/`decodeAnimation` 与编辑操作产出文档结构、规则与引用类码值；`node-referenced-by-animation` 与 `animation-playback-active` 由 application 层产出（前者来自 `hasTracksForNode` 的查询结果，后者来自 `AnimationSessionPort` 的编辑门禁），但同属本类型，使 `Result<…, AnimationError>` 在各层保持同一个错误词表。
@@ -199,7 +203,7 @@ export type AnimationError =
 
 **类型级测试**：
 
-- 实现必须提供 `test/domain/animation/animation.test.ts`，用 `expectTypeOf` 钉住类型契约（同 `test/domain/voxel/uniform/types.test.ts`、`test/util/math.test.ts` 的做法）：`AnimationDocument`/`AnimationEvaluation` 的只读形状与可变形状的负断言；`Extract<AnimationTrack, { channel: "fov" }>` 等成员收窄到对应值类型；`channel` 与 `value` 错配不能通过编译；`Partial<SceneTransform>` 拒绝显式 `undefined` 键；裸 `{ x, y, z, w }` 不能赋给 `Quat`；`AnimationError` 的码值可判别。
+- 实现必须提供 `test/domain/animation/animation.test.ts`，用 `expectTypeOf` 钉住类型契约（同 `test/domain/voxel/uniform/types.test.ts`、`test/util/math.test.ts` 的做法）：`AnimationDocument`/`AnimationEvaluation` 的只读形状与可变形状的负断言（含 `version: 1` 字面量）；`AnimationChannelName` 的成员集合与 `AnimationError["code"]` 的完整码值集合（含 application 层产出的末尾两个码）；`Extract<AnimationTrack, { channel: "fov" }>` 等成员收窄到对应值类型；`channel` 与 `value` 错配不能通过编译；`AnimationTarget` 的 node 分支与 `hasTracksForNode` 参数必须保持 `SceneNodeId` brand；`AnimationCameraPose` 的形状、`camera` 键的缺席语义与 `Partial<SceneTransform>`/`Partial<AnimationCameraPose>` 拒绝显式 `undefined` 键；`AnimationKeyframe` 的 `easing` 白名单与只读形状；裸 `{ x, y, z, w }` 不能赋给 `Quat`；`AnimationError` 的码值可判别。
 - 这些断言是类型契约的可执行证据，不得因为实现改动而放宽或删除。
 
-**依赖**：scene-types、util/math、util/result。
+**依赖**：scene-types、util/math、util/order、util/result。

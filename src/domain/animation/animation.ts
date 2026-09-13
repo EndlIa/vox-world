@@ -9,6 +9,7 @@ import {
   type Quat,
   type Vec3,
 } from "../../util/math";
+import { compareStrings } from "../../util/order";
 import { err, ok, type Result } from "../../util/result";
 import {
   sceneNodeId,
@@ -26,8 +27,14 @@ type CameraTarget = Readonly<{ kind: "camera" }>;
 /** What a track can be attached to. See `AnimationTrack`. */
 export type AnimationTarget = NodeTransformTarget | CameraTarget;
 
-/** Every channel name that appears in the document, across both target kinds. */
-export type AnimationChannelName = "position" | "rotation" | "scale" | "fov";
+/**
+ * Every channel name that appears in the document, across both target kinds.
+ * The public union and the runtime allowlist derive from this single list.
+ */
+const ANIMATION_CHANNEL_NAMES = ["position", "rotation", "scale", "fov"] as const;
+
+/** Channel vocabulary of the whole document. */
+export type AnimationChannelName = (typeof ANIMATION_CHANNEL_NAMES)[number];
 
 /** Channels a node track may drive; `fov` belongs to the camera alone. */
 const NODE_CHANNELS: readonly AnimationChannelName[] = [
@@ -118,8 +125,10 @@ export type AnimationDocument = Readonly<{
  * `animation-playback-active` are produced by the application layer but belong
  * to the same vocabulary, so one `Result` channel serves every layer.
  *
- * `invalid-animation-field` names the failing field path — `"durationMs"`,
- * `"target"`, `"keyframe.id"`, an unknown key, ...
+ * `invalid-animation-field` names the failing field path: document and track
+ * fields are bare (`"durationMs"`, `"id"`, an unknown key), keyframe fields are
+ * prefixed (`"keyframe.id"`, `"keyframe.tension"`), and a non-object record is
+ * reported as `"document"`, `"tracks[]"` or `"keyframes[]"`.
  */
 export type AnimationError =
   | Readonly<{ code: "unsupported-animation-version"; version: number }>
@@ -192,9 +201,19 @@ type CameraPoseChannels = {
   fov?: number;
 };
 
-/** JSON object: not `null` and not an array. Field shapes are checked one by one. */
+/**
+ * JSON object: a plain or null-prototype record, not `null` and not an array.
+ * Field shapes are checked one by one; other prototypes are rejected so
+ * inherited fields cannot pass the unknown-key allowlist.
+ */
 function isJsonObject(value: unknown): value is object {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const prototype: unknown = Object.getPrototypeOf(value);
+
+  return prototype === Object.prototype || prototype === null;
 }
 
 /** Unknown keys of a decoded record, sorted so the reported failure is stable. */
@@ -217,12 +236,7 @@ function isEasing(value: unknown): value is "linear" | "smooth" {
 }
 
 function isChannelName(value: unknown): value is AnimationChannelName {
-  return (
-    value === "position" ||
-    value === "rotation" ||
-    value === "scale" ||
-    value === "fov"
-  );
+  return ANIMATION_CHANNEL_NAMES.some((name) => name === value);
 }
 
 function isChannelForTarget(
@@ -342,25 +356,13 @@ function copyNumber(value: number): number {
   return value;
 }
 
-function compareIds(left: string, right: string): number {
-  if (left < right) {
-    return -1;
-  }
-
-  if (left > right) {
-    return 1;
-  }
-
-  return 0;
-}
-
 /** Identity of a track target for the single-track-per-target+channel rule. */
 function targetKey(target: AnimationTarget, channel: AnimationChannelName): string {
   return `${target.kind}:${target.kind === "node" ? target.nodeId : ""}:${channel}`;
 }
 
 function sortTracks(tracks: readonly AnimationTrack[]): readonly AnimationTrack[] {
-  return [...tracks].sort((left, right) => compareIds(left.id, right.id));
+  return [...tracks].sort((left, right) => compareStrings(left.id, right.id));
 }
 
 function sortKeyframes(
@@ -923,6 +925,16 @@ export function setLoop(
   return { ...document, loop: enabled };
 }
 
+/** Track lookup and `track-not-found` failure shared by every edit entry point. */
+function findTrack(
+  document: AnimationDocument,
+  trackId: string,
+): Result<AnimationTrack, AnimationError> {
+  const track = document.tracks.find((entry) => entry.id === trackId);
+
+  return track === undefined ? err({ code: "track-not-found", trackId }) : ok(track);
+}
+
 export function createTrack(
   document: AnimationDocument,
   trackId: string,
@@ -964,11 +976,13 @@ export function addKeyframe(
   trackId: string,
   keyframe: AnimationKeyframe<AnimationChannelValue>,
 ): Result<AnimationDocument, AnimationError> {
-  const track = document.tracks.find((entry) => entry.id === trackId);
+  const found = findTrack(document, trackId);
 
-  if (track === undefined) {
-    return err({ code: "track-not-found", trackId });
+  if (!found.ok) {
+    return found;
   }
+
+  const track = found.value;
 
   const failure = checkKeyframe(trackId, track.channel, keyframe, document.durationMs);
 
@@ -1006,11 +1020,13 @@ export function replaceKeyframe(
   trackId: string,
   keyframe: AnimationKeyframe<AnimationChannelValue>,
 ): Result<AnimationDocument, AnimationError> {
-  const track = document.tracks.find((entry) => entry.id === trackId);
+  const found = findTrack(document, trackId);
 
-  if (track === undefined) {
-    return err({ code: "track-not-found", trackId });
+  if (!found.ok) {
+    return found;
   }
+
+  const track = found.value;
 
   if (!track.keyframes.some((entry) => entry.id === keyframe.id)) {
     return err({ code: "keyframe-not-found", trackId, keyframeId: keyframe.id });
@@ -1051,11 +1067,13 @@ export function moveKeyframe(
   keyframeId: string,
   timeMs: number,
 ): Result<AnimationDocument, AnimationError> {
-  const track = document.tracks.find((entry) => entry.id === trackId);
+  const found = findTrack(document, trackId);
 
-  if (track === undefined) {
-    return err({ code: "track-not-found", trackId });
+  if (!found.ok) {
+    return found;
   }
+
+  const track = found.value;
 
   if (!track.keyframes.some((entry) => entry.id === keyframeId)) {
     return err({ code: "keyframe-not-found", trackId, keyframeId });
@@ -1096,11 +1114,13 @@ export function removeKeyframe(
   trackId: string,
   keyframeId: string,
 ): Result<AnimationDocument, AnimationError> {
-  const track = document.tracks.find((entry) => entry.id === trackId);
+  const found = findTrack(document, trackId);
 
-  if (track === undefined) {
-    return err({ code: "track-not-found", trackId });
+  if (!found.ok) {
+    return found;
   }
+
+  const track = found.value;
 
   if (!track.keyframes.some((entry) => entry.id === keyframeId)) {
     return err({ code: "keyframe-not-found", trackId, keyframeId });
@@ -1127,8 +1147,10 @@ export function deleteTrack(
   document: AnimationDocument,
   trackId: string,
 ): Result<AnimationDocument, AnimationError> {
-  if (!document.tracks.some((track) => track.id === trackId)) {
-    return err({ code: "track-not-found", trackId });
+  const found = findTrack(document, trackId);
+
+  if (!found.ok) {
+    return found;
   }
 
   return ok({
@@ -1276,11 +1298,16 @@ export function evaluateAnimation(
 
         break;
       }
+      default: {
+        const unreachable: never = track;
+
+        throw new Error(`Unhandled animation channel ${String(unreachable)}`);
+      }
     }
   }
 
   const nodes = [...nodeChannels.entries()]
-    .sort(([left], [right]) => compareIds(left, right))
+    .sort(([left], [right]) => compareStrings(left, right))
     .map(([nodeId, transform]) => ({ nodeId, transform }));
 
   return Object.keys(cameraChannels).length === 0

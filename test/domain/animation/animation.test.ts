@@ -15,10 +15,13 @@ import {
   setDuration,
   setLoop,
   validateAnimation,
+  type AnimationCameraPose,
+  type AnimationChannelName,
   type AnimationDocument,
   type AnimationError,
   type AnimationEvaluation,
   type AnimationKeyframe,
+  type AnimationTarget,
   type AnimationTrack,
   type CameraFovTrack,
   type NodePositionTrack,
@@ -40,24 +43,7 @@ import {
   type Vec3,
 } from "../../../src/util/math";
 import type { Result } from "../../../src/util/result";
-
-function expectOk<T, E>(result: Result<T, E>): T {
-  if (!result.ok) {
-    throw new Error(
-      `Expected a successful result, got ${JSON.stringify(result.error)}`,
-    );
-  }
-
-  return result.value;
-}
-
-function expectErr<T, E>(result: Result<T, E>): E {
-  if (result.ok) {
-    throw new Error("Expected a failed result");
-  }
-
-  return result.error;
-}
+import { expectErr, expectOk } from "../../support/expect-result";
 
 const UNIT_TRANSFORM = {
   position: { x: 0, y: 0, z: 0 },
@@ -145,6 +131,21 @@ function documentWith(
   return { version: 1, durationMs, loop, tracks };
 }
 
+/** Node track document of one channel, used by the per-channel value cases. */
+function nodeValueDocument(
+  channel: "position" | "rotation" | "scale",
+  value: unknown,
+): unknown {
+  return documentWith(1000, false, [
+    {
+      id: "t1",
+      target: { kind: "node", nodeId: "n1" },
+      channel,
+      keyframes: [{ id: "k1", timeMs: 0, value, easing: "linear" }],
+    },
+  ]);
+}
+
 /** Reads a track back out of a document, keeping assertions focused. */
 function findTrack(animation: AnimationDocument, trackId: string): AnimationTrack {
   const track = animation.tracks.find((entry) => entry.id === trackId);
@@ -220,6 +221,77 @@ describe("type contract", () => {
       Readonly<{ code: "duration-too-short"; durationMs: number; lastKeyframeMs: number }>
     >();
   });
+
+  it("closes the channel vocabulary and the error code set", () => {
+    expectTypeOf<AnimationChannelName>().toEqualTypeOf<
+      "position" | "rotation" | "scale" | "fov"
+    >();
+    expectTypeOf<AnimationError["code"]>().toEqualTypeOf<
+      | "unsupported-animation-version"
+      | "invalid-animation-field"
+      | "duplicate-track-id"
+      | "invalid-track-target"
+      | "invalid-track-channel"
+      | "duplicate-track-target"
+      | "empty-track"
+      | "duplicate-keyframe-id"
+      | "invalid-keyframe-time"
+      | "invalid-keyframe-easing"
+      | "invalid-keyframe-value"
+      | "track-not-found"
+      | "keyframe-not-found"
+      | "keyframe-time-occupied"
+      | "duration-too-short"
+      | "node-target-not-found"
+      | "node-target-is-root"
+      | "node-referenced-by-animation"
+      | "animation-playback-active"
+    >();
+  });
+
+  it("keeps node identity branded on targets and queries", () => {
+    expectTypeOf<Extract<AnimationTarget, { kind: "node" }>["nodeId"]>().toEqualTypeOf<
+      SceneNodeId
+    >();
+    expectTypeOf<Parameters<typeof hasTracksForNode>[1]>().toEqualTypeOf<SceneNodeId>();
+  });
+
+  it("pins the camera pose and keyframe shapes", () => {
+    expectTypeOf<AnimationCameraPose>().toEqualTypeOf<
+      Readonly<{ position: Vec3; rotation: Quat; fov: number }>
+    >();
+    expectTypeOf<{
+      position: Vec3;
+      rotation: Quat;
+      fov: number;
+    }>().not.toEqualTypeOf<AnimationCameraPose>();
+    expectTypeOf<{ camera: undefined }>().not.toExtend<AnimationEvaluation>();
+    expectTypeOf<{ position: undefined }>().not.toExtend<Partial<AnimationCameraPose>>();
+    expectTypeOf<AnimationKeyframe<Vec3>>().toEqualTypeOf<
+      Readonly<{ id: string; timeMs: number; value: Vec3; easing: "linear" | "smooth" }>
+    >();
+    expectTypeOf<{
+      id: string;
+      timeMs: number;
+      value: Vec3;
+      easing: "linear" | "smooth";
+    }>().not.toEqualTypeOf<AnimationKeyframe<Vec3>>();
+  });
+
+  it("keeps the document and evaluation shapes readonly and versioned", () => {
+    expectTypeOf<AnimationDocument["version"]>().toEqualTypeOf<1>();
+    expectTypeOf<{
+      version: 1;
+      durationMs: number;
+      loop: boolean;
+      tracks: readonly AnimationTrack[];
+    }>().not.toEqualTypeOf<AnimationDocument>();
+    expectTypeOf<{
+      timeMs: number;
+      nodes: AnimationEvaluation["nodes"];
+      camera?: Partial<AnimationCameraPose>;
+    }>().not.toEqualTypeOf<AnimationEvaluation>();
+  });
 });
 
 describe("createDefaultAnimation", () => {
@@ -246,265 +318,235 @@ describe("decodeAnimation", () => {
     expect(animation.loop).toBe(true);
   });
 
-  it("rejects a document that is not an object or misses required fields", () => {
-    expect(expectErr(decodeAnimation(null)).code).toBe("invalid-animation-field");
-    expect(expectErr(decodeAnimation([])).code).toBe("invalid-animation-field");
-    expect(expectErr(decodeAnimation({ durationMs: 1, loop: false, tracks: [] })).code).toBe(
-      "invalid-animation-field",
-    );
-    expect(expectErr(decodeAnimation({ version: 1, durationMs: 1, tracks: [] })).code).toBe(
-      "invalid-animation-field",
-    );
-    expect(
-      expectErr(decodeAnimation({ version: 1, durationMs: 0, loop: false, tracks: [] })).code,
-    ).toBe("invalid-animation-field");
-    expect(
-      expectErr(decodeAnimation({ version: 1, durationMs: 1, loop: "no", tracks: [] })).code,
-    ).toBe("invalid-animation-field");
-    expect(
-      expectErr(decodeAnimation({ version: 1, durationMs: 1, loop: false, tracks: {} })).code,
-    ).toBe("invalid-animation-field");
+  it.each([
+    ["a non-object document", null],
+    ["an array document", []],
+    ["a document without a version", { durationMs: 1, loop: false, tracks: [] }],
+    ["a document without a loop flag", { version: 1, durationMs: 1, tracks: [] }],
+    ["a zero duration", { version: 1, durationMs: 0, loop: false, tracks: [] }],
+    ["a non-boolean loop flag", { version: 1, durationMs: 1, loop: "no", tracks: [] }],
+    ["a non-array track list", { version: 1, durationMs: 1, loop: false, tracks: {} }],
+  ] as const)("rejects %s", (_label, input) => {
+    expect(expectErr(decodeAnimation(input)).code).toBe("invalid-animation-field");
   });
 
-  it("rejects unknown fields instead of ignoring them", () => {
-    expect(
-      expectErr(
-        decodeAnimation({ version: 1, durationMs: 1, loop: false, tracks: [], speed: 2 }),
-      ),
-    ).toEqual({ code: "invalid-animation-field", field: "speed" });
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            {
-              ...(positionTrack("t1", "n1", [
-                { id: "k1", timeMs: 0, value: vec3(0, 0, 0) },
-              ]) as object),
-              enabled: true,
-            },
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "invalid-animation-field", field: "enabled" });
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            {
-              id: "t1",
-              target: { kind: "node", nodeId: "n1" },
-              channel: "position",
-              keyframes: [
-                { id: "k1", timeMs: 0, value: vec3(0, 0, 0), easing: "linear", tension: 1 },
-              ],
-            },
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "invalid-animation-field", field: "keyframe.tension" });
-  });
-
-  it("reports unsupported versions separately from malformed ones", () => {
-    expect(
-      expectErr(decodeAnimation({ version: 2, durationMs: 1, loop: false, tracks: [] })),
-    ).toEqual({ code: "unsupported-animation-version", version: 2 });
-    expect(
-      expectErr(decodeAnimation({ version: "1", durationMs: 1, loop: false, tracks: [] })),
-    ).toEqual({ code: "invalid-animation-field", field: "version" });
-  });
-
-  it("rejects track and keyframe rule violations", () => {
-    const duplicateTrackIds = documentWith(1000, false, [
-      positionTrack("t1", "n1", [{ id: "k1", timeMs: 0, value: vec3(0, 0, 0) }]),
-      positionTrack("t1", "n2", [{ id: "k2", timeMs: 0, value: vec3(0, 0, 0) }]),
-    ]);
-
-    expect(expectErr(decodeAnimation(duplicateTrackIds))).toEqual({
-      code: "duplicate-track-id",
-      trackId: "t1",
+  it("rejects a document whose fields live on the prototype", () => {
+    const inherited = Object.create({
+      version: 1,
+      durationMs: 1,
+      loop: false,
+      tracks: [],
     });
 
-    expect(expectErr(decodeAnimation(documentWith(1000, false, [positionTrack("t1", "n1", [])])))).toEqual(
-      { code: "empty-track", trackId: "t1" },
-    );
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            positionTrack("t1", "n1", [{ id: "k1", timeMs: 0, value: vec3(0, 0, 0) }]),
-            positionTrack("t2", "n1", [{ id: "k2", timeMs: 0, value: vec3(0, 0, 0) }]),
-          ]),
-        ),
-      ),
-    ).toEqual({
-      code: "duplicate-track-target",
-      trackId: "t2",
-      target: { kind: "node", nodeId: "n1" },
-      channel: "position",
+    expect(expectErr(decodeAnimation(inherited))).toEqual({
+      code: "invalid-animation-field",
+      field: "document",
     });
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            positionTrack("t1", "n1", [
-              { id: "k1", timeMs: 10, value: vec3(0, 0, 0) },
-              { id: "k2", timeMs: 10, value: vec3(1, 1, 1) },
-            ]),
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "invalid-keyframe-time", trackId: "t1", keyframeId: "k2" });
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            positionTrack("t1", "n1", [{ id: "k1", timeMs: 1001, value: vec3(0, 0, 0) }]),
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "invalid-keyframe-time", trackId: "t1", keyframeId: "k1" });
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            positionTrack("t1", "n1", [
-              { id: "k1", timeMs: 0, value: vec3(0, 0, 0) },
-              { id: "k1", timeMs: 5, value: vec3(1, 1, 1) },
-            ]),
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "duplicate-keyframe-id", trackId: "t1", keyframeId: "k1" });
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            {
-              id: "t1",
-              target: { kind: "node", nodeId: "n1" },
-              channel: "position",
-              keyframes: [{ id: "", timeMs: 0, value: vec3(0, 0, 0), easing: "linear" }],
-            },
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "invalid-animation-field", field: "keyframe.id" });
   });
 
-  it("rejects channels that do not belong to the target", () => {
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            {
-              id: "t1",
-              target: { kind: "camera" },
-              channel: "scale",
-              keyframes: [{ id: "k1", timeMs: 0, value: vec3(1, 1, 1), easing: "linear" }],
-            },
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "invalid-track-channel", trackId: "t1", channel: "scale" });
-
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            {
-              id: "t1",
-              target: { kind: "node", nodeId: "n1" },
-              channel: "fov",
-              keyframes: [{ id: "k1", timeMs: 0, value: 0.8, easing: "linear" }],
-            },
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "invalid-track-channel", trackId: "t1", channel: "fov" });
-
-    expect(
-      expectErr(
-        decodeAnimation(
-          documentWith(1000, false, [
-            {
-              id: "t1",
-              target: { kind: "node", nodeId: "" },
-              channel: "position",
-              keyframes: [{ id: "k1", timeMs: 0, value: vec3(0, 0, 0), easing: "linear" }],
-            },
-          ]),
-        ),
-      ),
-    ).toEqual({ code: "invalid-track-target", trackId: "t1" });
-
-    expect(
-      expectErr(
-        decodeAnimation(documentWith(1000, false, [{ id: "t1", target: { kind: "camera" } }])),
-      ),
-    ).toEqual({ code: "invalid-animation-field", field: "channel" });
-  });
-
-  it("rejects illegal values, easings and fov ranges per channel", () => {
-    expect(expectErr(decodeAnimation(documentWith(1000, false, [cameraFovTrack(0)]))).code).toBe(
-      "invalid-keyframe-value",
-    );
-    expect(
-      expectErr(decodeAnimation(documentWith(1000, false, [cameraFovTrack(0.8, "ease-in")]))).code,
-    ).toBe("invalid-keyframe-easing");
-
-    const rotationValue = (value: unknown): unknown =>
-      documentWith(1000, false, [
-        {
-          id: "t1",
-          target: { kind: "node", nodeId: "n1" },
-          channel: "rotation",
-          keyframes: [{ id: "k1", timeMs: 0, value, easing: "linear" }],
-        },
-      ]);
-
-    expect(expectErr(decodeAnimation(rotationValue({ x: 0, y: 0, z: 0, w: 0.5 }))).code).toBe(
-      "invalid-keyframe-value",
-    );
-    expect(
-      expectErr(decodeAnimation(rotationValue({ x: 0, y: 0, z: 0, w: 1, w2: 0 }))).code,
-    ).toBe("invalid-keyframe-value");
-
-    const scaleValue = (value: unknown): unknown =>
-      documentWith(1000, false, [
-        {
-          id: "t1",
-          target: { kind: "node", nodeId: "n1" },
-          channel: "scale",
-          keyframes: [{ id: "k1", timeMs: 0, value, easing: "linear" }],
-        },
-      ]);
-
-    expect(expectErr(decodeAnimation(scaleValue(vec3(1, 0, 1)))).code).toBe(
-      "invalid-keyframe-value",
-    );
-
-    const positionValue = (value: unknown): unknown =>
+  it.each([
+    [
+      "an unknown document key",
+      { version: 1, durationMs: 1, loop: false, tracks: [], speed: 2 },
+      { code: "invalid-animation-field", field: "speed" },
+    ],
+    [
+      "an unknown track key",
       documentWith(1000, false, [
         {
           id: "t1",
           target: { kind: "node", nodeId: "n1" },
           channel: "position",
-          keyframes: [{ id: "k1", timeMs: 0, value, easing: "linear" }],
+          keyframes: [{ id: "k1", timeMs: 0, value: vec3(0, 0, 0), easing: "linear" }],
+          enabled: true,
         },
-      ]);
+      ]),
+      { code: "invalid-animation-field", field: "enabled" },
+    ],
+    [
+      "an unknown keyframe key",
+      documentWith(1000, false, [
+        {
+          id: "t1",
+          target: { kind: "node", nodeId: "n1" },
+          channel: "position",
+          keyframes: [
+            { id: "k1", timeMs: 0, value: vec3(0, 0, 0), easing: "linear", tension: 1 },
+          ],
+        },
+      ]),
+      { code: "invalid-animation-field", field: "keyframe.tension" },
+    ],
+  ] as const)("rejects %s", (_label, input, expected) => {
+    expect(expectErr(decodeAnimation(input))).toEqual(expected);
+  });
 
-    expect(expectErr(decodeAnimation(positionValue(vec3(0, 0, Infinity)))).code).toBe(
+  it.each([
+    [
+      "an unsupported version number",
+      { version: 2, durationMs: 1, loop: false, tracks: [] },
+      { code: "unsupported-animation-version", version: 2 },
+    ],
+    [
+      "a non-numeric version",
+      { version: "1", durationMs: 1, loop: false, tracks: [] },
+      { code: "invalid-animation-field", field: "version" },
+    ],
+  ] as const)("rejects %s", (_label, input, expected) => {
+    expect(expectErr(decodeAnimation(input))).toEqual(expected);
+  });
+
+  it.each([
+    [
+      "duplicate track ids",
+      documentWith(1000, false, [
+        positionTrack("t1", "n1", [{ id: "k1", timeMs: 0, value: vec3(0, 0, 0) }]),
+        positionTrack("t1", "n2", [{ id: "k2", timeMs: 0, value: vec3(0, 0, 0) }]),
+      ]),
+      { code: "duplicate-track-id", trackId: "t1" },
+    ],
+    [
+      "an empty track",
+      documentWith(1000, false, [positionTrack("t1", "n1", [])]),
+      { code: "empty-track", trackId: "t1" },
+    ],
+    [
+      "two tracks on one target and channel",
+      documentWith(1000, false, [
+        positionTrack("t1", "n1", [{ id: "k1", timeMs: 0, value: vec3(0, 0, 0) }]),
+        positionTrack("t2", "n1", [{ id: "k2", timeMs: 0, value: vec3(0, 0, 0) }]),
+      ]),
+      {
+        code: "duplicate-track-target",
+        trackId: "t2",
+        target: { kind: "node", nodeId: "n1" },
+        channel: "position",
+      },
+    ],
+    [
+      "two keyframes on one time",
+      documentWith(1000, false, [
+        positionTrack("t1", "n1", [
+          { id: "k1", timeMs: 10, value: vec3(0, 0, 0) },
+          { id: "k2", timeMs: 10, value: vec3(1, 1, 1) },
+        ]),
+      ]),
+      { code: "invalid-keyframe-time", trackId: "t1", keyframeId: "k2" },
+    ],
+    [
+      "a keyframe past the duration",
+      documentWith(1000, false, [
+        positionTrack("t1", "n1", [{ id: "k1", timeMs: 1001, value: vec3(0, 0, 0) }]),
+      ]),
+      { code: "invalid-keyframe-time", trackId: "t1", keyframeId: "k1" },
+    ],
+    [
+      "a repeated keyframe id",
+      documentWith(1000, false, [
+        positionTrack("t1", "n1", [
+          { id: "k1", timeMs: 0, value: vec3(0, 0, 0) },
+          { id: "k1", timeMs: 5, value: vec3(1, 1, 1) },
+        ]),
+      ]),
+      { code: "duplicate-keyframe-id", trackId: "t1", keyframeId: "k1" },
+    ],
+    [
+      "an empty keyframe id",
+      documentWith(1000, false, [
+        {
+          id: "t1",
+          target: { kind: "node", nodeId: "n1" },
+          channel: "position",
+          keyframes: [{ id: "", timeMs: 0, value: vec3(0, 0, 0), easing: "linear" }],
+        },
+      ]),
+      { code: "invalid-animation-field", field: "keyframe.id" },
+    ],
+  ] as const)("rejects %s", (_label, input, expected) => {
+    expect(expectErr(decodeAnimation(input))).toEqual(expected);
+  });
+
+  it.each([
+    [
+      "scale on the camera",
+      documentWith(1000, false, [
+        {
+          id: "t1",
+          target: { kind: "camera" },
+          channel: "scale",
+          keyframes: [{ id: "k1", timeMs: 0, value: vec3(1, 1, 1), easing: "linear" }],
+        },
+      ]),
+      { code: "invalid-track-channel", trackId: "t1", channel: "scale" },
+    ],
+    [
+      "fov on a node",
+      documentWith(1000, false, [
+        {
+          id: "t1",
+          target: { kind: "node", nodeId: "n1" },
+          channel: "fov",
+          keyframes: [{ id: "k1", timeMs: 0, value: 0.8, easing: "linear" }],
+        },
+      ]),
+      { code: "invalid-track-channel", trackId: "t1", channel: "fov" },
+    ],
+    [
+      "an empty node id",
+      documentWith(1000, false, [
+        {
+          id: "t1",
+          target: { kind: "node", nodeId: "" },
+          channel: "position",
+          keyframes: [{ id: "k1", timeMs: 0, value: vec3(0, 0, 0), easing: "linear" }],
+        },
+      ]),
+      { code: "invalid-track-target", trackId: "t1" },
+    ],
+    [
+      "a target without a channel",
+      documentWith(1000, false, [{ id: "t1", target: { kind: "camera" } }]),
+      { code: "invalid-animation-field", field: "channel" },
+    ],
+  ] as const)("rejects %s", (_label, input, expected) => {
+    expect(expectErr(decodeAnimation(input))).toEqual(expected);
+  });
+
+  it.each([
+    ["a zero fov", documentWith(1000, false, [cameraFovTrack(0)]), "invalid-keyframe-value"],
+    [
+      "an unknown easing",
+      documentWith(1000, false, [cameraFovTrack(0.8, "ease-in")]),
+      "invalid-keyframe-easing",
+    ],
+    [
+      "a non-unit rotation",
+      nodeValueDocument("rotation", { x: 0, y: 0, z: 0, w: 0.5 }),
       "invalid-keyframe-value",
-    );
-    expect(expectOk(decodeAnimation(positionValue(vec3(0, 0, 0)))).tracks).toHaveLength(1);
+    ],
+    [
+      "a rotation with an unknown component",
+      nodeValueDocument("rotation", { x: 0, y: 0, z: 0, w: 1, w2: 0 }),
+      "invalid-keyframe-value",
+    ],
+    [
+      "a zero scale component",
+      nodeValueDocument("scale", vec3(1, 0, 1)),
+      "invalid-keyframe-value",
+    ],
+    [
+      "a non-finite position",
+      nodeValueDocument("position", vec3(0, 0, Infinity)),
+      "invalid-keyframe-value",
+    ],
+  ] as const)("rejects %s", (_label, input, expectedCode) => {
+    expect(expectErr(decodeAnimation(input)).code).toBe(expectedCode);
+  });
+
+  it("accepts a finite position value", () => {
+    expect(
+      expectOk(decodeAnimation(nodeValueDocument("position", vec3(0, 0, 0)))).tracks,
+    ).toHaveLength(1);
   });
 
   it("round-trips through encodeAnimation", () => {
