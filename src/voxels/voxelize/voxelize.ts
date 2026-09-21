@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import { Octree } from '../octree/octree.js';
-import { UniformGrid, unpackKey, type CellKey } from '../uniform/grid.js';
+import { UniformGrid, unpackKey, type CellKey, type HexColor } from '../uniform/grid.js';
 import { resolvePrimitiveColor, type ColorSource } from './colorSampler.js';
 import { voxelizeSurface, type TriangleSoup } from './surface.js';
 
@@ -9,12 +9,23 @@ export type VoxelizeTarget =
   | { kind: 'uniform'; voxelSize: number }
   | { kind: 'octree'; rootSize: number; maxDepth: number; targetCellSize: number };
 
-/** One source node: already in world space, because the caller bakes node transforms (README D21). */
-export type VoxelizeSource = {
-  sourceId: string; // caller's own key, e.g. the GLB node uuid; NOT a document ObjectId
-  name: string;
+/** One part of a source: a world-space soup and the color source its cells are sampled from. */
+export type VoxelizePart = {
   soup: TriangleSoup;
   color: ColorSource;
+};
+
+/**
+ * One source: the whole of one import in world space, because the caller bakes node transforms
+ * (README D21), as the parts it is made of. Every part writes into the **same** payload: placement
+ * uses the union AABB of them all and every part is translated by that one origin, while a cell an
+ * earlier part claimed keeps its color and a later part skips it, so no two cells of one payload
+ * coincide and the result is deterministic in part order.
+ */
+export type VoxelizeSource = {
+  sourceId: string; // caller's own key, e.g. the imported scene; NOT a document ObjectId
+  name: string;
+  parts: readonly VoxelizePart[];
 };
 
 export type VoxelizeRequest = {
@@ -97,8 +108,8 @@ function validateTarget(target: VoxelizeTarget): void {
 }
 
 /** Returns the reason the soup cannot be voxelized, or null when it is well formed. */
-function soupProblem(source: VoxelizeSource): string | null {
-  const { positions, index } = source.soup;
+function soupProblem(soup: TriangleSoup): string | null {
+  const { positions, index } = soup;
   if (positions.length % 3 !== 0) {
     return `positions length ${positions.length} is not a multiple of 3`;
   }
@@ -148,10 +159,31 @@ function cellsOnAxis(min: number, max: number, voxelSize: number): number {
   return Math.floor(max / voxelSize) - Math.floor(min / voxelSize) + 1;
 }
 
+/** The union AABB of every part, or null when no part has a triangle to bound. */
+function partsBounds(parts: readonly VoxelizePart[]): Aabb | null {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  let any = false;
+  for (const part of parts) {
+    const bounds = soupBounds(part.soup);
+    if (bounds === null) continue;
+    any = true;
+    for (let axis = 0; axis < 3; axis += 1) {
+      if (bounds.min[axis]! < min[axis]!) min[axis] = bounds.min[axis]!;
+      if (bounds.max[axis]! > max[axis]!) max[axis] = bounds.max[axis]!;
+    }
+  }
+  return any ? { min, max } : null;
+}
+
 /**
  * Placement of one source: uniform floors the origin to `voxelSize` so every local coordinate is
  * `>= 0`; octree keeps the AABB minimum as the origin of the root box `[0, rootSize]³` and takes
  * its depth from the target cell size, clamped to `[1, maxDepth]` (README §12).
+ *
+ * `bounds` is the union AABB of the source's parts: one payload holds all of them, so the origin and
+ * the fit are decided by what the parts cover together, and every part's soup is translated by that
+ * one origin.
  */
 function placeSource(source: VoxelizeSource, target: VoxelizeTarget, bounds: Aabb | null): Placement | Failure {
   if (target.kind === 'uniform') {
@@ -228,35 +260,34 @@ function translatedPositions(positions: Float32Array, origin: readonly [number, 
 }
 
 /**
- * Allocates the payload once its source passed, and drops the cell map with it (README D12).
+ * Allocates the payload of one source once its every part passed, and drops the claimed cells with it
+ * (README D12).
  *
- * The cell map holds triangle indices while the sampler colors a triangle from its three vertices, so
- * the soup's own index buffer — the buffer the kernel walked — is read here too. One tuple is reused
- * across the source because the sampler reads it synchronously and never keeps it.
+ * The claimed cells arrive with the color their claimant already resolved, so one cell is written once
+ * no matter how many parts reached it: the merge in `voxelize` keeps the first part's color and drops
+ * every later claim.
  */
-function buildOutput(source: VoxelizeSource, placement: Placement, claimed: Map<CellKey, number>): VoxelizeOutput {
+function buildOutput(source: VoxelizeSource, placement: Placement, cells: Map<CellKey, HexColor>): VoxelizeOutput {
   const origin = new Vector3(placement.origin[0], placement.origin[1], placement.origin[2]);
-  const index = source.soup.index;
-  const vertices: [number, number, number] = [0, 0, 0];
 
   if (placement.kind === 'uniform') {
     const grid = UniformGrid.create(placement.cellSize);
-    for (const [key, triangle] of claimed) {
+    for (const [key, color] of cells) {
       const [x, y, z] = unpackKey(key);
-      grid.set(x, y, z, resolvePrimitiveColor(source.color, triangleVertices(index, triangle, vertices)));
+      grid.set(x, y, z, color);
     }
     return { sourceId: source.sourceId, name: source.name, payload: { kind: 'uniform', grid }, origin };
   }
 
   const octree = Octree.create({ rootSize: placement.rootSize, maxDepth: placement.maxDepth });
   const lastIndex = 2 ** placement.depth - 1;
-  for (const [key, triangle] of claimed) {
+  for (const [key, color] of cells) {
     const [x, y, z] = unpackKey(key);
     // Clamping keeps a triangle exactly on the far face inside the root box `[0, rootSize]³`.
     octree.insertAtDepth(
       [Math.min(Math.max(x, 0), lastIndex), Math.min(Math.max(y, 0), lastIndex), Math.min(Math.max(z, 0), lastIndex)],
       placement.depth,
-      { occupied: true, color: resolvePrimitiveColor(source.color, triangleVertices(index, triangle, vertices)) },
+      { occupied: true, color },
     );
   }
   return { sourceId: source.sourceId, name: source.name, payload: { kind: 'octree', octree }, origin };
@@ -276,10 +307,12 @@ function triangleVertices(index: Uint32Array, triangle: number, out: [number, nu
 }
 
 /**
- * Voxelization pipeline: world-space triangle soups to voxel payloads, one per source, with an
- * aggregate progress ratio, cancellation, and a cell budget shared by every source. Nothing the
- * caller owns is mutated and no project or scene state is touched, so a failure leaves the caller
- * exactly as it was and identical requests produce identical payloads, origins, and stats.
+ * Voxelization pipeline: world-space sources of triangle soups to voxel payloads, one per source, with
+ * an aggregate progress ratio, cancellation, and a cell budget shared by every source. The parts of one
+ * source share one placement and one cell map, so the payload holds each cell once, colored by the
+ * first part that claimed it. Nothing the caller owns is mutated and no project or scene state is
+ * touched, so a failure leaves the caller exactly as it was and identical requests produce identical
+ * payloads, origins, and stats.
  */
 export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult> {
   validateTarget(request.target);
@@ -287,15 +320,18 @@ export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult
     throw new RangeError(`budget must be a non-negative integer, received ${request.budget}`);
   }
 
-  // Step 1: every soup, before anything is allocated.
+  // Step 1: every part's soup, before anything is allocated.
   const pending: { source: VoxelizeSource; triangles: number }[] = [];
   let totalTriangles = 0;
   for (const source of request.sources) {
-    const problem = soupProblem(source);
-    if (problem !== null) {
-      return { ok: false, error: 'unsupported-geometry', detail: `source ${source.sourceId}: ${problem}` };
+    let triangles = 0;
+    for (const part of source.parts) {
+      const problem = soupProblem(part.soup);
+      if (problem !== null) {
+        return { ok: false, error: 'unsupported-geometry', detail: `source ${source.sourceId}: ${problem}` };
+      }
+      triangles += part.soup.index.length / 3;
     }
-    const triangles = source.soup.index.length / 3;
     totalTriangles += triangles;
     pending.push({ source, triangles });
   }
@@ -303,10 +339,11 @@ export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult
     return { ok: false, error: 'empty', detail: 'no source has a triangle to voxelize' };
   }
 
-  // Step 2: one placement per source; a mesh that cannot fit its target grid fails the whole run.
+  // Step 2: one placement per source, over the union AABB of its parts; a source that cannot fit its
+  // target grid fails the whole run.
   const planned: PlannedSource[] = [];
   for (const item of pending) {
-    const placement = placeSource(item.source, request.target, soupBounds(item.source.soup));
+    const placement = placeSource(item.source, request.target, partsBounds(item.source.parts));
     if ('ok' in placement) return placement;
     planned.push({ source: item.source, triangles: item.triangles, placement });
   }
@@ -323,52 +360,66 @@ export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult
   for (const { source, placement, triangles } of planned) {
     if (aborted()) return cancelled();
 
-    // A copy: the caller's positions stay untouched, and the index is only ever read.
-    const positions = translatedPositions(source.soup.positions, placement.origin);
-    const index = source.soup.index;
-    const claimed = new Map<CellKey, number>();
+    // The one payload of this source: every part writes into this map, in part order, and a cell an
+    // earlier part already claimed is left alone, so it keeps that part's color and is never written
+    // twice. The color is resolved here, on the claim, so the map holds plain `0xRRGGBB` values.
+    const cells = new Map<CellKey, HexColor>();
+    const vertices: [number, number, number] = [0, 0, 0];
+    let processedParts = 0; // triangles of this source's parts already processed
 
-    for (let start = 0; start < index.length; start += CHUNK * 3) {
+    for (const part of source.parts) {
       if (aborted()) return cancelled();
-      const end = Math.min(start + CHUNK * 3, index.length);
-      const base = start / 3;
-      const sliceTriangles = (end - start) / 3;
-      const outcome = voxelizeSurface({ positions, index: index.subarray(start, end) }, placement.cellSize, {
-        budget: request.budget - cellsSoFar,
-        onProgress: (ratio) => {
-          // The kernel reports its own slice; the aggregate ratio spans every source.
-          report?.((processedSources + base + ratio * sliceTriangles) / totalTriangles);
-        },
-        ...(signal !== undefined ? { signal } : {}),
-      });
-      if ('error' in outcome) {
-        if (outcome.error === 'cancelled') return cancelled();
-        // The kernel stopped on the write that would have passed the limit, so the run reached
-        // `budget` cells and the failed write would have made one more.
-        return {
-          ok: false,
-          error: 'budget-exceeded',
-          detail: `cell budget exceeded: ${request.budget + 1} cells at the limit of ${request.budget}`,
-        };
-      }
 
-      let added = 0;
-      for (const [key, triangle] of outcome.cells) {
-        if (claimed.has(key)) continue;
-        claimed.set(key, base + triangle);
-        added++;
-      }
-      cellsSoFar += added;
+      // A copy per part: the caller's positions stay untouched, and the index is only ever read.
+      const positions = translatedPositions(part.soup.positions, placement.origin);
+      const index = part.soup.index;
 
-      if (end < index.length) {
-        // A zero-delay macrotask, not a microtask: it lets the host paint progress and deliver an abort.
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, 0);
+      for (let start = 0; start < index.length; start += CHUNK * 3) {
+        if (aborted()) return cancelled();
+        const end = Math.min(start + CHUNK * 3, index.length);
+        const base = start / 3;
+        const sliceTriangles = (end - start) / 3;
+        const outcome = voxelizeSurface({ positions, index: index.subarray(start, end) }, placement.cellSize, {
+          budget: request.budget - cellsSoFar,
+          onProgress: (ratio) => {
+            // The kernel reports its own slice; the aggregate ratio spans every part of every source.
+            report?.((processedSources + processedParts + base + ratio * sliceTriangles) / totalTriangles);
+          },
+          ...(signal !== undefined ? { signal } : {}),
         });
+        if ('error' in outcome) {
+          if (outcome.error === 'cancelled') return cancelled();
+          // The kernel stopped on the write that would have passed the limit, so the run reached
+          // `budget` cells and the failed write would have made one more.
+          return {
+            ok: false,
+            error: 'budget-exceeded',
+            detail: `cell budget exceeded: ${request.budget + 1} cells at the limit of ${request.budget}`,
+          };
+        }
+
+        let added = 0;
+        for (const [key, triangle] of outcome.cells) {
+          if (cells.has(key)) continue;
+          // The triangle index is relative to the slice, so it is rebased onto the part's own index
+          // buffer — the buffer the kernel walked and the one the sampler reads its vertices from.
+          cells.set(key, resolvePrimitiveColor(part.color, triangleVertices(index, base + triangle, vertices)));
+          added++;
+        }
+        cellsSoFar += added;
+
+        if (end < index.length) {
+          // A zero-delay macrotask, not a microtask: it lets the host paint progress and deliver an abort.
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 0);
+          });
+        }
       }
+
+      processedParts += index.length / 3;
     }
 
-    outputs.push(buildOutput(source, placement, claimed));
+    outputs.push(buildOutput(source, placement, cells));
     processedSources += triangles;
   }
 

@@ -3,12 +3,14 @@
  *
  * Reads a GLB byte buffer into an `ImportedScene`: one `ImportedNode` per mesh node, each carrying its
  * own world matrix, its geometry (referenced, never copied) and a `ColorSource` built from the material
- * and the geometry. It also bakes the node transforms into world-space triangle soups for the voxelizer
- * and turns an imported scene into document objects.
+ * and the geometry, plus the scene's own name. It also bakes the node transforms into one world-space
+ * `VoxelizeSource` for the voxelizer — one import is one source, and therefore one payload — and turns
+ * an imported scene into the single document object that source attaches to.
  *
  * A stylized export's decorative outline shells are flagged rather than dropped (README D27): they are
- * kept as nodes, so the raw-mesh display and the object list still show them, but they are left out of
- * the voxelize sources and out of `voxelizeBounds` — the extent the sizes derived from an import see.
+ * kept as nodes, so the raw-mesh display and the object's source meshes still show them, but they are
+ * left out of the voxel source and out of `voxelizeBounds` — the extent the sizes derived from an
+ * import see.
  *
  * It does not voxelize, build render meshes, or sample a texture: it reads the base color texture's
  * pixels back out of the image and hands them, with the geometry's UVs and the material's alpha cutoff,
@@ -18,7 +20,7 @@
 import type { ObjectId } from '../document/project.js';
 import { Project } from '../document/project.js';
 import type { ColorSource } from '../voxels/voxelize/colorSampler.js';
-import type { VoxelizeSource } from '../voxels/voxelize/voxelize.js';
+import type { VoxelizePart, VoxelizeSource } from '../voxels/voxelize/voxelize.js';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
@@ -29,6 +31,8 @@ const GLB_JSON_CHUNK = 0x4e4f534a; // 'JSON'
 const GLB_HEADER_BYTES = 12;
 const GLB_CHUNK_HEADER_BYTES = 8;
 const DEFAULT_BASE_COLOR = 0xffffff;
+/** The name an imported scene without one of its own gets: one import is one object, and an object is never nameless. */
+const DEFAULT_SCENE_NAME = 'Imported scene';
 const VERTEX_COLOR_SIZE = 3;
 /** Floats per texture coordinate in the geometry's `uv` attribute. */
 const UV_COMPONENT_COUNT = 2;
@@ -57,6 +61,8 @@ export type ImportedNode = {
 };
 
 export type ImportedScene = {
+  /** The GLB scene's name, or `DEFAULT_SCENE_NAME` when the file names no scene. */
+  name: string;
   root: THREE.Object3D;
   nodes: ImportedNode[];
   /** Every node's bounds, outline shells included: this is what framing has to fit, because all of them are displayed. */
@@ -109,6 +115,10 @@ export async function importGlb(data: ArrayBuffer): Promise<ImportResult> {
   const root = gltf.scene;
   root.updateMatrixWorld(true);
 
+  // The GLB scene's own name is the import's name: the model is one object, and this is what names it
+  // in the object list; a file that names no scene gets the fallback rather than an empty name.
+  const sceneName = root.name.trim() === '' ? DEFAULT_SCENE_NAME : root.name;
+
   const associations = gltf.parser.associations;
   const usedSourceIds = new Set<string>();
   const nodes: ImportedNode[] = [];
@@ -160,7 +170,7 @@ export async function importGlb(data: ArrayBuffer): Promise<ImportResult> {
     if (!node.outline) voxelizeBounds.expandByObject(node.sourceMesh);
   }
 
-  return { ok: true, scene: { root, nodes, bounds, voxelizeBounds } };
+  return { ok: true, scene: { name: sceneName, root, nodes, bounds, voxelizeBounds } };
 }
 
 /** The material name of a dedicated outline shell, matched after trimming and lowercasing. */
@@ -222,55 +232,55 @@ export function buildColorSource(material: THREE.Material): ColorSource {
 }
 
 /**
- * One world-space `VoxelizeSource` per imported node, in node order.
+ * The one `VoxelizeSource` an imported scene voxelizes to: a part per non-outline mesh node, in node
+ * order, or `undefined` when the file has no node to voxelize.
  *
- * `positions` is a fresh array with `matrixWorld` baked in, so downstream voxelization needs no
- * hierarchy (README D21); `index` is the geometry's own index, or a generated `0..n-1` one for
- * non-indexed geometry (a soup is indexed by construction).
+ * One import is one source and therefore one payload: `positions` is a fresh array with the node's
+ * `matrixWorld` baked in, so downstream voxelization needs no hierarchy (README D21); `index` is the
+ * geometry's own index, or a generated `0..n-1` one for non-indexed geometry (a soup is indexed by
+ * construction); and the node's `ColorSource` travels unchanged, so per-material base color, vertex
+ * colors, textures, UVs and `alphaTest` all survive. The parts share the source's placement and cell
+ * map, so a cell two overlapping nodes reach is written once, by the first of them.
  *
- * Outline nodes are skipped, so they never become a payload: their geometry is an inverted hull, and
- * voxelizing it would add a shell of spurious voxels and colors around the model. They stay document
- * objects without a payload, which is what the object list and the raw-mesh display want.
+ * Outline nodes are skipped, so they never contribute a cell: their geometry is an inverted hull, and
+ * voxelizing it would add a shell of spurious voxels and colors around the model. They are still
+ * nodes, so the object's source meshes and the object list keep them.
  */
-export function buildVoxelizeSources(scene: ImportedScene): VoxelizeSource[] {
-  return scene.nodes
-    .filter((node) => !node.outline)
-    .map((node) => ({
-      sourceId: node.sourceId,
-      name: node.name,
-      soup: { positions: worldPositions(node), index: indexOf(node.geometry) },
-      color: node.color,
-    }));
+export function buildVoxelizeSource(scene: ImportedScene): VoxelizeSource | undefined {
+  const parts: VoxelizePart[] = [];
+  for (const node of scene.nodes) {
+    if (node.outline) continue;
+    parts.push({ soup: { positions: worldPositions(node), index: indexOf(node.geometry) }, color: node.color });
+  }
+  if (parts.length === 0) return undefined;
+
+  // The scene's name keys its one source; `adoptImportedScene` returns the same id for the same scene.
+  return { sourceId: `scene-${scene.name}`, name: scene.name, parts };
 }
 
 /**
- * Creates one document object per imported node, in node order.
+ * Creates the one document object an imported scene becomes: named from `scene.name`, at the identity
+ * transform, with a null parent.
  *
- * The imported hierarchy is already baked into the world matrices, so every object is a root: its
- * transform is the decomposition of `matrixWorld` and its `parentId` stays null. `bySourceId` maps
- * each node's `sourceId` to the object created for it — the map `editor/ops.ts`'s
- * `applyVoxelizeResult(project, result, { attachTo })` consumes, so voxelization attaches a payload to
- * the placeholder instead of creating a duplicate object and the raw-mesh comparison source survives.
+ * The model's own placement is not this object's transform but each node's baked world matrix, which
+ * every source mesh carries (README D25) and which voxelization bakes into the one source, so the
+ * object is an identity-transform container for one payload: before the payload arrives it shows the
+ * raw meshes where their own matrices put them, and after it, the translation the payload's origin
+ * needs and nothing more. `sourceId` is the id of the source `buildVoxelizeSource` builds for the same
+ * scene — the key `editor/ops.ts`'s `applyVoxelizeResult(project, result, { attachTo })` maps onto
+ * `objectId`, so voxelization attaches the payload to this object instead of creating a duplicate one
+ * and the raw-mesh comparison source survives.
  */
 export function adoptImportedScene(
   project: Project,
   scene: ImportedScene,
-): { objectIds: ObjectId[]; bySourceId: ReadonlyMap<string, ObjectId> } {
+): { objectId: ObjectId; sourceId: string } {
   if (!(project instanceof Project)) {
     throw new TypeError('adoptImportedScene needs a Project to create objects in');
   }
 
-  const objectIds: ObjectId[] = [];
-  const bySourceId = new Map<string, ObjectId>();
-
-  for (const node of scene.nodes) {
-    const object = project.createObject({ name: node.name, representation: 'empty' });
-    node.matrixWorld.decompose(object.transform.position, object.transform.quaternion, object.transform.scale);
-    objectIds.push(object.id);
-    bySourceId.set(node.sourceId, object.id);
-  }
-
-  return { objectIds, bySourceId };
+  const object = project.createObject({ name: scene.name, representation: 'empty' });
+  return { objectId: object.id, sourceId: `scene-${scene.name}` };
 }
 
 /** Validates the GLB container and decodes its JSON chunk. */
@@ -359,8 +369,8 @@ function parseGlb(data: ArrayBuffer): Promise<GLTF> {
  *
  * The node index comes from the parser's associations; a mesh without one (a primitive of a
  * multi-primitive node, which the loader puts under an unnamed group) falls back to its traversal
- * index, and a repeated index takes a numeric suffix, so `bySourceId` keeps exactly one entry per
- * imported node and every voxelizer output resolves through it.
+ * index, and a repeated index takes a numeric suffix, so every imported node is identifiable in an
+ * import failure and no two nodes share an id.
  */
 function uniqueSourceId(nodeIndex: number | undefined, meshIndex: number, used: Set<string>): string {
   const base = `node-${nodeIndex ?? meshIndex}`;

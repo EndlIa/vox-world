@@ -442,6 +442,18 @@ Ported from the previous project's fix (`shithill` commit `54b73b6c0c48001473690
   contributes no texture term. Coverage stays the voxelizer's business; the sampler only chooses a
   colour.
 
+**D28 — An import is one object with one payload.** Chosen by the user after seeing the overlap
+evidence: per-mesh objects put every payload on the same world lattice, so two objects covering the
+same cell draw coincident cubes in different colours and the scene looks doubled. Sources therefore
+carry **parts** (one per material-bearing mesh, in traversal order) that all write into one payload,
+where the first part to claim a cell keeps it and later parts skip claimed cells — one cell, one
+colour, deterministic. Consequences, accepted with the decision: the imported scene is no longer
+separately selectable per node, so a car inside an island import is separated with the box tool plus
+Detach (scenario A), and a part's colour wins wherever it is *inside* another part's volume — the
+merged grid has no interior geometry at all, which is the point. Two axes of the earlier model stay
+untouched: per-object payloads are still the unit of animation and of Detach, and objects created
+after the import still overlap each other freely (D18), because nothing merges across objects.
+
 ## 9. Demo slice
 
 The first runnable version must demonstrate the two acceptance scenarios end to end. Everything
@@ -449,9 +461,9 @@ listed as deferred is deferred deliberately, not forgotten.
 
 ### In scope
 
-- Import a GLB, keep nodes separately selectable, auto-frame the view.
-- Voxelize the whole scene or a selected object, as uniform or octree, with progress, cancel, and a
-  budget guard.
+- Import a GLB, auto-frame the view, and show the raw mesh for comparison against the voxel result.
+- Voxelization runs on import as one object with one payload, as uniform or octree, with progress,
+  cancel, and a budget guard; changing the resolution re-runs it.
 - Toggle the raw mesh against the voxel result; assign one mask color per object.
 - Select and edit voxel objects: create, name, delete, hide, transform, reparent.
 - Octree: pick a leaf and show its bounds, depth, size, occupancy, and color; split, merge, remove,
@@ -465,8 +477,9 @@ listed as deferred is deferred deliberately, not forgotten.
 
 ### Acceptance flows
 
-- **Scenario A** — import `island.glb`, voxelize (nodes stay separate, so the car is already its own
-  object), give the car and the output camera keyframes, export an MP4 with the mask colors.
+- **Scenario A** — import `island.glb`, which arrives as one object with one payload; separate the car
+  from it with the box tool plus Detach, give the car and the output camera keyframes, export an MP4
+  with the mask colors.
 - **Scenario B** — import `big.glb`, voxelize as octree, pick leaves and split/remove/paint them,
   detach a leaf into a character object, split it further, detach hands and feet, animate all three
   objects on the same timeline, export through the same path.

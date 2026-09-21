@@ -6,7 +6,12 @@ import { resolvePrimitiveColor } from '../src/voxels/voxelize/colorSampler.js';
 import { voxelizeSurface } from '../src/voxels/voxelize/surface.js';
 import type { SurfaceCells, TriangleSoup } from '../src/voxels/voxelize/surface.js';
 import { DEFAULT_CELL_BUDGET, voxelize } from '../src/voxels/voxelize/voxelize.js';
-import type { VoxelizeOutput, VoxelizeResult, VoxelizeSource } from '../src/voxels/voxelize/voxelize.js';
+import type {
+  VoxelizeOutput,
+  VoxelizePart,
+  VoxelizeResult,
+  VoxelizeSource,
+} from '../src/voxels/voxelize/voxelize.js';
 
 type OkResult = Extract<VoxelizeResult, { ok: true }>;
 
@@ -63,8 +68,13 @@ function quadGrid(n: number): TriangleSoup {
   return { positions: Float32Array.from(positions), index: Uint32Array.from(index) };
 }
 
+/** One part of a source: a world-space soup and the color its cells are sampled from. */
+function partOf(soup: TriangleSoup, baseColor = 0xffffff): VoxelizePart {
+  return { soup, color: { baseColor } };
+}
+
 function sourceOf(sourceId: string, soup: TriangleSoup, baseColor = 0xffffff): VoxelizeSource {
-  return { sourceId, name: sourceId, soup, color: { baseColor } };
+  return { sourceId, name: sourceId, parts: [partOf(soup, baseColor)] };
 }
 
 /**
@@ -471,8 +481,8 @@ describe('resolvePrimitiveColor', () => {
 describe('voxelize', () => {
   it('returns one output per source with the requested representation', async () => {
     const sources: VoxelizeSource[] = [
-      { sourceId: 'node-car', name: 'Car', soup: boxSoup(1.9), color: { baseColor: 0xff0000 } },
-      { sourceId: 'node-wheel', name: 'Wheel', soup: translated(boxSoup(0.75), 4, 0, 0), color: { baseColor: 0x00ff00 } },
+      { sourceId: 'node-car', name: 'Car', parts: [partOf(boxSoup(1.9), 0xff0000)] },
+      { sourceId: 'node-wheel', name: 'Wheel', parts: [partOf(translated(boxSoup(0.75), 4, 0, 0), 0x00ff00)] },
     ];
     const ratios: number[] = [];
     const result = await okResult(
@@ -511,6 +521,141 @@ describe('voxelize', () => {
     expect(wheel.grid.size).toBe(8);
     expect(wheel.grid.getColor(0, 0, 0)).toBe(0x00ff00);
   });
+  it('writes one cell per shared cell, coloured by the first part that claims it', async () => {
+    // Two identical cubes in one source: the second part reaches every cell of the first, so the payload
+    // holds the 56 cells of a single cube — no cell is written twice — and each of them keeps the colour
+    // of the part that claimed it first, whichever way round the parts are ordered.
+    const soup = boxSoup(1.9);
+    const orders = [
+      [0xff0000, 0x00ff00],
+      [0x00ff00, 0xff0000],
+    ] as const;
+
+    for (const [first, second] of orders) {
+      const result = await okResult(
+        voxelize({
+          sources: [{ sourceId: 'scene-two', name: 'Two', parts: [partOf(soup, first), partOf(soup, second)] }],
+          target: { kind: 'uniform', voxelSize: 0.5 },
+          budget: DEFAULT_CELL_BUDGET,
+        }),
+      );
+      const output = onlyOutput(result);
+      if (output.payload.kind !== 'uniform') throw new Error('expected a uniform payload');
+
+      expect(output.payload.grid.size).toBe(56);
+      expect(result.stats).toEqual({ cells: 56, triangles: 24 }); // both parts count, in triangles
+      output.payload.grid.forEach((_x, _y, _z, color) => {
+        expect(color).toBe(first);
+      });
+    }
+  });
+
+  it('colours a cell only a later part claims from that part', async () => {
+    // The second part sits four metres away, so its cells are free: they take its own colour, while the
+    // cells the first part claimed keep theirs.
+    const output = onlyOutput(
+      await okResult(
+        voxelize({
+          sources: [
+            {
+              sourceId: 'scene-two',
+              name: 'Two',
+              parts: [partOf(boxSoup(1.9), 0xff0000), partOf(translated(boxSoup(0.75), 4, 0, 0), 0x00ff00)],
+            },
+          ],
+          target: { kind: 'uniform', voxelSize: 0.5 },
+          budget: DEFAULT_CELL_BUDGET,
+        }),
+      ),
+    );
+    if (output.payload.kind !== 'uniform') throw new Error('expected a uniform payload');
+    const grid = output.payload.grid;
+
+    expect(grid.size).toBe(64); // the 1.9 m shell's 56 cells plus the 0.75 m cube's 8
+    let claimed = 0;
+    let later = 0;
+    grid.forEach((x, _y, _z, color) => {
+      // The origin is the union AABB's floor, 0 here, so the far cube starts at cell 8.
+      if (x < 8) {
+        expect(color).toBe(0xff0000);
+        claimed += 1;
+        return;
+      }
+      expect(color).toBe(0x00ff00);
+      later += 1;
+    });
+    expect(claimed).toBe(56);
+    expect(later).toBe(8);
+  });
+
+  it('places the payload at the union AABB of every part', async () => {
+    // Two one-metre cubes at x = 2 and x = 0.3: the first part alone would put the payload at 2, the union
+    // minimum is 0.3. One payload holds both, so the origin is the union's.
+    const source: VoxelizeSource = {
+      sourceId: 'scene-union',
+      name: 'Union',
+      parts: [partOf(translated(boxSoup(1), 2, 0, 0)), partOf(translated(boxSoup(1), 0.3, 0, 0))],
+    };
+
+    // Uniform: the origin is the union minimum floored to the cell size — 0, not 2 — and both parts are
+    // measured from it, so the far part covers cells 4..6 while the near one covers 0..2.
+    const uniform = onlyOutput(
+      await okResult(
+        voxelize({
+          sources: [source],
+          target: { kind: 'uniform', voxelSize: 0.5 },
+          budget: DEFAULT_CELL_BUDGET,
+        }),
+      ),
+    );
+    expect(uniform.origin.equals(new Vector3(0, 0, 0))).toBe(true);
+    if (uniform.payload.kind !== 'uniform') throw new Error('expected a uniform payload');
+    expect(uniform.payload.grid.bounds()).toEqual({ min: [0, 0, 0], max: [6, 2, 2] });
+
+    // Octree: the origin is the union minimum itself, so it is the near part's 0.3 and not the 2 the
+    // first part alone would have given the payload; the positions are float32, so the coordinate is
+    // compared with a tolerance like every other soup coordinate in this file.
+    const octree = onlyOutput(
+      await okResult(
+        voxelize({
+          sources: [source],
+          target: { kind: 'octree', rootSize: 8, maxDepth: 10, targetCellSize: 1 },
+          budget: DEFAULT_CELL_BUDGET,
+        }),
+      ),
+    );
+    expect(octree.origin.x).toBeCloseTo(0.3, 5);
+    expect(octree.origin.y).toBe(0);
+    expect(octree.origin.z).toBe(0);
+  });
+
+  it('treats a source with no parts like a soup with no triangles', async () => {
+    const target = { kind: 'uniform', voxelSize: 0.5 } as const;
+    const partless: VoxelizeSource = { sourceId: 'scene-none', name: 'None', parts: [] };
+
+    // Nothing to voxelize anywhere: the same `empty` result a zero-triangle soup gives.
+    const alone = await voxelize({ sources: [partless], target, budget: 1000 });
+    expect(alone).toEqual({ ok: false, error: 'empty', detail: expect.any(String) });
+    expect('outputs' in alone).toBe(false);
+
+    // Beside a source that has geometry, a partless source keeps its slot with an empty payload, at the
+    // origin a source without bounds gets, exactly as a source whose soup has no triangles does.
+    const result = await okResult(
+      voxelize({
+        sources: [sourceOf('node-box', boxSoup(1.9)), partless],
+        target,
+        budget: DEFAULT_CELL_BUDGET,
+      }),
+    );
+    expect(result.outputs).toHaveLength(2);
+    expect(result.outputs[1]?.sourceId).toBe('scene-none');
+    expect(result.outputs[1]?.origin.equals(new Vector3(0, 0, 0))).toBe(true);
+    const empty = result.outputs[1]?.payload;
+    if (empty?.kind !== 'uniform') throw new Error('expected a uniform payload');
+    expect(empty.grid.size).toBe(0);
+    expect(result.stats.triangles).toBe(12); // the partless source contributes none
+  });
+
   it('derives the octree depth from targetCellSize and clamps it to maxDepth', async () => {
     const soup = boxSoup(1.9);
     const octreeFor = async (maxDepth: number, targetCellSize: number) => {
@@ -750,7 +895,7 @@ describe('voxelize', () => {
     const output = onlyOutput(
       await okResult(
         voxelize({
-          sources: [{ sourceId: 'node-tri', name: 'Tri', soup, color }],
+          sources: [{ sourceId: 'node-tri', name: 'Tri', parts: [{ soup, color }] }],
           target: { kind: 'uniform', voxelSize: 0.5 },
           budget: DEFAULT_CELL_BUDGET,
         }),
@@ -784,7 +929,11 @@ describe('voxelize', () => {
       await okResult(
         voxelize({
           sources: [
-            { sourceId: 'node-leaf', name: 'Leaf', soup, color: { baseColor: 0xffffff, texture, uv, alphaTest: 0.5 } },
+            {
+              sourceId: 'node-leaf',
+              name: 'Leaf',
+              parts: [{ soup, color: { baseColor: 0xffffff, texture, uv, alphaTest: 0.5 } }],
+            },
           ],
           target,
           budget: DEFAULT_CELL_BUDGET,
@@ -794,7 +943,7 @@ describe('voxelize', () => {
     const unmasked = onlyOutput(
       await okResult(
         voxelize({
-          sources: [{ sourceId: 'node-leaf', name: 'Leaf', soup, color: { baseColor: 0xffffff, texture, uv } }],
+          sources: [{ sourceId: 'node-leaf', name: 'Leaf', parts: [{ soup, color: { baseColor: 0xffffff, texture, uv } }] }],
           target,
           budget: DEFAULT_CELL_BUDGET,
         }),

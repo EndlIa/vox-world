@@ -27,7 +27,7 @@ import { DEFAULT_CELL_BUDGET, voxelize } from '../voxels/voxelize/voxelize.js';
 import type { VoxelizeSource, VoxelizeTarget } from '../voxels/voxelize/voxelize.js';
 import { UniformGrid } from '../voxels/uniform/grid.js';
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
-import { adoptImportedScene, buildVoxelizeSources, importGlb } from '../three-runtime/import.js';
+import { adoptImportedScene, buildVoxelizeSource, importGlb } from '../three-runtime/import.js';
 import type { ImportedScene } from '../three-runtime/import.js';
 import { SceneMirror } from '../three-runtime/scene.js';
 import { Picker } from '../three-runtime/picking.js';
@@ -59,8 +59,8 @@ export type AppContext = {
 
 type ImportedAssets = {
   scene: ImportedScene;
-  objectIds: ObjectId[];
-  bySourceId: ReadonlyMap<string, ObjectId>;
+  /** The one object the import created: every source mesh and the payload of the import live on it. */
+  objectId: ObjectId;
 };
 
 type VoxelizeDefaults = {
@@ -305,16 +305,16 @@ export function main(): void {
   }
 
   /**
-   * Puts one raw mesh per imported node into the mirror, on layer 2 (README D24). The mesh is handed
-   * its node's own baked world matrix (README D25): the mirror places it by that matrix relative to
-   * whatever its object node is, so the mesh reproduces the import exactly, before and after a payload
-   * makes the object translation-only. The meshes share the imported geometry and materials, are never
-   * disposed by the mirror, and stay in `sourceMeshes` so teardown can detach them.
+   * Puts one raw mesh per imported node into the mirror, on layer 2 (README D24), all of them under the
+   * import's single object. The mesh is handed its node's own baked world matrix (README D25): the mirror
+   * places it by that matrix relative to the object node, so the mesh reproduces the import exactly,
+   * before and after a payload makes the object translation-only. That is what lets one object stand for
+   * a whole file: the model's placement lives in the mesh matrices, not in the object's transform. The
+   * meshes share the imported geometry and materials, are never disposed by the mirror, and stay in
+   * `sourceMeshes` so teardown can detach them.
    */
-  function attachSourceMeshes(scene: ImportedScene, bySourceId: ReadonlyMap<string, ObjectId>): void {
+  function attachSourceMeshes(scene: ImportedScene, objectId: ObjectId): void {
     for (const node of scene.nodes) {
-      const objectId = bySourceId.get(node.sourceId);
-      if (objectId === undefined) continue;
       const mesh = new Mesh(node.geometry, node.sourceMesh.material);
       sourceMeshes.push(mesh);
       mirror.attachSourceObject(objectId, mesh, node.matrixWorld);
@@ -332,18 +332,18 @@ export function main(): void {
       return;
     }
     const adopted = adoptImportedScene(project, result.scene);
-    lastImport = { scene: result.scene, objectIds: adopted.objectIds, bySourceId: adopted.bySourceId };
-    attachSourceMeshes(result.scene, adopted.bySourceId);
-    for (const id of adopted.objectIds) dirtyIds.add(id);
+    lastImport = { scene: result.scene, objectId: adopted.objectId };
+    attachSourceMeshes(result.scene, adopted.objectId);
+    dirtyIds.add(adopted.objectId);
     bindingsDirty = true;
-    // The imported nodes have to exist before anything can measure or name them, so sync before the
-    // job: this frame shows the raw meshes on layer 2, and the payloads below replace them.
+    // The imported object has to exist before anything can measure or name it, so sync before the job:
+    // this frame shows the raw meshes on layer 2, and the payload below replaces them.
     mirror.sync();
     commitDirty();
-    statusLine.textContent = `imported ${result.scene.nodes.length} node(s)`;
+    statusLine.textContent = `imported ${result.scene.name} (${result.scene.nodes.length} node(s))`;
     // Importing is the moment the content becomes editable (README D26): the whole imported scene is
     // voxelized right here at the import default, so no click separates the import from voxels.
-    await runVoxelizeJob(buildVoxelizeSources(result.scene), importTarget(), adopted.bySourceId);
+    await runVoxelizeJob(buildVoxelizeSource(result.scene), importTarget(), adopted.objectId);
   }
 
   /**
@@ -353,30 +353,38 @@ export function main(): void {
   async function applyRevoxelize(options: { target: VoxelizeTarget }): Promise<void> {
     const retained = lastImport;
     if (retained === undefined) return;
-    await runVoxelizeJob(buildVoxelizeSources(retained.scene), options.target, retained.bySourceId);
+    await runVoxelizeJob(buildVoxelizeSource(retained.scene), options.target, retained.objectId);
   }
 
   /**
    * The one voxelization job, shared by the import path and `applyRevoxelize` (README D26). It cancels
-   * whatever was in flight — a superseded job must not attach its payloads — then voxelizes `sources` at
-   * `target` and attaches every output to the object `bySourceId` names, so an imported placeholder
-   * gains voxels instead of being duplicated. Success marks the ids dirty, refreshes the panels, and
-   * re-frames the viewport; framing belongs here, after the payloads: an object that rendered as a raw
-   * mesh until this call renders as voxels now, and `frameAll` syncs first, so the instance meshes
-   * rebuilt for the ids just marked dirty are what it measures. Progress is written while it runs, and a
-   * failure reaches the user through `reportError` with the `Result` literal and detail.
+   * whatever was in flight — a superseded job must not attach its payloads — then voxelizes the source
+   * of one import at `target` and attaches its payload to `objectId`, the object `adoptImportedScene`
+   * created for that import, through an `attachTo` map built from the source's own id: that is the key
+   * every output carries, so the imported object gains the voxels instead of being duplicated next to
+   * them. An import with nothing to voxelize — every node an outline shell — has no source and stops
+   * after the abort, because there is nothing to attach. Success marks the id dirty, refreshes the
+   * panels, and re-frames the viewport; framing belongs here, after the payload: an object that rendered
+   * as raw meshes until this call renders as voxels now, and `frameAll` syncs first, so the instance
+   * meshes rebuilt for the id just marked dirty are what it measures. Progress is written while it runs,
+   * and a failure reaches the user through `reportError` with the `Result` literal and detail.
    */
   async function runVoxelizeJob(
-    sources: VoxelizeSource[],
+    source: VoxelizeSource | undefined,
     target: VoxelizeTarget,
-    bySourceId: ReadonlyMap<string, ObjectId>,
+    objectId: ObjectId,
   ): Promise<void> {
+    // The abort comes first: it is what keeps a superseded job from attaching its payloads, and an
+    // import that has nothing to voxelize still supersedes the job that is running.
     jobController?.abort();
+    jobController = undefined;
+    panels.clearProgress();
+    if (source === undefined) return;
+
     const controller = new AbortController();
     jobController = controller;
-    panels.clearProgress();
     const result = await voxelize({
-      sources,
+      sources: [source],
       target,
       budget: DEFAULT_CELL_BUDGET,
       onProgress: (ratio) => {
@@ -390,7 +398,9 @@ export function main(): void {
       panels.reportError(`${result.error}: ${result.detail}`);
       return;
     }
-    const applied = applyVoxelizeResult(project, result, { attachTo: bySourceId });
+    const applied = applyVoxelizeResult(project, result, {
+      attachTo: new Map([[source.sourceId, objectId]]),
+    });
     for (const id of applied.objectIds) dirtyIds.add(id);
     bindingsDirty = true;
     commitDirty();
