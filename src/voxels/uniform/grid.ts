@@ -3,27 +3,38 @@
  * integer-box region operations with allocation-free packed keys.
  *
  * It holds no transform, identity, or scene state, allocates no Three.js object per cell, and never
- * converts to world space — that is the owning object's transform. Min-corner convention at the world
- * unit: cell `(x, y, z)` occupies `[x, x + 1]` on each axis, so a cell coordinate is a world position
- * and the grid stores no size (README D41).
+ * converts to world space — that is the owning object's transform. Min-corner convention on the world
+ * lattice: cell `(x, y, z)` occupies `[x / subdivision, (x + 1) / subdivision]` of a world unit on each
+ * axis, so a cell coordinate is a world coordinate times the subdivision the grid carries (README D41, D43).
  */
 
-/** The world unit: one voxel is one world unit, so a cell coordinate is a world coordinate (README D41). */
+/** The world unit: the base cell size a grid subdivides, one voxel at `subdivision = 1` (README D41, D43). */
 export const CELL_SIZE = 1;
+
+function assertSubdivision(value: number): void {
+  if (!isSubdivision(value)) {
+    throw new RangeError(`subdivision must be a power of two, got ${value}`);
+  }
+}
 
 export type CellKey = number;
 export type HexColor = number; // 0xRRGGBB, the THREE.Color.getHex()/setHex() exchange form
 export type IntBox3 = { min: readonly [number, number, number]; max: readonly [number, number, number] };
 
 /** Inclusive per-axis coordinate range covered by the packed key space. */
-const AXIS_MIN = -512;
-const AXIS_MAX = 511;
+export const KEY_MIN = -512;
+export const KEY_MAX = 511;
 /** Cells per axis in the key space: 1024^3 keys, all exact 32-bit integers. */
-const AXIS_SPAN = 1024;
+const AXIS_SPAN = KEY_MAX - KEY_MIN + 1;
+
+/** True for a legal subdivision: an integer power of two, so a cell is an exact binary fraction (D43). */
+export function isSubdivision(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && Number.isInteger(Math.log2(value));
+}
 
 function assertAxis(axis: 'x' | 'y' | 'z', value: number): void {
-  if (!Number.isInteger(value) || value < AXIS_MIN || value > AXIS_MAX) {
-    throw new RangeError(`${axis} must be an integer in [${AXIS_MIN}, ${AXIS_MAX}], got ${value}`);
+  if (!Number.isInteger(value) || value < KEY_MIN || value > KEY_MAX) {
+    throw new RangeError(`${axis} must be an integer in [${KEY_MIN}, ${KEY_MAX}], got ${value}`);
   }
 }
 
@@ -32,7 +43,7 @@ export function packKey(x: number, y: number, z: number): CellKey {
   assertAxis('x', x);
   assertAxis('y', y);
   assertAxis('z', z);
-  return (x - AXIS_MIN) * AXIS_SPAN * AXIS_SPAN + (y - AXIS_MIN) * AXIS_SPAN + (z - AXIS_MIN);
+  return (x - KEY_MIN) * AXIS_SPAN * AXIS_SPAN + (y - KEY_MIN) * AXIS_SPAN + (z - KEY_MIN);
 }
 
 /** Exact inverse of `packKey`; it re-checks nothing, since every key was produced by `packKey`. */
@@ -41,7 +52,7 @@ export function unpackKey(key: CellKey): [number, number, number] {
   const withoutZ = (key - z) / AXIS_SPAN;
   const y = withoutZ % AXIS_SPAN;
   const x = (withoutZ - y) / AXIS_SPAN;
-  return [x + AXIS_MIN, y + AXIS_MIN, z + AXIS_MIN];
+  return [x + KEY_MIN, y + KEY_MIN, z + KEY_MIN];
 }
 
 /** Componentwise min and max of two corners, so `min <= max` on every axis. Commutative. */
@@ -97,14 +108,26 @@ function containsCell(box: IntBox3, x: number, y: number, z: number): boolean {
 }
 
 export class UniformGrid {
-  static create(): UniformGrid {
-    return new UniformGrid();
+  /** A grid at `subdivision = 1` is the unit lattice; any other level is a power of two (README D43). */
+  static create(subdivision = 1): UniformGrid {
+    assertSubdivision(subdivision);
+    return new UniformGrid(subdivision);
+  }
+
+  /** How many cells one world unit spans: the object's own grid level, fixed for the life of the grid. */
+  readonly subdivision: number;
+
+  /** The world size of one cell, derived from the world unit so no length is stored (README D41, D43). */
+  get cellSize(): number {
+    return CELL_SIZE / this.subdivision;
   }
 
   /** The occupied set is exactly this key set, so `size === cells.size`. */
   private readonly cells = new Map<CellKey, HexColor>();
 
-  private constructor() {}
+  private constructor(subdivision: number) {
+    this.subdivision = subdivision;
+  }
 
   get size(): number {
     return this.cells.size;
@@ -196,6 +219,36 @@ export class UniformGrid {
       painted += 1;
     }
     return painted;
+  }
+
+  /**
+   * A copy of this grid one or more levels finer: every cell becomes a `2^levels` cube of itself, in the same
+   * color and at the same world position, because the new grid's subdivision is `2^levels` times this one's and
+   * both keep the same placement (README D43). Block replication adds no detail; it makes the cells smaller.
+   *
+   * Coordinates outside the packed key space throw from `packKey`, so a caller that can be asked for too fine a
+   * level checks the result it would need first and refuses with data (see `editor/ops.ts`).
+   */
+  subdividedBy(levels: number): UniformGrid {
+    if (!Number.isInteger(levels) || levels < 1) {
+      throw new RangeError(`subdividedBy: levels must be a positive integer, got ${levels}`);
+    }
+    const factor = 2 ** levels;
+    const result = new UniformGrid(this.subdivision * factor);
+    for (const [key, color] of this.cells) {
+      const [x, y, z] = unpackKey(key);
+      const baseX = x * factor;
+      const baseY = y * factor;
+      const baseZ = z * factor;
+      for (let dx = 0; dx < factor; dx += 1) {
+        for (let dy = 0; dy < factor; dy += 1) {
+          for (let dz = 0; dz < factor; dz += 1) {
+            result.set(baseX + dx, baseY + dy, baseZ + dz, color);
+          }
+        }
+      }
+    }
+    return result;
   }
 
   /**

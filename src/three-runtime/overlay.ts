@@ -63,23 +63,31 @@ export class Overlay {
   /**
    * Shows the inclusive integer box an edit will write, in the owning object's space.
    *
-   * The box is min-corner indexed in cells and a cell is the world unit (README D41), so its local
-   * extents are `min` to `max + 1` and the wireframe matrix is
+   * The box is min-corner indexed in cells and one cell is `cell` world units (README D41, D43), so its local
+   * extents are `min * cell` to `(max + 1) * cell` and the wireframe matrix is
    * `matrixWorld * translate(center) * scale(size)`.
    */
-  showBox(boxLocal: IntBox3, matrixWorld: THREE.Matrix4, color: HexColor = DEFAULT_COLOR): void {
+  showBox(
+    boxLocal: IntBox3,
+    matrixWorld: THREE.Matrix4,
+    cell: number,
+    color: HexColor = DEFAULT_COLOR,
+  ): void {
     if (!(matrixWorld instanceof THREE.Matrix4)) {
       throw new TypeError('Overlay.showBox: matrixWorld must be a THREE.Matrix4');
+    }
+    if (!Number.isFinite(cell) || cell <= 0) {
+      throw new RangeError(`Overlay.showBox: cell must be a positive finite number, got ${cell}`);
     }
     requireIntegerCorners(boxLocal);
 
     const box = normalizeBox(boxLocal.min, boxLocal.max);
-    const minX = box.min[0];
-    const minY = box.min[1];
-    const minZ = box.min[2];
-    const maxX = box.max[0] + 1;
-    const maxY = box.max[1] + 1;
-    const maxZ = box.max[2] + 1;
+    const minX = box.min[0] * cell;
+    const minY = box.min[1] * cell;
+    const minZ = box.min[2] * cell;
+    const maxX = (box.max[0] + 1) * cell;
+    const maxY = (box.max[1] + 1) * cell;
+    const maxZ = (box.max[2] + 1) * cell;
 
     _placement.makeTranslation((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
     _placement.multiply(_scale.makeScale(maxX - minX, maxY - minY, maxZ - minZ));

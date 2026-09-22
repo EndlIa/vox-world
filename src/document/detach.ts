@@ -12,15 +12,15 @@ export type DetachResult =
     };
 
 /**
- * D23 placement: `parentWorld⁻¹ ∘ regionWorld ∘ T(+localMin)`, read as a position. The payload was
- * rebased to a zero min corner, so this is the matrix that puts the extracted region back where it
- * was, expressed in the frame the new object inherits.
+ * D23 placement: `parentWorld⁻¹ ∘ regionWorld ∘ T(+localMin · cell)`, read as a position. The payload was
+ * rebased to a zero min corner, so this is the matrix that puts the extracted region back where it was,
+ * expressed in the frame the new object inherits; `cell` is the source grid's own cell size (README D43).
  */
-function placementFor(project: Project, source: SceneObject, localMin: Vector3): Vector3 {
+function placementFor(project: Project, source: SceneObject, localMin: Vector3, cell: number): Vector3 {
   const parentWorld =
     source.parentId === null ? new Matrix4() : project.worldMatrix(source.parentId);
   const placement = parentWorld.invert().multiply(project.worldMatrix(source.id));
-  placement.multiply(new Matrix4().makeTranslation(localMin.x, localMin.y, localMin.z));
+  placement.multiply(new Matrix4().makeTranslation(localMin.x * cell, localMin.y * cell, localMin.z * cell));
   return new Vector3().setFromMatrixPosition(placement);
 }
 
@@ -36,7 +36,8 @@ function partName(project: Project, sourceName: string): string {
 /**
  * Turns an inclusive integer box of a uniform object into a new object: the extracted cells are
  * re-indexed to a zero min corner, the new object is placed per D23, and the source no longer holds
- * those cells.
+ * those cells. The new grid keeps the source's subdivision, so the slice is exactly as fine as the model it
+ * came from (README D43).
  */
 export function detachUniformBox(project: Project, sourceId: ObjectId, box: IntBox3): DetachResult {
   const source = project.get(sourceId);
@@ -60,14 +61,15 @@ export function detachUniformBox(project: Project, sourceId: ObjectId, box: IntB
     };
   }
   const [minX, minY, minZ] = box.min;
-  const grid = UniformGrid.create();
+  const cell = sourceGrid.cellSize;
+  const grid = UniformGrid.create(sourceGrid.subdivision);
   for (const [key, color] of cells) {
     const [x, y, z] = unpackKey(key);
     grid.set(x - minX, y - minY, z - minZ, color);
   }
-  // The lattice is the world unit (README D41), so the extracted region's local min corner is its world
-  // offset inside the source: cell coordinates are world coordinates.
-  const position = placementFor(project, source, new Vector3(minX, minY, minZ));
+  // A cell is `cell` world units (README D41, D43), so the extracted region's local min corner times that is its
+  // world offset inside the source.
+  const position = placementFor(project, source, new Vector3(minX, minY, minZ), cell);
   const object = project.createVoxelObject({
     name: partName(project, source.name),
     parentId: source.parentId,

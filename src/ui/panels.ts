@@ -30,6 +30,11 @@ export type PanelContext = {
    * checkbox is a plain forward-only control and `refresh()` leaves it alone.
    */
   sceneVisible?: () => boolean;
+  /**
+   * The grid display settings, if the app exposes them (`WorldGrid`). When present the Grid group's controls are a
+   * view of them and `refresh()` seeds them; when absent they are forward-only (README D43).
+   */
+  gridSettings?: () => { base: boolean; object: boolean; margin: number };
   actions: {
     pickImportFile(): void;
     exportMp4(options: {
@@ -45,8 +50,12 @@ export type PanelContext = {
     setActiveMaskColor(color: HexColor): void;
     setActiveVisible(visible: boolean): void;
     setActiveAlignToGrid(alignToGrid: boolean): void;
+    setActiveSubdivision(subdivision: number): void;
     detachSelection(): void;
     setSourceVisible(enabled: boolean): void;
+    setBaseGridVisible(visible: boolean): void;
+    setObjectGridVisible(visible: boolean): void;
+    setGridMargin(cells: number): void;
     renameActive(name: string): void;
     reparentActive(parentId: ObjectId | null): void;
     setCameraLock(enabled: boolean): void;
@@ -55,6 +64,12 @@ export type PanelContext = {
 };
 
 const TOOLS: readonly ActiveTool[] = ['select', 'paint', 'add', 'remove'];
+
+/**
+ * The subdivision levels the Scene group offers, in display order (README D43). They are powers of two because a
+ * cell has to stay an exact binary fraction of the world unit; the list is the UI's range, not a rule of the grid.
+ */
+const SUBDIVISIONS: readonly number[] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 
 /** The shapes the select tool offers; one so far, and the list it will grow into. */
 const SELECTION_SHAPES: readonly SelectionShape[] = ['box'];
@@ -123,11 +138,16 @@ export class Panels {
   /** Not a tool: a command on the region the selection already holds, so it is disabled without one. */
   private readonly detachButton: HTMLButtonElement;
   private readonly editColorInput: HTMLInputElement;
+  private readonly addHeightInput: HTMLInputElement;
   private readonly maskColorInput: HTMLInputElement;
   private readonly parentSelect: HTMLSelectElement;
   private readonly nameInput: HTMLInputElement;
   private readonly visibleInput: HTMLInputElement;
   private readonly alignToGridInput: HTMLInputElement;
+  private readonly subdivisionSelect: HTMLSelectElement;
+  private readonly baseGridInput: HTMLInputElement;
+  private readonly objectGridInput: HTMLInputElement;
+  private readonly gridMarginInput: HTMLInputElement;
   /** The rail's `Edit` button: it also selects the edit mode, so `refresh()` gates it on the active object. */
   private readonly editGroupButton: HTMLButtonElement;
   private readonly sourceVisibleInput: HTMLInputElement;
@@ -147,12 +167,14 @@ export class Panels {
     exportTo: boolean;
     cameraFov: boolean;
     objectName: boolean;
+    gridMargin: boolean;
   } = {
     exportFps: false,
     exportFrom: false,
     exportTo: false,
     cameraFov: false,
     objectName: false,
+    gridMargin: false,
   };
 
   constructor(root: HTMLElement, context: PanelContext) {
@@ -210,6 +232,15 @@ export class Panels {
     this.editColorInput = el('input', {
       type: 'color',
       on: { input: () => context.session.setEditColor(parseInt(this.editColorInput.value.slice(1), 16)) },
+    });
+    // The add tool's own option: how many cells deep its drag builds. It is the tool's parameter, so it sits under
+    // the tool row like the select tool's shape rather than in a group of its own.
+    this.addHeightInput = el('input', {
+      type: 'number',
+      min: '1',
+      step: '1',
+      title: 'how many cells deep the add tool builds out of the face it presses',
+      on: { input: () => this.writeAddHeight() },
     });
 
     // Camera: hand navigation to the output camera, so the viewport frames what an export captures.
@@ -310,6 +341,34 @@ export class Panels {
       type: 'checkbox',
       on: { change: () => context.actions.setActiveAlignToGrid(this.alignToGridInput.checked) },
     });
+    // The active object's own grid level: raising it subdivides the payload without moving it, so the levels
+    // below the object's own are shown disabled — that is what says coarsening is not offered (README D43).
+    this.subdivisionSelect = el(
+      'select',
+      { on: { change: () => context.actions.setActiveSubdivision(Number(this.subdivisionSelect.value)) } },
+      SUBDIVISIONS.map((level) => el('option', { value: String(level), text: String(level) })),
+    );
+    // The Grid group: the two display layers and how far the second one reaches (README D43). They are the
+    // viewport's own settings, not document state, so the app owns them and `refresh()` only reads them back.
+    this.baseGridInput = el('input', {
+      type: 'checkbox',
+      on: { change: () => context.actions.setBaseGridVisible(this.baseGridInput.checked) },
+    });
+    this.objectGridInput = el('input', {
+      type: 'checkbox',
+      on: { change: () => context.actions.setObjectGridVisible(this.objectGridInput.checked) },
+    });
+    this.gridMarginInput = el('input', {
+      type: 'number',
+      min: '0',
+      step: '1',
+      on: {
+        input: () => {
+          this.touched.gridMargin = true;
+        },
+        change: () => context.actions.setGridMargin(Number(this.gridMarginInput.value)),
+      },
+    });
     this.objectList = el('div');
     // The rail: one button per group, in the order the groups are built, and nothing else — no heading and
     // no control lives here. A button toggles its own window and carries `on` exactly while that window is
@@ -353,6 +412,7 @@ export class Panels {
         toolRow,
         el('div', { class: 'row' }, [this.detachButton]),
         this.field('Select', this.selectionShapeSelect),
+        this.field('Add wall', this.addHeightInput),
         this.field('Color', this.editColorInput),
       ],
       () => context.session.setMode('edit'),
@@ -381,9 +441,16 @@ export class Panels {
       this.field('Name', this.nameInput),
       this.field('Visible', this.visibleInput),
       this.field('Grid align', this.alignToGridInput),
+      this.field('Subdivision', this.subdivisionSelect),
     ]);
 
-    // The rail is the overlay's whole content: five buttons and nothing else.
+    group('Grid', [
+      this.field('Base grid', this.baseGridInput),
+      this.field('Object grid', this.objectGridInput),
+      this.field('Margin (cells)', this.gridMarginInput),
+    ]);
+
+    // The rail is the overlay's whole content: six buttons and nothing else.
     root.append(rail);
     this.refresh();
   }
@@ -400,6 +467,15 @@ export class Panels {
     // without `sceneVisible()` owns the state itself, so `refresh()` leaves the box alone.
     const sceneVisible = this.context.sceneVisible;
     if (sceneVisible !== undefined) this.sourceVisibleInput.checked = sceneVisible();
+    // Same rule for the Grid group: with a settings source these are a view of the viewport's own flags; the
+    // margin field is left alone while the user is typing in it, because `change` is what commits it.
+    const gridSettings = this.context.gridSettings;
+    if (gridSettings !== undefined) {
+      const settings = gridSettings();
+      this.baseGridInput.checked = settings.base;
+      this.objectGridInput.checked = settings.object;
+      if (!this.touched.gridMargin) this.gridMarginInput.value = String(settings.margin);
+    }
 
     const active = session.activeObjectId === null ? undefined : project.get(session.activeObjectId);
 
@@ -410,10 +486,19 @@ export class Panels {
     // do. The tools stay live: a press is what creates the region they work on.
     this.detachButton.disabled = session.selection.kind === 'none';
     this.editColorInput.value = hexInputValue(session.editColor);
+    this.addHeightInput.value = String(session.addHeight);
     this.maskColorInput.disabled = active === undefined;
     if (active !== undefined) this.maskColorInput.value = hexInputValue(active.maskColor);
     this.visibleInput.disabled = active === undefined;
+    const resolution = active === undefined ? undefined : session.resolutionOf(active.id);
     this.alignToGridInput.disabled = active === undefined;
+    this.subdivisionSelect.disabled = resolution?.subdivision === undefined;
+    if (resolution?.subdivision !== undefined) {
+      this.subdivisionSelect.value = String(resolution.subdivision);
+      for (const option of this.subdivisionSelect.options) {
+        option.disabled = Number(option.value) < resolution.subdivision;
+      }
+    }
     this.editGroupButton.disabled = active === undefined;
     this.nameInput.disabled = active === undefined;
     // The name field shows the active object's name until the user types, and re-seeds whenever the
@@ -524,5 +609,16 @@ export class Panels {
   private writeMaskColor(): void {
     if (this.context.session.activeObjectId === null) return;
     this.context.actions.setActiveMaskColor(parseInt(this.maskColorInput.value.slice(1), 16));
+  }
+
+  /**
+   * The add wall field: a whole number of cells at least one. Anything else — a blank field, a fraction, a
+   * negative — leaves the session's value alone, so the field can be cleared and retyped without the drag
+   * losing the height it had.
+   */
+  private writeAddHeight(): void {
+    const height = Number(this.addHeightInput.value);
+    if (!Number.isInteger(height) || height < 1) return;
+    this.context.session.setAddHeight(height);
   }
 }

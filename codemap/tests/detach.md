@@ -13,7 +13,8 @@ longer holds those cells. It does not test picking, UI selection, or name collis
 - `detachUniformBox` — `re-indexes the cells so the region min corner is the new local origin`, `sets a
   translation-only transform equal to the region world min corner`, `preserves the world position of
   every extracted cell`, `leaves the flag off when the parent it inherits is turned, instead of snapping
-  the region`, `removes the extracted cells and leaves the rest intact`, `names the object
+  the region`, `gives the new object the source's subdivision, with the region still in place`, `removes the
+  extracted cells and leaves the rest intact`, `names the object
   "<source name> part <n>" and parents it to the source parent`, `fails with empty-region and changes
   nothing`, `fails with missing-object or wrong-representation`
 
@@ -22,8 +23,10 @@ longer holds those cells. It does not test picking, UI selection, or name collis
    asserts the source's id, name, transform, and mask color against the values the fixture gave it,
    so "source unchanged" is checked rather than assumed.
 2. World-position preservation is asserted by applying `project.worldMatrix(id)` to the cell
-   center — `index + CELL_SIZE / 2` per axis, since a cell is the world unit (D41) — before and
-   after, never by reading the new grid by index alone.
+   center — `(index + 0.5) · cell` per axis, with `cell` the object's own `uniform.cellSize` and
+   `CELL_SIZE` as the fallback, because cell `i` spans `[i, i + 1]` cells and a cell is
+   `CELL_SIZE / subdivision` world units (D41, D43) — before and after, never by reading the new grid
+   by index alone.
 3. The fixture uses a box with a negative local min corner, so a re-indexing bug that assumes
    a zero min corner cannot pass.
 4. The alignment case reparents the fixture source under a parent that is turned and sits at a
@@ -34,7 +37,8 @@ longer holds those cells. It does not test picking, UI selection, or name collis
 ## Invariants
 - The new object's local cell `(x, y, z)` holds what source cell `box.min + (x, y, z)` held, and its
   transform is translation-only with `position` at the region's world-space min corner: the
-  assertion adds the box's integer min corner to the source's position with no size factor, and
+  assertion adds the box's integer min corner times the source's cell size to the source's position — the
+  unit fixture's `1`, so the plain integer addition is what a wrong cell factor would break — and
   pins the identity quaternion and unit scale.
 - The grid sizes are pinned: the re-indexed grid holds 3 cells, the source drops to 1, and a failed
   detach leaves the source at 4; the fixture's far-away cell at `(5, 5, 5)` keeps its color, so a
@@ -43,6 +47,9 @@ longer holds those cells. It does not test picking, UI selection, or name collis
   world min corner equals the region's world min corner, so the placement is pinned without an
   identity parent frame.
 - Every detached cell's world center is identical before and after.
+- A slice cut from a subdivided source keeps that source's level: the part of a `grid.subdividedBy(1)` source
+  reports `subdivision` `2` and the cell that was `(-4, -2, 0)` there is its local `(0, 0, 0)` with the same
+  world center, so a detach that re-created the payload on the unit lattice — or re-scaled the region — cannot pass.
 - The flag is derived, not asserted: detaching from a source under a parent that is turned and sits at a
   fractional position gives an object with `alignToGrid` clear whose extracted cell center still lands
   where the source's own frame puts it, so the creation rule is pinned against a snap in the same

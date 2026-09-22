@@ -22,12 +22,15 @@ export type EditorMode = 'object' | 'edit';
 export type SelectionShape = 'box';
 
 /**
- * What the active object's voxels look like right now: its representation, and — for a `uniform` object
- * with occupied cells — how large that content is, per axis, in cells. Cells are the world unit
- * (README D41), so this is a size in the unit the whole editor works in, not a length in metres.
+ * What the active object's voxels look like right now: its representation, the subdivision of its own grid,
+ * and — for a `uniform` object with occupied cells — how large that content is, per axis, in cells. A cell is
+ * `1 / subdivision` of the world unit (README D41, D43), so the cell counts are a size in cells and the
+ * subdivision is what says how much world each of them spans.
  */
 export type EditResolution = {
   representation: 'empty' | 'uniform';
+  /** The grid's own level, reported whenever the object has a grid at all (README D43). */
+  subdivision?: number;
   cells?: [number, number, number];
 };
 
@@ -49,6 +52,8 @@ export class EditorSession {
   selection: Selection;
   /** Add and paint color, the appearance channel (never `SceneObject.maskColor`). */
   editColor: HexColor;
+  /** How many cells deep an `add` drag builds out of the pressed face; `1` is that face's one empty layer. */
+  addHeight: number;
 
   private readonly project: Project;
   private readonly listeners = new Set<() => void>();
@@ -61,6 +66,7 @@ export class EditorSession {
     this.selectionShape = 'box';
     this.selection = { kind: 'none' };
     this.editColor = WHITE;
+    this.addHeight = 1;
   }
 
   /** Reads the project on every call, so the reported resolution cannot go stale. */
@@ -71,9 +77,12 @@ export class EditorSession {
       const grid = object.uniform;
       if (grid === undefined) return { representation: 'empty' };
       const bounds = grid.bounds();
-      if (bounds === null) return { representation: 'uniform' };
+      // The subdivision is a property of the grid, so it is reported whenever one is attached, occupied or not
+      // (README D43); the cell counts need an occupied cell to have a size at all.
+      if (bounds === null) return { representation: 'uniform', subdivision: grid.subdivision };
       return {
         representation: 'uniform',
+        subdivision: grid.subdivision,
         cells: [
           bounds.max[0] - bounds.min[0] + 1,
           bounds.max[1] - bounds.min[1] + 1,
@@ -143,6 +152,18 @@ export class EditorSession {
       throw new RangeError(`edit color out of range: ${color}`);
     }
     this.editColor = color;
+    this.notify();
+  }
+
+  /**
+   * How deep an `add` drag builds. `1` is the box every drag draws — the one layer in front of the pressed face —
+   * so it is the value that means no override: only a field above one makes the drag commit a wall (README D19).
+   */
+  setAddHeight(height: number): void {
+    if (!Number.isInteger(height) || height < 1) {
+      throw new RangeError(`add height is not a whole number of cells: ${height}`);
+    }
+    this.addHeight = height;
     this.notify();
   }
 

@@ -200,8 +200,8 @@ SceneObject {
   matching placeholder (turning it into a `'uniform'` object without changing its id, name, parent, or
   mask color), and clearing the payload returns it to `'empty'`.
 - Placement sits on the world grid by default (D42): every object is created with `alignToGrid` set, and
-  while it is set the object's own transform holds whole cells, so its voxels fall on the lattice D41 defines
-  rather than half a cell off it. A transform write snaps to the nearest cell — the gizmo's live preview is
+  while it is set the object's own transform holds a whole number of *its own* cells (D43) — one world unit at
+  subdivision 1 — so its voxels fall on the lattice rather than half a cell off it. A transform write snaps to the nearest cell — the gizmo's live preview is
   snapped the same way, so a release never jumps — and a keyframe authored for the object's position stores
   whole cells, while the mixer keeps interpolating smoothly between them. The flag is the panel's `Grid align`
   checkbox, and switching it on pulls the object onto the grid there and then.
@@ -211,8 +211,9 @@ SceneObject {
 
 ### Voxel cell semantics
 
-- **Uniform grid** — object-local integer coordinates on the world lattice: one voxel is one world unit (D41), so a
-  cell coordinate is a world position and a grid carries no size. An import is scaled onto that lattice as it arrives, so
+- **Uniform grid** — object-local integer coordinates whose *world* size comes from the world unit and the object's
+  subdivision: a cell is `1 / subdivision` of a world unit (D41, D43), so a cell coordinate is a world coordinate
+  divided by that subdivision and a grid stores its subdivision rather than a length. An import is scaled onto that lattice as it arrives, so
   a model's length in the world is its voxel count. Occupied cells
   map to a color stored as a hex number, the form `Color.getHex()` and `Color.setHex()` exchange, so
   conversion, color-space handling, and mixing go through `THREE.Color`. Cell keys are integers
@@ -224,7 +225,11 @@ SceneObject {
 - **Uniform region selection is an axis-aligned integer box**, as in shithill's Box tool: the anchor
   is taken where the pointer goes down, the opposite corner follows the pointer, and both resolve to
   integer cell coordinates in the object's local grid, inclusive on both corners and one cell deep on the
-  axis the drag runs along, so what the pointer draws is what commits (D19, D36). A single click is the
+  axis the drag runs along, so what the pointer draws is what commits for the tools that take the seen cells (D19, D36). `add`'s box is that region
+  stepped one cell out of the pressed face — its anchor is the empty cell the face opens onto, which is
+  shithill's `posNorm` — and a tracked drag with the Edit group's `Add wall` field above one builds it that
+  many cells deep along the same face normal (D19), while `select`, `paint`, and `remove` take the cells the
+  pointer named, so a press on a face edits what the user sees. A single click is the
   degenerate 1×1×1 box, so point editing needs no separate tool. In edit mode `select` consumes that box as the selection
   and writes nothing; `add`, `paint`, and `remove` apply an operation to it, and the box volume is checked against the
   budget before anything is written. Detaching that region is a command on it rather than a fourth mode — the Edit
@@ -355,7 +360,15 @@ and none is built for the demo. Repainting an occupied cell simply replaces its 
 integer box in the object's local grid: anchor at pointer-down, opposite corner following the
 pointer (shithill's Box tool: `box_add`/`box_remove` take `startBox` on pointer-down and `boxShape`
 derives the integer min/max corners; a drag that exceeds `MAX_VOXELS_DRAW` is abandoned rather than
-clamped). Its fixed-height field is not carried over — that override is gone (D36). The `select` tool drags the same
+clamped). **Revised — `add`'s box is the one in front of the pressed face.** `add` anchors on the empty
+cell the pressed face opens onto, which is shithill's `posNorm` (`addNoHelper(this.posNorm)`), so a press
+on a face of a solid adds a cell there instead of repainting the cell the pick named — the regression the
+user reported: with the anchor on the seen cell the whole box lay in the pressed cell's layer, so `add` on
+a surface only recolored. The Edit group's `Add wall` field is back with it, as the add tool's own
+thickness (D36): a tracked drag whose height is above one builds that many cells deep along the same face
+normal, and a click stays one cell at any height. The field is scoped to `add` alone, so the objection D36
+recorded — a drag committing something other than what the pointer described — does not return for
+`select`, `paint`, or `remove`, whose boxes remain exactly the cells the pointer named. The `select` tool drags the same
 region and keeps it as the selection, writing nothing; add, remove, paint, and detach consume it as the operands of an
 edit; and a click is the degenerate 1×1×1 box. Deliberately excluded: screen-space marquee selection with a surface-only
 versus all-depth policy (shithill's `rect_*`), and flood-fill or connected-component picking. Both
@@ -546,7 +559,7 @@ so it cannot occlude a voxel below the plane; and outside `frameAll`'s measureme
 framing of an import. The extent is a fixed 200 m and there is no visibility toggle; the contract records both
 as open.
 
-**D36 — The box drag has no height override.** The Edit group used to carry a `Box height` field: a value
+**D36 — The box drag has no height override, except the `add` tool's wall.** The Edit group used to carry a `Box height` field: a value
 above one forced the dragged box's third axis to `[anchor.y, anchor.y + height - 1]`, turning a surface drag
 into a slab of a chosen thickness. The user asked for it to go — it was the one control in that group whose
 meaning was not self-evident, and the only reason a drag could commit something other than what the pointer
@@ -554,6 +567,18 @@ described. A drag now always commits exactly the box it drew, one cell deep on t
 column of a chosen height is built by dragging in the plane that spans it, or by repeating the box. The field
 left `EditorSession` with it, and so did `DragState.dragging`, whose only reader was the override — the
 degenerate 1×1×1 click falls out of the corner cell never leaving the anchor cell.
+
+**Revised — the field is back, as the `add` tool's own.** The user asked for it again once `add` anchored
+in the empty layer in front of the pressed face (D19): there, a thickness is what turns a surface drag into
+a wall instead of a single layer. It returns as `EditorSession.addHeight` — `setAddHeight`, whole cells at
+least one, `1` meaning the one layer the face opens onto and no override at all — rendered by the Edit
+group's `Add wall` field, and the flag that arms it returns with it as `DragState.dragging`, again set by a
+tracked move. What does not return is its reach: `paint`, `remove`, and `select` still commit exactly the
+box the pointer drew, one cell deep, so the objection this decision recorded is answered by scoping the
+override to the one tool whose purpose is to add cells. The height runs along the pressed face's normal
+rather than the world's +y as shithill's `fixedHeight` did, because the anchor is that face's own front
+layer and the wall should stand out of the face the user pressed, whichever it is.
+
 **D38 — No message area: the app has no status line, no progress row, and no error line.** The editor kept three
 text rows in the left overlay — the app's status line (`importing …`, `imported N nodes`, `voxelized N cells`,
 `rendered N frames`, `moving <object>`), the panel's progress row (`voxelizing 67%`, `frame 3/300`) and its error
@@ -748,6 +773,61 @@ Affected contracts: `document/project.md` (the flag and the two placement rules)
 and this file's §6.
 
 
+### D43. A model carries its own subdivision of the world unit, and the lattice stays the world's
+
+**Decided.** A voxel grid stores a `subdivision` `k` — a power of two, `1` by default — and one cell is `1 / k` of a
+world unit, so the world unit stays the constant D41 made it while a model can be as fine as its own content needs.
+Raising `k` subdivides the model; every cell-to-world mapping follows it, and the object keeps its world placement.
+
+- **The mapping, not an identity.** `world = placement + cell · (1 / k)`. D41's "a cell coordinate is a world
+  coordinate" was the `k = 1` case of this; the base unit is still the world's, so cell coordinates stay integers and
+  the packed key space `[-512, 511]` and its 10-bits-per-axis layout are untouched — no part of `grid.ts`'s
+  coordinate layer changes for subdivision.
+- **Alignment is per object and measured in its own cells** (D42 generalized): while `alignToGrid` is set the
+  placement is a whole number of *its* cells, so `Project.alignedPosition` rounds to `1 / k` instead of to `1`, and
+  the gizmo preview, the commit, and an authored keyframe all follow. A `k = 4` object may therefore sit at `0.25`,
+  which no `k = 1` object may: "half a cell" is what the rule forbids, and each object's cell is its own.
+- **Why powers of two.** `1 / k` is exact in binary floating point, every level's cell boundaries land on the next
+  coarser level's, and two objects at different levels stay commensurable — a `k = 2` object's cell is exactly two
+  `k = 4` cells. An arbitrary float size (what D41 removed) has none of those properties.
+- **Subdividing is block replication.** Raising `k` by `2^j` replaces each cell with a `2^j × 2^j × 2^j` block of
+  the same color: exact, reversible in shape but not in detail, and it leaves both the world placement and the
+  alignment true by construction, because a placement that was a whole `1 / k` cell is still a whole `1 / (k · 2^j)`
+  one. It adds no detail — the source meshes are the only thing that can — so the control is named for subdivision,
+  not for precision. Coarsening is not offered: it would have to move a region whose origin is not on the coarser
+  lattice, and D23's world preservation outranks it.
+- **The dialog is unchanged.** An import still asks one number, voxels across, and lands at `k = 1` with its length
+  in world units equal to that count (D41); subdivision is chosen afterwards, per object, in the Scene group. An
+  import is therefore never re-scaled to gain resolution, and re-voxelizing from the retained source meshes stays
+  deferred.
+- **The world grid is two layers, drawn from the session.** The base layer is one world unit everywhere; the
+  second layer is the *active* object's own lattice, drawn around it and extended by a margin of cells, and the
+  base layer is hidden under it. Only the selected object's lattice is shown, so the display never claims a
+  commensurability between models that the editing rules do not enforce.
+
+Accepted costs: a model's world extent is capped by the per-axis cell limit divided by its subdivision
+(`512 / k` world units by the importer's container limit, `1024 / k` by the key space), so finer means smaller; the
+budget stays one number for every model (D12), which a fine model spends eight times faster per doubling of `k`; and
+a level selector can only climb, because coarsening is not offered.
+
+Rejected: arbitrary float cell sizes (incommensurable lattices, no exact binary arithmetic — the state D41 removed);
+a project-wide quantum every object snaps to (a `k = 1` object could then sit a fraction of a unit off, which is what
+D42 forbids); one global resolution for the whole project (it would forbid mixing a coarse model with a fine one);
+letting the world unit change per model (the base has to be shared for alignment to mean anything); and raising the
+key space so a fine model can also be large (BigInt or composite keys for a case the per-axis limit already handles
+by making a model smaller instead).
+
+Affected contracts: `voxels/uniform/grid.md` (the subdivision, the derived cell size, and the validation),
+`document/{project,detach}.md` (placement in whole own cells; a detached region keeps its source's subdivision),
+`editor/{ops,session,pointer}.md` (`setObjectSubdivision` and its refusals, the resolution readout, the picked cell
+and the box preview in cell units), `three-runtime/{scene,overlay}.md` (per-subdivision cube geometry, the box
+preview's cell size), `ui/panels.md` (the Scene group's subdivision control), `tests/{uniform,project,ops,detach}.md`,
+this file's §6/§9/§11 and D41's and D42's wording. Landed in two slices: the mapping, the subdivision op, the Scene
+control and their tests first, then the Grid group's display layers with `tests/grid.test.ts`. Deferred, and named here
+so they are not mistaken for oversights: coarsening, re-voxelizing from the retained source meshes, and snapping to a
+coarser neighbour's cell.
+
+
 ## 9. Demo slice
 
 The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
@@ -762,7 +842,11 @@ deferred is deferred deliberately, not forgotten.
 - Toggle the raw mesh against the voxel result; assign one mask color per object.
 - Select and edit voxel objects: create, name, delete, hide, transform, reparent.
 - Voxels: drag a box (anchor, opposite corner) to select it, or to add, remove, paint, or
-  detach it as a new object; a click is a 1×1×1 box.
+  detach it as a new object; a click is a 1×1×1 box. `add` writes the box in front of the face it pressed —
+  one cell on a click, and a wall `Add wall` cells deep on a drag — while `select`, `paint`, and `remove`
+  take the cells the pointer names (D19, D36).
+- Subdivision: raise one object's own grid to a finer level (D43) from the Scene group, and have every
+  cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
 - Timeline: duration and frame rate, keyframes on object transforms and on the output camera,
   step/linear/smooth interpolation, play, pause, stop, loop, scrub.
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range,
@@ -838,8 +922,9 @@ reported, not silently followed.
   (bad argument type, out-of-range index, violated invariant) throw `TypeError` or `RangeError`.
 - Long operations run as chunked loops that yield to the host every `CHUNK = 512` items and accept an
   `AbortSignal`, so progress and cancel work on the main thread without a worker.
-- Units are voxels: one voxel is one world unit (D41), so cell coordinates, box extents, object transforms, and every
-  size the UI reports are in that one unit; cell indexing, color channels, identity rules, box semantics, and traversal order
+- Units are voxels: a voxel is `1 / subdivision` of the world unit and a model at subdivision 1 is one voxel per
+  world unit (D41, D43), so cell coordinates, box extents, object transforms, and every size the UI reports are in
+  that one unit at the subdivision they belong to; cell indexing, color channels, identity rules, box semantics, and traversal order
   are as specified in sections 4, 6, and D11/D18/D19/D20.
 - Tests live in `tests/<name>.test.ts` and run under vitest in the node environment: no GPU, no DOM,
   no `WebGLRenderer`. Importing `three` for math and geometry is allowed.
