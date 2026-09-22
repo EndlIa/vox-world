@@ -204,6 +204,23 @@ export class ViewportControls {
     orbit.update();
   }
 
+  /**
+   * Points the viewport at a pose, which is what `View -> Camera` means: the editor then looks at what the output
+   * camera sees, so the authored shot can be judged against the scene. The orbit pivot goes to the point the pose
+   * looks along, at the distance navigation already orbits from, so the first orbit after the jump behaves like any
+   * other. A viewport is an orbit camera, so a bank the pose carries is not representable and `lookAt` drops it.
+   */
+  setViewFrom(position: THREE.Vector3, quaternion: THREE.Quaternion): void {
+    const orbit = this.orbit;
+    const radius = Math.max(orbit.object.position.distanceTo(orbit.target), MIN_ORBIT_RADIUS);
+    orbit.object.position.copy(position);
+    orbit.object.quaternion.copy(quaternion);
+    _viewDirection.set(0, 0, -1).applyQuaternion(quaternion);
+    orbit.target.copy(position).addScaledVector(_viewDirection, radius);
+    orbit.object.lookAt(orbit.target);
+    orbit.update();
+  }
+
   /** Advances navigation; damping requires one call per rendered frame. */
   update(): void {
     this.orbit.update();

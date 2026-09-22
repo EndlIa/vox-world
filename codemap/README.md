@@ -135,6 +135,7 @@ src/
     controls.ts       OrbitControls, TransformControls, gizmo claim
     capture.ts        offscreen renderer at export resolution
     overlay.ts        box preview feedback
+    cameraControl.ts  runtime-only carrier drawing the output camera: body, frustum, up marker
   editor/
     session.ts        active object, tool, selection
     ops.ts            edit operations over document state
@@ -857,6 +858,59 @@ Rejected: authoring in seconds with an fps grid (a keyframe time would be a floa
 Affected contracts: `document/timeline.md` (the fields and units, the clamp, the id, every mutator, `maxKeyframeTime`, `setDuration`, the invariants), `animation/compile.md` (the one conversion and `clip.duration`), `ui/timeline.md` (the control set, the row, `setTime`), `app/main.md` (`DEFAULT_DURATION_MS`, `onScrub`, the loop), `ui/panels.md` (`To (s)`), `document/project.md` (the initial `durationMs: 0`), `tests/timeline.md` (frame times in milliseconds), and this file's §9. The seconds-side contracts — `animation/playback.md`, `export/job.md`, `export/encode.md` — are deliberately unchanged: the clip is still seconds, which is what those files, the HUD, and the export state in.
 
 
+### D46. The camera carrier is an independent runtime-only handle on the output camera
+
+**Decided.** `three-runtime/cameraControl.ts` draws the output camera as a body, a frustum frame derived from the vertical FOV and the viewport
+aspect, and a triangle marking which way is up. The drawing's node — not the drawing, which is a scaled child — is what the edit gizmo moves while
+the carrier is selected from the `Camera` group, and a drag, the numeric fields, or `Camera -> View` write `project.camera.transform`, the same
+authored pose the camera lock already writes. The carrier is a handle, never a third camera: `mirror.camera` is still the output camera and the
+viewport camera is still the only other one (D17).
+
+- **Layer 1 and unnamed, like the grid and the overlay.** The whole carrier — the node included, so a child added later cannot escape — is on the
+  decoration layer, so `Picker` cannot hit it and no export frame contains it (D24); the node carries no name, so the mixer's binding walk, which
+  reaches `<ObjectId>` nodes and `camera`, can never bind it (D22). It is never serialized, never a keyframe target, and never a mixer track.
+- **The gizmo drives it, with the mode it already has.** `gizmoNodeNow()` returns the carrier's node first while `cameraControlSelected` is set and
+  the active object's node otherwise, so the handles are on exactly one node at a time; `syncGizmo` pivots at `CAMERA_CONTROL_PIVOT` — the carrier's
+  own origin, the camera position, because a camera has no content to center on — for the carrier and at the content center (D37) for an object; and
+  `gizmoMode` stays the app's one toggle for both. `onGizmoChange` decomposes the reported matrix straight into the carrier node while it is selected
+  (the carrier *is* the node the gizmo derives from), and `onGizmoCommit` writes the matrix with `applyCameraMatrix`, which decomposes it into
+  `project.camera.transform` and copies the pose onto `mirror.camera` — the instance the locked view and the export render through, which
+  `SceneMirror.sync` never touches (D17).
+- **`Camera -> View` authors, `View -> Camera` only moves the view.** `cameraToView` copies the viewport camera's pose into the document, mirror
+  camera included, and selects the carrier, because aiming it is what the user came for; `viewToCamera` calls `controls.setViewFrom` and writes
+  nothing, which is what makes it a safe way to look at what a render would frame.
+- **The numeric grid writes the whole pose.** The seven fields plus `FOV (deg)` are one state, so a write sends all of them; the app refuses a
+  non-finite component or a zero-length quaternion and re-seeds the fields (a zero quaternion is not a rotation, so it is refused rather than
+  normalized into one), and the FOV goes through `setCameraFov`, which owns the clamp and the projection refresh.
+- **The pose lives on the node and the size on the helper.** The gizmo derives its drag from the node's own matrix, so a screen-size scale on that
+  matrix would be folded into every pose it reports; the drawing is therefore a scaled child, and the frame loop rescales it from the distance to the
+  drawing camera — floored at the orbit radius navigation already uses, because `View -> Camera` leaves the viewport *on* the carrier, where a pure
+  distance would scale the drawing and the gizmo down to a dot. The drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose`
+  stands back for it, and the carrier is drawn only while it is selected and the lock is off: a camera cannot see itself.
+- **The rail keeps its classification.** Everything *about the camera* — the lock that points the viewport at it, the carrier that aims it, and its
+  projection — is in the `Camera` group; the keyframes stay in the timeline bar, which is animation (D44).
+
+Accepted costs: `View -> Camera` leaves the viewport on the carrier, and `TransformControls` sizes its handles by the distance to the drawing camera,
+so the gizmo degenerates there even though the drawing itself stays visible on the floor; the flow is to orbit away — a middle-drag moves the viewport
+off the carrier while the carrier stays where it was — after which the handles are grabbable again. Sizing them the way the object gizmo already does
+was chosen over a carrier special case. The carrier is one more piece of viewport decoration with its own geometries and materials to release, and its
+selection is app state (`cameraControlSelected`, `gizmoMode`) with no home in the panel beyond the buttons that read it. Its fields author the camera
+whether or not it is selected, and the pose now has four writers — the lock's orbit copy, `applyCameraMatrix`, `setCameraPose`, and `cameraToView` —
+where it had one, so the `playback.playing` guard that path carries has to be checked against the other three rather than assumed.
+
+Rejected: **aiming the camera with the lock alone** (the lock makes the viewport *be* the output camera, so the shot could only be aimed by looking
+through it and the editor would have no third-person view of what it frames); **a second real camera** (a third camera needs its own document node, its
+own export and mixer path, and a second projection to keep in step, and D17 fixes exactly two at runtime); **picking the carrier with the pointer** (a
+pick layer and a hit test for a decoration, plus a mode question with the edit tools — the `Camera` group's `Select` button is the way in and costs the
+picker nothing); **a fixed world size** (an authored scene can be metres or kilometres across, D40, D41, so a fixed drawing reads as a dot in one scene
+and fills the view in another); **screen-constant sizing** (it would need the drawing camera's projection here and would still not fix the handles,
+which `TransformControls` sizes from the distance).
+
+Affected contracts: `three-runtime/cameraControl.md` (new), `three-runtime/controls.md` (`setViewFrom`), `ui/panels.md` (the two types, the
+`cameraControl` source and its gating, the actions, the `Camera` group), `app/main.md` (the carrier, the flags, the gizmo branch, the four commands,
+the frame loop, the teardown), `tests/cameraControl.md` (new), and this file's §9.
+
+
 ## 9. Demo slice
 
 The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
@@ -876,7 +930,8 @@ deferred is deferred deliberately, not forgotten.
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
 - Timeline: a whole-millisecond duration and frame rate, keyframes on object transforms and on the output camera
   addressed by session id, step/linear/smooth interpolation, one Play/Pause toggle, loop, and scrub (D45). The bar
-  starts collapsed and is summoned from the rail's `Animation` button (D44).
+  starts collapsed and is summoned from the rail's `Animation` button (D44), and the output camera these keyframes record is
+  aimed from third person through its carrier in the `Camera` group (D46).
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range,
   with cancel; a failure reaches the console (D38).
 
