@@ -135,6 +135,7 @@ src/
     controls.ts       OrbitControls, TransformControls, gizmo claim
     capture.ts        offscreen renderer at export resolution
     overlay.ts        box preview feedback
+    cameraControl.ts  runtime-only carrier drawing the output camera: body, frustum, up marker
   editor/
     session.ts        active object, tool, selection
     ops.ts            edit operations over document state
@@ -345,7 +346,7 @@ which is what allows one timeline and one export path to cover both. Concretely 
 cameras at runtime: `SceneMirror.camera` is the **output** camera, derived from `project.camera` and
 used for export and for FOV tracks; the **viewport** camera is created by the
 app, is the one `ViewportControls` moves by default, and is never rendered into the output. The single
-exception is the camera lock: while the user locks navigation to the output camera, `ViewportControls`
+exception was the camera lock, which has been removed: `ViewportControls`
 retargets to `mirror.camera`, the viewport renders through it, and each navigation change is copied
 into `project.camera.transform` so a camera keyframe records the authored pose. The copy is refused
 while the mixer is playing, because authored data must never be written from a running clip.
@@ -513,7 +514,7 @@ above the HUD and below the voxelize modal, so the one modal in the app is never
 opened.
 
 **D32 — The export-aspect guide is gone.** The viewport used to carry a thin white outline marking the
-rectangle an export would capture (D17's `OutputPreview`, drawn on layer 1 and hidden while the camera lock
+rectangle an export would capture (D17's `OutputPreview`, drawn on layer 1 and hidden while the viewport
 was on). The user asked for it to be removed after seeing it as two white lines across an otherwise dark
 viewport: at an export aspect close to the window's, the outline's top and bottom edges land on the viewport's
 own edges and only the two verticals show, which reads as a rendering defect rather than as a framing aid. It
@@ -872,7 +873,7 @@ timeline and `#viewport { min-height: 0 }`), and this file's §9.
 - **Ids, not indices.** A module counter mints `keyframe-<n>`, unique for the session. `addKeyframe` mints one for a new keyframe and keeps the existing id when it replaces a value at an occupied millisecond; `moveKeyframe` and `removeKeyframe` take an id. A rebuild that reorders, retimes, or empties the list can therefore not make a press land on a neighbour, which index-addressed rows could: a stale index addressed whatever had moved into that slot.
 - **A refused move, not a dropped keyframe.** A move onto a millisecond another keyframe holds returns `false` and changes nothing; it no longer deletes the keyframe that was there. Moving a keyframe onto the time it already has is a `true` that changes nothing. The widget reads `false` as "the value was not taken": it refreshes, and the refused row's field shows the clip's time again.
 - **An emptied track stays.** `removeKeyframe` splices the keyframe and nothing else, so the track keeps its `(target, channel)` slot and its interpolation, and a keyframe added later joins that same track. `compile.ts` skips a track with no keyframes, so an empty track contributes nothing to the clip, and the invariant that such a track existed only between `ensureTrack` and its first insertion is gone.
-- **One Play/Pause toggle.** The widget's transport is a single button whose click pauses when `playback.playing` and plays otherwise, and whose label is re-derived inside `setTime` from `playback.playing` — the render loop calls `setTime` every frame, so the label follows playback started anywhere, not only by that button. `stop` is gone: returning to the start is what the scrub bar and the new exact-time field are for. The scrub bar is `step = 1` with `max = durationMs`, and each keyframe is one row of `key` (seek), `time (ms)` (retime in place), `delete` (remove by id), and a dim value label, which replaces the panel-level `move`/`delete` buttons and the row selection they acted on.
+- **One Play/Pause toggle.** The widget's transport is a single button whose label is re-derived inside `setTime` from `playback.playing` — the render loop calls `setTime` every frame, so the label follows playback started anywhere, not only by that button — and whose click reports the press through `onTransport`: the app performs it, because a run of the clip changes the viewport too (D48). `stop` is gone: returning to the start is what the scrub bar and the new exact-time field are for. The scrub bar is `step = 1` with `max = durationMs`, and each keyframe is one row of `key` (seek), `time (ms)` (retime in place), `delete` (remove by id), and a dim value label, which replaces the panel-level `move`/`delete` buttons and the row selection they acted on.
 
 Accepted costs: the clip's seconds and the document's milliseconds meet in `compile.ts` and in the app rather than in one unit, so a reader has to know which side of `onScrub` or `buildClip` they are on; a time the author types is silently rounded to the millisecond and clamped instead of being reported; a refused move is a no-op the row's rebuild has to communicate; a keyframe carries an id nothing else uses, which serialization must keep (D9); and an empty track is a state `findTrack`, the widget's interpolation select, and every track walker must tolerate.
 
@@ -881,6 +882,137 @@ Rejected: authoring in seconds with an fps grid (a keyframe time would be a floa
 Affected contracts: `document/timeline.md` (the fields and units, the clamp, the id, every mutator, `maxKeyframeTime`, `setDuration`, the invariants), `animation/compile.md` (the one conversion and `clip.duration`), `ui/timeline.md` (the control set, the row, `setTime`), `app/main.md` (`DEFAULT_DURATION_MS`, `onScrub`, the loop), `ui/panels.md` (`To (s)`), `document/project.md` (the initial `durationMs: 0`), `tests/timeline.md` (frame times in milliseconds), and this file's §9. The seconds-side contracts — `animation/playback.md`, `export/job.md`, `export/encode.md` — are deliberately unchanged: the clip is still seconds, which is what those files, the HUD, and the export state in.
 
 
+### D46. The camera carrier is an independent runtime-only handle on the output camera
+
+**Decided.** `three-runtime/cameraControl.ts` draws the output camera as a body, a frustum frame derived from the vertical FOV and the viewport
+aspect, and a triangle marking which way is up. The drawing's node — not the drawing, which is a scaled child — is what the edit gizmo moves while
+the carrier is selected from the `Camera` group, and a drag, the numeric fields, or `Camera -> View` write `project.camera.transform`, the same
+authored pose the pose writes already cover. The carrier is a handle, never a third camera: `mirror.camera` is still the output camera and the
+viewport camera is still the only other one (D17).
+
+- **Layer 1 and unnamed, like the grid and the overlay.** The whole carrier — the node included, so a child added later cannot escape — is on the
+  decoration layer, so `Picker` cannot hit it and no export frame contains it (D24); the node carries no name, so the mixer's binding walk, which
+  reaches `<ObjectId>` nodes and `camera`, can never bind it (D22). It is never serialized, never a keyframe target, and never a mixer track.
+- **The gizmo drives it, with the mode it already has.** `gizmoNodeNow()` returns the carrier's node first while `cameraControlSelected` is set and
+  the active object's node otherwise, so the handles are on exactly one node at a time; `syncGizmo` pivots at `CAMERA_CONTROL_PIVOT` — the carrier's
+  own origin, the camera position, because a camera has no content to center on — for the carrier and at the content center (D37) for an object; and
+  `gizmoMode` stays the app's one toggle for both. `onGizmoChange` decomposes the reported matrix straight into the carrier node while it is selected
+  (the carrier *is* the node the gizmo derives from), and `onGizmoCommit` writes the matrix with `applyCameraMatrix`, which decomposes it into
+  `project.camera.transform` and copies the pose onto `mirror.camera` — the instance the locked view and the export render through, which
+  `SceneMirror.sync` never touches (D17).
+- **`Camera -> View` authors, `View -> Camera` only moves the view.** `cameraToView` copies the viewport camera's pose into the document, mirror
+  camera included, and selects the carrier, because aiming it is what the user came for; `viewToCamera` calls `controls.setViewFrom` and writes
+  nothing, which is what makes it a safe way to look at what a render would frame.
+- **The numeric grid writes the whole pose.** The seven fields plus `FOV (deg)` are one state, so a write sends all of them; the app refuses a
+  non-finite component or a zero-length quaternion and re-seeds the fields (a zero quaternion is not a rotation, so it is refused rather than
+  normalized into one), and the FOV goes through `setCameraFov`, which owns the clamp and the projection refresh.
+- **The pose lives on the node and the size on the helper.** The gizmo derives its drag from the node's own matrix, so a scale on that matrix would be
+  folded into every pose it reports; the drawing is therefore a child with a size of its own, fixed at one world unit per helper unit
+  (`CARRIER_SCALE = 1`, so the carrier is one lattice cell across at its near frame). **Revised**: the frame loop used to rescale it from the distance to
+  the drawing camera, which held its *screen* size constant and therefore grew the wireframe in world terms without bound as the view pulled back — the
+  reported defect. The clipped `viewingDistance` stays, for the path's marker rings, which do want a screen-constant size. The drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose`
+  stands back for it, and the carrier is drawn whenever the lock is off — in the idle grey until it is selected, and in the accent colour while
+  the gizmo drives it (**revised**: it used to be drawn only while it was selected, which lost the output camera from the viewport the moment the
+  gizmo went back to an object, though the carrier is the only thing that shows where that camera is), because a camera cannot see itself.
+- **The rail keeps its classification.** Everything *about the camera* — the lock that points the viewport at it, the carrier that aims it, and its
+  projection — is in the `Camera` group; the keyframes stay in the timeline bar, which is animation (D44).
+
+Accepted costs: `View -> Camera` leaves the viewport on the carrier, and `TransformControls` sizes its handles by the distance to the drawing camera,
+so the gizmo degenerates there even though the drawing itself stays visible on the floor; the flow is to orbit away — a middle-drag moves the viewport
+off the carrier while the carrier stays where it was — after which the handles are grabbable again. Sizing them the way the object gizmo already does
+was chosen over a carrier special case. The carrier is one more piece of viewport decoration with its own geometries and materials to release, and its
+selection is app state (`cameraControlSelected`, `gizmoMode`) with no home in the panel beyond the buttons that read it. Its fields author the camera
+whether or not it is selected, and the pose now has four writers — the lock's orbit copy, `applyCameraMatrix`, `setCameraPose`, and `cameraToView` —
+where it had one, so the `playback.playing` guard that path carries has to be checked against the other three rather than assumed. **Revised (D48)**:
+navigation is a fifth writer, and the only one outside the app's control — `OrbitControls.update()` ends with `object.lookAt(target)` — so the lock hands
+it the output camera only while the author can aim it: a run gives navigation the viewport camera instead, and the lock takes the output camera back
+when the run pauses. Without that, every frame re-aimed the clip's camera at the editor's orbit pivot, and a camera animation was never seen.
+
+Rejected: **aiming the camera with the lock alone** (the lock makes the viewport *be* the output camera, so the shot could only be aimed by looking
+through it and the editor would have no third-person view of what it frames); **a second real camera** (a third camera needs its own document node, its
+own export and mixer path, and a second projection to keep in step, and D17 fixes exactly two at runtime); **picking the carrier with the pointer** (a
+pick layer and a hit test for a decoration, plus a mode question with the edit tools — the `Camera` group's `Select` button is the way in and costs the
+picker nothing); **a fixed world size** (an authored scene can be metres or kilometres across, D40, D41, so a fixed drawing reads as a dot in one scene
+and fills the view in another — **taken up again, see this decision's revision**: the app's scenes are voxelized onto the lattice where one unit is one
+cell, so a fixed size is the right read, and it is the screen-constant rule chosen here instead that grew the carrier without bound); **screen-constant sizing** (it would need the drawing camera's projection here and would still not fix the handles,
+which `TransformControls` sizes from the distance).
+
+Affected contracts: `three-runtime/cameraControl.md` (new), `three-runtime/controls.md` (`setViewFrom`), `ui/panels.md` (the two types, the
+`cameraControl` source and its gating, the actions, the `Camera` group), `app/main.md` (the carrier, the flags, the gizmo branch, the four commands,
+the frame loop, the teardown), `tests/cameraControl.md` (new), and this file's §9.
+
+
+**Revision: the camera lock is removed.** The lock did two things at once — it made the viewport *be* the output camera, and it handed that camera
+to `OrbitControls` to aim — and the second was what broke camera animation: `OrbitControls.update()` ends with `object.lookAt(target)`, so it re-derived
+the camera's offset from its current position (a position track survived) and then re-aimed it at the editor's orbit pivot (a rotation track did not).
+Measured with the lock on and a two-key rotation track: 0.09 % of the viewport changed over the keyed span, against 30.57 % for a position track on the
+same keys and 0.0 % for a paused frame; with the lock off the carrier — which reads the output camera — did turn, so the clip and the mixer were never at
+fault. The arrangement is gone rather than patched: navigation only ever flies the editor camera, and the output camera is written by the clip, the
+numeric pose fields, a carrier drag, and `Camera -> View` alone (README D48). Aiming a shot is `Camera -> View` to adopt the editor's view and
+`View -> Camera` to go back and judge it; nothing renders the viewport through the output camera any more, and the export never did anything else.
+
+### D47. The camera path is a runtime-only drawing of the authored camera track
+
+**Decided.** `three-runtime/cameraPath.ts` draws the authored camera's trajectory in the viewport as a white polyline through the sampled curve plus
+one hollow ring per authored position keyframe, and `animation/trajectory.ts` produces the two point lists it is handed — the sampled path and the
+marker points. The drawing is presentation only: it is never serialized, never a keyframe target, never pickable, and no export frame contains it. It
+is shown only from two camera position keyframes up, and it is hidden with the carrier while the viewport already is the output camera (D46).
+
+- **Three does the interpolation; the sampler only picks the times (D2).** `sampleCameraTrajectory` compiles the timeline with `buildClip` and runs
+  the camera's one position track through a scratch `AnimationMixer`, sampling `segments + 1` evenly spaced times from the clip's start to its length
+  inclusive. The curve between keyframes is therefore the compiled track's own — discrete, linear, or the smooth spline — and no easing or keyframe
+  arithmetic is reimplemented.
+- **One track in the sampling clip, and the D22 binding shape.** The sampling clip carries only the camera position track, so the mixer never looks
+  for a node named after an `ObjectId`; the track's target is a scratch child named `camera` under an unnamed root, which is exactly the binding
+  `compile.ts` writes and `playback.ts` resolves (D22). The action is `LoopOnce` with `clampWhenFinished`, because a repeating action folds the sample
+  taken at the clip's length back onto the first keyframe, and the drawn path has to reach the last one.
+- **One ring per keyframe, drawn in world space.** `cameraKeyframePositions` reads the authored track directly, so a ring marks a keyframe rather than
+  a sample of the curve between two of them. The rings are billboards — three has no billboard mode on a mesh — so `faceCamera` copies the drawing
+  camera's quaternion onto each one per frame, and `setScreenScale` sizes each **mesh** from the viewing distance, the same floored distance the
+  carrier uses. Scaling the marker group instead would scale the markers' world positions with their size, and the rings would drift off the path they
+  belong to.
+- **Layer 1 and unnamed (D24, D22).** The whole subtree — the root included, so a child added later cannot escape — is on the decoration layer, and
+  nothing in it is named, so the picker, the export camera, and the mixer's binding walk all miss it.
+- **Two keyframes or nothing.** Fewer than two camera position keyframes is not a path, so the `Camera` group's `Show camera path` checkbox is
+  disabled and unchecked then, and `refreshCameraPath` clears the app's `cameraPathVisible` flag; the drawing appears only from two up. The box is a
+  view of that flag, seeded as `pathAvailable && pathVisible`, and ticking it writes nothing but the flag.
+- **The bar cannot eat the viewport.** The timeline's keyframe list is capped at `100px` and scrolls, so a track of many keyframes leaves the bar a
+  fixed height instead of pushing the viewport off screen; going from a few keyframes to many changes nothing above the list.
+
+Accepted costs: one quaternion copy per visible marker per frame — the price of a billboard without a built-in mode — and the app makes that call
+every frame rather than only on change; a scratch `AnimationMixer` and a fresh sampler clip are built on every redraw, at 128 segments by default, so
+an edit that changes the trajectory pays for a compile plus a mixer that is discarded immediately; and the capped keyframe list scrolls, so a long
+track shows only the rows its height holds.
+
+Rejected: **a second interpolation implementation** (sampling the keyframes in the sampler would duplicate the compiled track's step/linear/smooth
+semantics and could disagree with playback and export, which is what D2 forbids); **sizing the markers through their group** (a scale on the group
+scales the markers' positions with their size, so the rings would move off the path); **an uncapped keyframe list** (it grows the bar with every
+keyframe and eats the viewport the bar sits under); **drawing the path for a single keyframe** (one point is not a trajectory, and the box's disabled
+state is also where the app says how a path comes to exist).
+
+Affected contracts: `animation/trajectory.md` (new), `three-runtime/cameraPath.md` (new), `tests/trajectory.md` and `tests/cameraPath.md` (new),
+`ui/timeline.md` (the capped, scrolling keyframe list), `ui/panels.md` (the two view fields, the action, the `Show camera path` box, its seeding and
+gating), `app/main.md` (the drawing, `AppContext.cameraPath`, `cameraPathVisible`, `refreshCameraPath` and its callers, the toggle, the frame-loop
+scale and billboard calls, the teardown), and this file's §9.
+
+
+### D48. A run of the clip moves the editor camera, and a pause hands the frame back
+
+**Decided.** The transport is the app's, not the widget's: the timeline's toggle reports the press through `onTransport` and `app/main.ts` decides what
+happens. A run is reversible — `startPlayback` captures the viewport's position, quaternion and orbit target, and the playhead, before anything moves;
+`pausePlayback` stops the transport and hands the editor camera the pose the clip stopped at, so the frame can be judged and flown on from there; and
+`finishPlayback` ends a non-looping run at its last frame by stopping the transport, putting the playhead back at the value the run started from, and
+restoring the saved view exactly. `playback.playing` is what makes the transport state readable from the app and what refuses writes that would drift
+authored data. The `Follow camera` option and the camera lock are **removed** (see D46's revision), so a run never renders through the output camera and
+never needs one: what the clip does to the output camera is visible in the carrier, and the export samples the clip for its own frames (README D17).
+
+- **Nothing is authored by a run.** Handing the view over and restoring it both go through `controls.setViewFrom`, which touches no document, so a run
+  can move the editor camera and put it back without writing `project.camera`.
+- **The clip owns the output camera's pose.** The export renders `mirror.camera` frame by frame at the clip's times, and nothing in the viewport writes
+  that camera, so a camera track (position and orientation alike) reaches the exported frames and cannot be fought over by navigation.
+
+Affected contracts: `animation/playback.md`, `app/main.md` (the flags, the four functions, the frame loop), `three-runtime/controls.md` (navigation
+never leaves the viewport camera), `ui/panels.md`, and this file's section 9.
 ## 9. Demo slice
 
 The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
@@ -902,7 +1034,12 @@ deferred is deferred deliberately, not forgotten.
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
 - Timeline: a whole-millisecond duration and frame rate, keyframes on object transforms and on the output camera
   addressed by session id, step/linear/smooth interpolation, one Play/Pause toggle, loop, and scrub (D45). The bar
-  starts collapsed and is summoned from the rail's `Animation` button (D44).
+  starts collapsed and is summoned from the rail's `Animation` button (D44), and the output camera these keyframes record is
+  aimed from third person through its carrier in the `Camera` group (D46), and the camera's authored trajectory is drawn back into the
+  viewport as a white polyline with one hollow ring per keyframe, shown from two keyframes up (D47). A run of the clip takes the viewport with it by
+  default — the transport is the app's, so a pause hands the frame over and a non-looping run's end stops the transport and puts the run's start view and
+  playhead back exactly — while the run leaves the
+  editor camera alone for a run and shows the carrier moving along the clip instead (D48).
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range,
   with cancel; a failure reaches the console (D38).
 

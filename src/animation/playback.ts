@@ -23,7 +23,7 @@ export class Playback {
   private clip: AnimationClip | null = null;
   private action: AnimationAction | null = null;
   private objects: Map<ObjectId, Object3D> = new Map();
-  private loop = false;
+  private looping = false;
   /** Whether the transport is running; the public face of it is the `playing` accessor. */
   private running = false;
 
@@ -104,7 +104,7 @@ export class Playback {
   }
 
   setLoop(loop: boolean): void {
-    this.loop = loop;
+    this.looping = loop;
     this.applyLoop();
   }
 
@@ -129,6 +129,15 @@ export class Playback {
    */
   get playing(): boolean {
     return this.running;
+  }
+
+  /**
+   * Whether the clip repeats. The transport's own setting rather than the clip's, and read by the app to tell a
+   * clip that reached its end from one that wrapped: a run of a non-looping clip is over at the last frame, which
+   * is where the app hands the view back and stops the transport (README D48).
+   */
+  get loop(): boolean {
+    return this.looping;
   }
 
   get duration(): number {
@@ -171,7 +180,7 @@ export class Playback {
 
   private applyLoop(): void {
     if (this.action === null) return;
-    this.action.setLoop(this.loop ? LoopRepeat : LoopOnce, this.loop ? Infinity : 1);
-    this.action.clampWhenFinished = !this.loop;
+    this.action.setLoop(this.looping ? LoopRepeat : LoopOnce, this.looping ? Infinity : 1);
+    this.action.clampWhenFinished = !this.looping;
   }
 }

@@ -24,6 +24,25 @@ import type { ObjectId, Project, SceneObject } from '../document/project.js';
 import type { ActiveTool, EditResolution, EditorSession, SelectionShape } from '../editor/session.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 
+/** One authored camera pose: the carrier's fields, and the value a numeric field writes back (README D46). */
+export type CameraPose = {
+  position: [number, number, number];
+  quaternion: [number, number, number, number];
+  fov: number;
+};
+
+/** What the carrier's controls read: whether it is selected, the gizmo's mode, and the authored pose. */
+export type CameraControlView = {
+  selected: boolean;
+  mode: 'translate' | 'rotate';
+  pose: CameraPose;
+  /** Whether a run of the clip is on, so the fields that would disturb it can wait. */
+  playing: boolean;
+  /** Whether the camera path is drawn, and whether the track holds a path at all (two keyframes or more). */
+  pathVisible: boolean;
+  pathAvailable: boolean;
+};
+
 export type PanelContext = {
   project: Project;
   session: EditorSession;
@@ -44,6 +63,12 @@ export type PanelContext = {
    * window either way (README D44).
    */
   timelineVisible?: () => boolean;
+  /**
+   * The camera carrier's state, if the app has one. When present the `Camera` group's carrier controls are a view of
+   * it — `refresh()` seeds the pose fields and the two label swaps from it — and it is what gates them: a context
+   * without a carrier has nothing for them to aim (README D46).
+   */
+  cameraControl?: () => CameraControlView;
   actions: {
     pickImportFile(): void;
     exportMp4(options: {
@@ -68,8 +93,13 @@ export type PanelContext = {
     setTimelineVisible(visible: boolean): void;
     renameActive(name: string): void;
     reparentActive(parentId: ObjectId | null): void;
-    setCameraLock(enabled: boolean): void;
     setCameraFov(fov: number): void;
+    setCameraPose(pose: CameraPose): void;
+    toggleCameraControl(): void;
+    toggleGizmoMode(): void;
+    cameraToView(): void;
+    viewToCamera(): void;
+    setCameraPathVisible(visible: boolean): void;
   };
 };
 
@@ -163,8 +193,14 @@ export class Panels {
   /** The rail's `Animation` button: it opens no window, it toggles the timeline bar (README D44). */
   private readonly animationButton: HTMLButtonElement;
   private readonly sourceVisibleInput: HTMLInputElement;
-  private readonly cameraLockInput: HTMLInputElement;
   private readonly cameraFovInput: HTMLInputElement;
+  /** The carrier's numeric grid, in label order: X, Y, Z, QX, QY, QZ, QW (README D46). */
+  private readonly cameraPoseInputs: HTMLInputElement[];
+  private readonly cameraSelectButton: HTMLButtonElement;
+  private readonly cameraModeButton: HTMLButtonElement;
+  private readonly cameraToViewButton: HTMLButtonElement;
+  private readonly viewToCameraButton: HTMLButtonElement;
+  private readonly cameraPathInput: HTMLInputElement;
   private readonly exportResolutionSelect: HTMLSelectElement;
   private readonly exportFpsInput: HTMLInputElement;
   private readonly exportFromInput: HTMLInputElement;
@@ -255,11 +291,6 @@ export class Panels {
       on: { input: () => this.writeAddHeight() },
     });
 
-    // Camera: hand navigation to the output camera, so the viewport frames what an export captures.
-    this.cameraLockInput = el('input', {
-      type: 'checkbox',
-      on: { change: () => context.actions.setCameraLock(this.cameraLockInput.checked) },
-    });
     // The authored vertical FOV of the output camera; a cleared field parses to NaN and the app
     // refuses it, so the project keeps the last valid value.
     this.cameraFovInput = el('input', {
@@ -430,9 +461,50 @@ export class Panels {
       ],
       () => context.session.setMode('edit'),
     );
+    // Everything that is *about the camera* lives here — the lock that points the viewport at it, the carrier that
+    // aims it, and its projection — while the timeline bar keeps the keyframes, which are animation (README D46).
+    this.cameraSelectButton = el('button', { on: { click: () => context.actions.toggleCameraControl() } });
+    this.cameraModeButton = el('button', {
+      title: 'switch the gizmo between moving and rotating the carrier',
+      on: { click: () => context.actions.toggleGizmoMode() },
+    });
+    this.cameraToViewButton = el('button', {
+      text: 'Camera -> View',
+      title: 'aim the output camera at what the viewport shows',
+      on: { click: () => context.actions.cameraToView() },
+    });
+    this.viewToCameraButton = el('button', {
+      text: 'View -> Camera',
+      title: 'move the viewport to the output camera',
+      on: { click: () => context.actions.viewToCamera() },
+    });
+    this.cameraPathInput = el('input', {
+      type: 'checkbox',
+      on: { change: () => context.actions.setCameraPathVisible(this.cameraPathInput.checked) },
+    });
+    this.cameraPoseInputs = ['X', 'Y', 'Z', 'QX', 'QY', 'QZ', 'QW'].map((label) =>
+      el('input', {
+        type: 'number',
+        step: '0.001',
+        title: `${label} of the output camera`,
+        on: { change: () => this.writeCameraPose() },
+      }),
+    );
     group('Camera', [
-      this.field('Camera lock (output)', this.cameraLockInput),
-      el('div', { class: 'dim', text: 'navigation then drives the output camera' }),
+      el('div', { class: 'row' }, [this.cameraSelectButton, this.cameraModeButton]),
+      el('div', { class: 'row' }, [this.cameraToViewButton, this.viewToCameraButton]),
+      this.field('Show camera path', this.cameraPathInput),
+      el('div', { class: 'row' }, [
+        this.field('X', this.cameraPoseInputs[0]!),
+        this.field('Y', this.cameraPoseInputs[1]!),
+        this.field('Z', this.cameraPoseInputs[2]!),
+      ]),
+      el('div', { class: 'row' }, [
+        this.field('QX', this.cameraPoseInputs[3]!),
+        this.field('QY', this.cameraPoseInputs[4]!),
+        this.field('QZ', this.cameraPoseInputs[5]!),
+        this.field('QW', this.cameraPoseInputs[6]!),
+      ]),
       this.field('FOV (deg)', this.cameraFovInput),
     ]);
     group('Render', [
@@ -507,6 +579,27 @@ export class Panels {
       if (!this.touched.gridMargin) this.gridMarginInput.value = String(settings.margin);
     }
 
+    const cameraControl = this.context.cameraControl?.();
+    if (cameraControl !== undefined) {
+      this.cameraSelectButton.textContent = cameraControl.selected ? 'Deselect' : 'Select';
+      this.cameraModeButton.textContent = cameraControl.mode === 'rotate' ? '-> Move' : '-> Rotate';
+      // A path needs two keyframes to exist at all, so below that the box is unchecked as well as disabled.
+      this.cameraPathInput.disabled = !cameraControl.pathAvailable;
+      this.cameraPathInput.checked = cameraControl.pathAvailable && cameraControl.pathVisible;
+      const authored = [...cameraControl.pose.position, ...cameraControl.pose.quaternion, cameraControl.pose.fov];
+      this.cameraPoseInputs.forEach((input, index) => {
+        // Seeded like the other view fields, except while it is the field being typed into.
+        if (document.activeElement !== input) input.value = fmt(authored[index] ?? 0, 4);
+      });
+    }
+    // The carrier's own controls need a carrier: a context without one has nothing for them to aim, and a
+    // rotation mode with no carrier selected has nothing to rotate.
+    const carrierGated = cameraControl === undefined;
+    this.cameraSelectButton.disabled = carrierGated;
+    this.cameraModeButton.disabled = carrierGated || !cameraControl?.selected;
+    this.cameraToViewButton.disabled = carrierGated;
+    this.viewToCameraButton.disabled = carrierGated;
+
     const timelineVisible = this.context.timelineVisible;
     this.animationButton.disabled = timelineVisible === undefined;
     if (timelineVisible !== undefined) this.animationButton.classList.toggle('on', timelineVisible());
@@ -551,6 +644,24 @@ export class Panels {
       if (!this.touched.objectName) this.nameInput.value = active.name;
     }
     this.renderParentSelect(active);
+  }
+
+  /**
+   * Sends the whole pose, because the fields are one state and a change to any component is a change to it. A
+   * non-finite component is refused and the fields are re-read from what the camera actually holds.
+   */
+  private writeCameraPose(): void {
+    const [x, y, z, qx, qy, qz, qw] = this.cameraPoseInputs.map((input) => Number(input.value));
+    const fov = Number(this.cameraFovInput.value);
+    if ([x, y, z, qx, qy, qz, qw, fov].some((value) => value === undefined || !Number.isFinite(value))) {
+      this.refresh();
+      return;
+    }
+    this.context.actions.setCameraPose({
+      position: [x!, y!, z!],
+      quaternion: [qx!, qy!, qz!, qw!],
+      fov,
+    });
   }
 
   private field(label: string, control: HTMLElement): HTMLLabelElement {

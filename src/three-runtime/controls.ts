@@ -9,9 +9,8 @@
  * tool, and the gizmo reports a drag and its commit separately so one gesture writes the document
  * exactly once.
  *
- * Navigation follows the viewport camera by default; `setOrbitTarget` hands it to another camera
- * (the output camera, while the app's camera lock is on) and `onOrbitChange` reports every camera
- * move navigation caused, which is how the app learns where the user aimed the output camera.
+ * Navigation follows the viewport camera alone, and `onOrbitChange` reports every camera move it caused — which is
+ * how a caller can follow the editor's own view.
  */
 
 import * as THREE from 'three';
@@ -186,21 +185,24 @@ export class ViewportControls {
   }
 
   /**
-   * Hands navigation to another camera, so the composition root can point it at the output camera
-   * while the camera lock is on. The orbit pivot stays where it is, except when the new camera sits
-   * on it: a zero orbit radius can neither rotate nor dolly, and the output camera starts at the
-   * pivot, so the pivot then moves to the point that camera already looks at, at the distance the
-   * previous camera orbited from. That changes neither position nor orientation — `update()` rebuilds
-   * the same offset and looks at a point straight ahead — and it leaves the user able to aim the
-   * output camera.
+   * Points the viewport at a pose, which is what `View -> Camera` means: the editor then looks at what the output
+   * camera sees, so the authored shot can be judged against the scene. The orbit pivot goes to the point the pose
+   * looks along, at the distance navigation already orbits from, so the first orbit after the jump behaves like any
+   * other. A viewport is an orbit camera, so a bank the pose carries is not representable and `lookAt` drops it.
    */
-  setOrbitTarget(camera: THREE.PerspectiveCamera): void {
+  setViewFrom(position: THREE.Vector3, quaternion: THREE.Quaternion, target?: THREE.Vector3): void {
     const orbit = this.orbit;
-    const radius = orbit.object.position.distanceTo(orbit.target);
-    orbit.object = camera;
-    if (radius > MIN_ORBIT_RADIUS && camera.position.distanceTo(orbit.target) <= MIN_ORBIT_RADIUS) {
-      orbit.target.copy(camera.position).addScaledVector(camera.getWorldDirection(_viewDirection), radius);
+    const radius = Math.max(orbit.object.position.distanceTo(orbit.target), MIN_ORBIT_RADIUS);
+    orbit.object.position.copy(position);
+    orbit.object.quaternion.copy(quaternion);
+    if (target !== undefined) {
+      // Restoring a view means restoring exactly where it was aimed, not a point straight ahead of it.
+      orbit.target.copy(target);
+    } else {
+      _viewDirection.set(0, 0, -1).applyQuaternion(quaternion);
+      orbit.target.copy(position).addScaledVector(_viewDirection, radius);
     }
+    orbit.object.lookAt(orbit.target);
     orbit.update();
   }
 
