@@ -11,13 +11,16 @@ at all.
 
 The panel is an overlay on the canvas, not a reserved column: it is anchored to the top-left of the window at
 `width: 112px` and takes no space from the viewport, which keeps the whole window width. It is a rail of group
-buttons — `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`, in that order, full width, and nothing else — and
-behind each button that group's controls in a floating window (`./floatingWindow.ts`): no group is expanded
+buttons — `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`, in that order, full width — with the `Animation`
+toggle at its foot, and behind each group button that group's controls in a floating window
+(`./floatingWindow.ts`): no group is expanded
 until its button is pressed, several windows can be open at once, each is moved by dragging its title bar, and
 each is closed by its `×` or by its button again. A button carries the existing `on` class for exactly as long
-as its window is open, and `Edit` is the one button that does more than open its window: it also selects the edit mode
+as its window is open, and two buttons do more than open a window: `Edit` also selects the edit mode
 its tools belong to (README D39), and it is disabled while no object is active, because that mode edits one object's
-voxels and there is nothing to edit until one is chosen. The rail is the whole overlay: the panel keeps no other row, and it has no message area of its
+voxels and there is nothing to edit until one is chosen; and `Animation` opens no window at all — it shows and hides
+the timeline bar along the bottom of the page, and carries `on` while that bar is on screen (README D44). The rail is
+the whole overlay: the panel keeps no other row, and it has no message area of its
 own — a job's progress and an operation's failure are not its business (README D38).
 
 ## Public interface
@@ -26,6 +29,7 @@ type PanelContext = {
   project: Project; session: EditorSession;
   sceneVisible?(): boolean;    // the app's raw-mesh override; absent => forward-only checkbox
   gridSettings?(): { base: boolean; object: boolean; margin: number };  // the viewport's own grid display; absent => forward-only controls
+  timelineVisible?(): boolean;   // the app's timeline-bar flag; absent => the rail's `Animation` button is disabled
   actions: {
     pickImportFile(): void;      // opens the file dialog from app/files.ts; ui never imports app
     exportMp4(options: { width: number; height: number; fps: number; from: number; to: number;
@@ -41,6 +45,7 @@ type PanelContext = {
     setBaseGridVisible(visible: boolean): void;     // shows or hides the world grid's base layer
     setObjectGridVisible(visible: boolean): void;   // shows or hides the active object's lattice
     setGridMargin(cells: number): void;             // cells of lattice drawn around the active object
+    setTimelineVisible(visible: boolean): void;     // shows or hides the timeline bar; the app owns the flag
     renameActive(name: string): void;           // renames the active object; the app trims and refuses ''
     reparentActive(parentId: ObjectId | null): void;
     setCameraLock(enabled: boolean): void;   // hands viewport navigation to the output camera
@@ -80,8 +85,15 @@ class Panels {
    and `8 + 28 · index` px top, one step per group, so two windows opened at once never sit exactly on top of each other; it
    is moved by its title bar, closed by its `×`, and its `onVisibilityChange` puts the `on` class on its button for exactly
    as long as the window is open. The rail and the six windows go into `root`, and nothing else: `index.html` gives the rail
-   `order: -1`, so it is the overlay's first row whatever order the nodes arrived in. The panel appends nothing else to the
-   element it is handed, and since D38 there is nothing else to append. It ends with `refresh()`, and its listeners come from
+   `order: -1`, so it is the overlay's first row whatever order the nodes arrived in. One more button follows the six groups, `Animation`: the
+   rail's one entry that opens no window, since the timeline is a bar along the bottom of the page rather than a group. It is built without an
+   `index` — which is why adding it left the six group windows at the staggered positions they had — and its click is a plain toggle over the app's
+   flag: it reads `context.timelineVisible()`, hands the opposite to `setTimelineVisible(visible)`, and puts its own `on` class in step, because no
+   window's visibility can mark it. The panel appends nothing else to the element it is handed, and since D38 there is nothing else to append;
+   `index.html`'s `#viewport { min-height: 0 }` is what keeps the canvas' row from flooring the column — a canvas carries an intrinsic size taken
+   from its drawing-buffer attributes, and a grid item's automatic minimum would size that row with it, pushing the `auto` timeline row below past
+   the bottom of the `100vh` column, where `body { overflow: hidden }` clipped it away, which is what hid the bar from the user (README D44). It
+   ends with `refresh()`, and its listeners come from
    `on` and live for the page lifetime — there is no `dispose`.
 3. The `Scene` group is the one group whose window holds a divider: `el('hr')` between the object list and the
    active object's fields, which the stylesheet draws as a `--line` rule across the body. Nothing else in the panel
@@ -131,13 +143,18 @@ class Panels {
    same kind of view of the viewport's own settings: when the app exposes that function `refresh()` writes `settings.base` and
    `settings.object` into the two checkboxes and `settings.margin` into the number field — the margin only while `touched.gridMargin` is
    unset, because its `change` event is what commits it — and with no such function the three controls are plain forward-only controls that
-   `refresh()` leaves alone. Either way the panel holds no grid flag and no margin of its own: `refresh()` only reads them back from the app.
+   `refresh()` leaves alone. Either way the panel holds no grid flag and no margin of its own: `refresh()` only reads them back from the app. The
+   rail's `Animation` button is seeded the same way through `context.timelineVisible()`: with that function `refresh()` writes the answer into the
+   button's `on` class and the click hands the opposite back through `setTimelineVisible(visible)`, so the bar's flag stays the app's; with no such
+   function the button is `disabled`, since a toggle with no flag behind it could not show anything (README D44).
 10. Export: the export button reads the resolution select (`960x540`, `1280x720`, `1920x1080`; the middle one is selected by default), the fps input,
    the `from` and `to` inputs, and the mode select (`beauty | mask`, where `mask` is the per-object identity-color render), and calls
    `actions.exportMp4(options)` with width and height rounded to even numbers, because H.264 and AV1 reject odd dimensions in some players and every
    encoder configuration is cleaner with them. The panel builds no `ExportRequest`: it forwards the numbers it displays. The fps, `from`, and `to`
-   inputs are seeded on every `refresh()` — from `project.timeline.fps`, `0`, and `project.timeline.duration` — but only while untouched, each carrying
-   its own flag set by its `input` event, so a re-render never overwrites a range the user typed.
+   inputs are seeded on every `refresh()` — from `project.timeline.fps`, `0`, and `project.timeline.durationMs / 1000` — but only while untouched, each carrying
+   its own flag set by its `input` event, so a re-render never overwrites a range the user typed. The division is the one place this panel meets the
+   unit boundary: the export range is seconds, because the export job and the compiled clip are, while the clip is authored in milliseconds
+   (README D45), and the field's label `To (s)` says which of the two it shows.
 
 ## Invariants
 - The panel calls no `Project` mutator and no `editor/ops.ts` operation: after any interaction the project is exactly what the app left it; its only
@@ -179,13 +196,17 @@ class Panels {
   coarsening is not offered. It is not a voxelize setting: it raises the level of a payload that already exists and never rescales a
   model.
 - After `refresh()` the displayed active object, tool, representation, resolution, subdivision, colors, parent, name, visibility, and object tree match the current
-  `project`/`session` values, and an untouched `FOV (deg)` field shows `project.camera.fov`.
+  `project`/`session` values, and an untouched `FOV (deg)` field shows `project.camera.fov` while an untouched `To (s)` field shows the clip
+  length in the clip's seconds, `project.timeline.durationMs / 1000` (README D45).
 - The panel holds no state beyond its DOM nodes, the per-input touched flags, and the id of the object whose name the `Name` field currently shows.
-- The rail holds one button per group and nothing else — no heading, no control, no status text — and every group's content lives in its window's
-  body alone: nothing is duplicated in the rail, and no second copy of a control exists anywhere.
+- The rail holds one button per group plus the `Animation` toggle and nothing else — no heading, no control, no status text — and every group's
+  content lives in its window's body alone: nothing is duplicated in the rail, and no second copy of a control exists anywhere.
 - The rail's `Edit` button is a view of two pieces of session state, not a third place that stores any: its `disabled` flag follows
   `session.activeObjectId`, and pressing it writes `session.mode = 'edit'` rather than a panel field. It never switches back — the mode bar
   owns that (README D39) — so pressing it while edit mode is already selected only opens or closes its window.
+- The rail's `Animation` button opens no window and owns no state either: `refresh()` writes its `on` class from `context.timelineVisible()` and
+  disables it when the context exposes no such function, and its click hands the opposite of that answer to `setTimelineVisible(visible)`. The
+  panel never shows or hides the bar itself — the bar is the app's, and this button is only the toggle over its flag (README D44).
 - A window's controls are the panel's controls wherever the window is: `refresh()` reaches them through the same fields whether or not the window
   is open, and closing a window hides it (`hidden`) without clearing, re-creating, or re-parenting anything, so a reopened window shows the state
   the project and session hold and whatever the user had typed is still there.
@@ -217,7 +238,7 @@ field is forwarded the same way — trimming it and refusing an empty name belon
 field re-seeds from the project.
 
 ## Dependencies
-- `./dom.js` — `el`, `on` for construction and listener registration.
+- `./dom.js` — `el`, `fmt` for construction and the row's cell counts.
 - `./floatingWindow.js` — `FloatingWindow`, the one widget each group's controls are placed in; the panel supplies the title, the staggered
   start position, the `onVisibilityChange` that marks the rail button, and the body's content, and never touches the window's position or
   visibility itself.
@@ -231,7 +252,9 @@ field re-seeds from the project.
   `editor/ops.ts`, `three-runtime/controls.ts`, `three-runtime/scene.ts`, and the project camera; this file imports neither `editor/ops.js` nor anything from `app/`. No
   outer-ring import and no Three.js use. `sceneVisible` is a plain callback, so exposing it costs the app one closure and gives
   the panel no import it did not already have; the `Grid` group's display settings and their three actions arrive the same way — a `gridSettings`
-  closure and three callbacks over the viewport's grid — so they too cost the panel no import; the settings themselves are the dialog's, not the
+  closure and three callbacks over the viewport's grid — so they too cost the panel no import; the timeline bar's flag and its toggle arrive the
+  same way, a `timelineVisible` closure and `setTimelineVisible`, so the rail's `Animation` button costs the panel no import either (README D44);
+  the settings themselves are the dialog's, not the
   panel's, which is why neither `defaults` nor a voxelize target crosses this boundary any more, and why the panel holds no voxelize-related member at all.
 
 ## Tests
@@ -243,13 +266,16 @@ from the list while the HUD stops naming it, reparent an object, tick `Camera lo
 view and the export follow it, tick and untick `Show raw meshes` against the raw meshes of an imported object and confirm they appear over and
 disappear behind the voxels — in the same place — without changing what an export renders.
 
-The rail and window walk is the same run: the overlay must show exactly the six buttons `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid` and no
+The rail and window walk is the same run: the overlay must show exactly the six group buttons `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`
+plus the `Animation` toggle, and no
 group control at all until one is pressed; with nothing selected `Edit` must be disabled and unpressable, and pressing it with an object selected must open one window
 titled `Edit` holding that group's controls, mark the button `on`, and put the session in edit mode — the viewport mode switch must
 follow, and the gizmo must be gone; dragging the window's title bar must move it and leave it under the pointer; `×` must close it and clear the button; opening `Edit` and
 `Scene` together must show two windows at different positions, and pressing one must put it above the other; pressing `Grid` must open a window holding `Base grid`,
 `Object grid`, and `Margin (cells)`, and unticking `Base grid` must take the world grid's plane out of the viewport while committing a smaller margin must
-draw the active object's lattice tighter around it; a drag far past an edge must park
+draw the active object's lattice tighter around it; pressing `Animation` must show the timeline bar along the bottom of the page and mark the button
+`on`, and pressing it again must hide the bar — leaving the keyframes it held intact when it is shown again — with the canvas' box and its drawing
+buffer still in step (README D44); a drag far past an edge must park
 the window against it with its title bar still reachable; a press below the rail must reach the viewport rather than the overlay; a second import
-must still open the voxelize modal over every window with its fields and `Voxelize` working; and the overlay must hold the six buttons and the
-open windows and nothing else — no progress row, no message row, no error line — however many windows are open (D38).
+must still open the voxelize modal over every window with its fields and `Voxelize` working; and the overlay must hold the six group buttons, the
+`Animation` toggle, and the open windows and nothing else — no progress row, no message row, no error line — however many windows are open (D38).

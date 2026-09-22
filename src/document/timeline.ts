@@ -3,14 +3,14 @@ import type { ObjectId } from './project.js';
 export type Interpolation = 'step' | 'linear' | 'smooth';
 export type TrackChannel = 'position' | 'quaternion' | 'scale' | 'fov';
 export type TrackTarget = { kind: 'object'; objectId: ObjectId } | { kind: 'camera' };
-export type Keyframe = { time: number; value: number[] };
+export type Keyframe = { id: string; timeMs: number; value: number[] };
 export type Track = {
   target: TrackTarget;
   channel: TrackChannel;
   interpolation: Interpolation;
   keyframes: Keyframe[];
 };
-export type Timeline = { duration: number; fps: number; tracks: Track[] };
+export type Timeline = { durationMs: number; fps: number; tracks: Track[] };
 
 /**
  * Value width per channel. The only length table in this file; `animation/compile.ts` reports the
@@ -22,6 +22,24 @@ const VALUE_SIZE: Record<TrackChannel, number> = {
   scale: 3,
   fov: 1,
 };
+
+/**
+ * Keyframe identity. Rows in the timeline widget address a keyframe by its id rather than by its place in
+ * the array, so editing one keyframe's time cannot make another row act on the wrong keyframe.
+ */
+let nextKeyframeId = 1;
+
+/**
+ * Clamps a time onto the clip: whole milliseconds inside `[0, durationMs]`. Every entry point funnels through
+ * this, which is what makes a keyframe outside the duration unrepresentable (README D45) — the author's time is
+ * rounded rather than rejected. A non-finite time is a programmer error and throws.
+ */
+function clampTime(timeMs: number, durationMs: number): number {
+  if (!Number.isFinite(timeMs)) {
+    throw new RangeError(`keyframe time must be finite, received ${timeMs}`);
+  }
+  return Math.min(Math.max(Math.round(timeMs), 0), Math.max(0, durationMs));
+}
 
 /**
  * Lookup key for one `(target, channel)` pair. Opaque: callers may compare it but must not parse it,
@@ -64,14 +82,29 @@ export function ensureTrack(
 }
 
 /**
- * Inserts a keyframe in ascending time order, or replaces the value of the keyframe already sitting
- * at `time`. The caller's value array is copied, never aliased.
+ * The latest keyframe time anywhere in the clip, or 0 with no keyframes. The timeline widget reads it as the
+ * floor of the duration field, which is what keeps the duration from cutting the clip short (README D45).
+ */
+export function maxKeyframeTime(timeline: Timeline): number {
+  let latest = 0;
+  for (const track of timeline.tracks) {
+    for (const keyframe of track.keyframes) {
+      if (keyframe.timeMs > latest) latest = keyframe.timeMs;
+    }
+  }
+  return latest;
+}
+
+/**
+ * Inserts a keyframe, or replaces the value of the one already sitting at that time — the id survives a replace,
+ * so a row that was selected or being retimed stays on the same keyframe. The caller's value array is copied,
+ * never aliased, and the time is clamped onto the clip.
  */
 export function addKeyframe(
   timeline: Timeline,
   target: TrackTarget,
   channel: TrackChannel,
-  time: number,
+  timeMs: number,
   value: readonly number[],
 ): { ok: true; keyframe: Keyframe } | { ok: false; error: 'bad-value-length'; detail: string } {
   const valueSize = VALUE_SIZE[channel];
@@ -82,9 +115,7 @@ export function addKeyframe(
       detail: `channel ${channel} takes ${valueSize} numbers, received ${value.length}`,
     };
   }
-  if (!Number.isFinite(time) || time < 0) {
-    throw new RangeError(`keyframe time must be finite and non-negative, received ${time}`);
-  }
+  const time = clampTime(timeMs, timeline.durationMs);
   const numbers = [...value];
   for (const number of numbers) {
     if (!Number.isFinite(number)) {
@@ -92,16 +123,16 @@ export function addKeyframe(
     }
   }
   const track = ensureTrack(timeline, target, channel);
-  const existing = track.keyframes.find((keyframe) => keyframe.time === time);
+  const existing = track.keyframes.find((keyframe) => keyframe.timeMs === time);
   if (existing !== undefined) {
     existing.value = numbers;
     return { ok: true, keyframe: existing };
   }
-  const inserted: Keyframe = { time, value: numbers };
+  const inserted: Keyframe = { id: `keyframe-${nextKeyframeId++}`, timeMs: time, value: numbers };
   let insertAt = track.keyframes.length;
   while (insertAt > 0) {
     const previous = track.keyframes[insertAt - 1];
-    if (previous === undefined || previous.time <= time) break;
+    if (previous === undefined || previous.timeMs <= time) break;
     insertAt -= 1;
   }
   track.keyframes.splice(insertAt, 0, inserted);
@@ -109,51 +140,69 @@ export function addKeyframe(
 }
 
 /**
- * Moving a keyframe onto an occupied time drops the keyframe that sat there (the moved one wins).
- * `false` means the track or the index does not exist and nothing changed.
+ * Moves one keyframe, named by id, onto a clamped time. A move onto a time another keyframe already holds is
+ * refused: `false` means nothing changed, which the widget reports by restoring the field's previous text. The
+ * same reasons make `false` of an unknown id — a stale row after the timeline changed under it.
  */
 export function moveKeyframe(
   timeline: Timeline,
   target: TrackTarget,
   channel: TrackChannel,
-  index: number,
-  time: number,
+  id: string,
+  timeMs: number,
 ): boolean {
-  if (!Number.isFinite(time) || time < 0) {
-    throw new RangeError(`keyframe time must be finite and non-negative, received ${time}`);
-  }
+  const time = clampTime(timeMs, timeline.durationMs);
   const track = findTrack(timeline, target, channel);
   if (track === undefined) return false;
-  const keyframe = track.keyframes[index];
+  const keyframe = track.keyframes.find((entry) => entry.id === id);
   if (keyframe === undefined) return false;
-  keyframe.time = time;
-  for (let i = track.keyframes.length - 1; i >= 0; i -= 1) {
-    const other = track.keyframes[i];
-    if (other !== undefined && other !== keyframe && other.time === time) {
-      track.keyframes.splice(i, 1);
-    }
-  }
+  if (track.keyframes.some((entry) => entry !== keyframe && entry.timeMs === time)) return false;
+  keyframe.timeMs = time;
   // Array.prototype.sort is stable, so keyframes sharing a time keep their relative order.
-  track.keyframes.sort((left, right) => left.time - right.time);
+  track.keyframes.sort((left, right) => left.timeMs - right.timeMs);
   return true;
 }
 
-/** Removing the last keyframe of a track removes the track itself. */
+/**
+ * Removes one keyframe, named by id. The track stays even when it is left empty: a channel that has been keyed
+ * once keeps its interpolation and its slot in the clip, and re-adding a keyframe to it does not disturb the
+ * widget (README D45). The empty track contributes nothing to a compiled clip.
+ */
 export function removeKeyframe(
   timeline: Timeline,
   target: TrackTarget,
   channel: TrackChannel,
-  index: number,
+  id: string,
 ): boolean {
   const track = findTrack(timeline, target, channel);
   if (track === undefined) return false;
-  if (index < 0 || index >= track.keyframes.length) return false;
+  const index = track.keyframes.findIndex((entry) => entry.id === id);
+  if (index < 0) return false;
   track.keyframes.splice(index, 1);
-  if (track.keyframes.length === 0) {
-    const trackIndex = timeline.tracks.indexOf(track);
-    if (trackIndex >= 0) timeline.tracks.splice(trackIndex, 1);
-  }
   return true;
+}
+
+/**
+ * Writes the clip length and drags the clip onto it: every keyframe time is clamped into the new range, and a
+ * clamp that lands two keyframes on the same millisecond keeps the later one (the array is already ordered, so
+ * "later" is the larger authored time). A shorter duration therefore never leaves a keyframe outside the clip.
+ */
+export function setDuration(timeline: Timeline, durationMs: number): void {
+  if (!Number.isFinite(durationMs)) {
+    throw new RangeError(`timeline duration must be finite, received ${durationMs}`);
+  }
+  const duration = Math.max(0, Math.round(durationMs));
+  timeline.durationMs = duration;
+  for (const track of timeline.tracks) {
+    for (const keyframe of track.keyframes) keyframe.timeMs = clampTime(keyframe.timeMs, duration);
+    const kept: Keyframe[] = [];
+    for (const keyframe of track.keyframes) {
+      const last = kept[kept.length - 1];
+      if (last !== undefined && last.timeMs === keyframe.timeMs) kept[kept.length - 1] = keyframe;
+      else kept.push(keyframe);
+    }
+    track.keyframes = kept;
+  }
 }
 
 export function setInterpolation(
@@ -171,7 +220,7 @@ export function setInterpolation(
 /** Stable-sorts every track's keyframes by ascending time, in `timeline.tracks` order. */
 export function sortKeyframes(timeline: Timeline): void {
   for (const track of timeline.tracks) {
-    track.keyframes.sort((left, right) => left.time - right.time);
+    track.keyframes.sort((left, right) => left.timeMs - right.timeMs);
   }
 }
 

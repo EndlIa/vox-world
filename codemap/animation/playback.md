@@ -31,7 +31,8 @@ class Playback {
 6. `play()` sets `running` and clears `action.paused`; `pause()` sets `running = false` and `action.paused = true`, which keeps the action active so scrubbing still samples; `stop()` is `pause()` plus `setTime(0)`. `running` is read back only through `get playing()`, which is therefore false before the first `play()` and after every `pause()` or `stop()`.
 7. `advance(deltaSeconds)` calls `mixer.update(deltaSeconds)` for interactive preview only. It accumulates, so it is not reproducible and the export loop never uses it.
 8. `setLoop(loop)` stores the flag and re-applies the loop mode and `clampWhenFinished` to the current action.
-9. `get time()` returns the action's own playhead (`action ? action.time : 0`), which `LoopRepeat` wraps into `[0, duration)` and `LoopOnce` clamps at the end. `get playing()` reports the transport state, not the mixer's: it says whether `play()` is in effect, and only an explicit `pause()`/`stop()` clears it, so a clip that reached its end while playing still reports `true`. `get duration()` returns `clip ? clip.duration : 0`, i.e. the compiled `timeline.duration`.
+9. `get time()` returns the action's own playhead (`action ? action.time : 0`), which `LoopRepeat` wraps into `[0, duration)` and `LoopOnce` clamps at the end. `get playing()` reports the transport state, not the mixer's: it says whether `play()` is in effect, and only an explicit `pause()`/`stop()` clears it, so a clip that reached its end while playing still reports `true`. `get duration()` returns `clip ? clip.duration : 0`, i.e. the compiled clip's length, which is the authoring
+`timeline.durationMs / 1000` (README D45). This file never sees the authoring unit.
 10. `dispose()` stops all actions, uncaches the mixer root, and drops the clip, action, mixer, and object map. Mirror `Object3D`s, the camera, and the project are left untouched — they outlive playback.
 
 ## Invariants

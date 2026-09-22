@@ -1,18 +1,25 @@
 /**
- * The timeline widget: transport controls, scrub bar, keyframe markers, duration and frame-rate
- * inputs, and add, move, and delete actions against the active object and the output camera. It edits
- * authoring data through the mutators of `document/timeline.ts`, delegates seeking to `onScrub`, and
+ * The timeline widget: transport, scrub bar, keyframe markers, duration and frame-rate inputs, and the
+ * keyframe list with its add, retime, seek, and delete actions against the active object and the output camera.
+ * It edits authoring data through the mutators of `document/timeline.ts`, delegates seeking to `onScrub`, and
  * asks the app to rebuild the clip through `onEdited`; it never touches the mixer.
+ *
+ * Times are whole milliseconds throughout, which is the unit the authoring data is in too (README D45), so the
+ * widget never converts: the panel reads and writes `timeMs` and the clip is the only place that becomes seconds.
+ *
+ * Its host is the bar along the bottom of the page, which starts collapsed: whether the bar is on screen is the
+ * app's flag, and `setVisible` is the view of it, the way `setTime` is the view of the playhead (README D44).
  */
 
 import { el, fmt } from './dom.js';
 import {
   addKeyframe,
   findTrack,
+  maxKeyframeTime,
   moveKeyframe,
   removeKeyframe,
+  setDuration,
   setInterpolation,
-  sortKeyframes,
   type Interpolation,
   type TrackChannel,
   type TrackTarget,
@@ -25,7 +32,8 @@ export type TimelineContext = {
   project: Project;
   playback: Playback;
   session: EditorSession;
-  onScrub(time: number): void;
+  /** Seeks the playhead to an absolute time in milliseconds; the app clamps it onto the clip. */
+  onScrub(timeMs: number): void;
   onEdited(): void;
 };
 
@@ -37,8 +45,11 @@ const MARKER_COLOR = 'var(--accent)';
 
 export class TimelinePanel {
   private readonly context: TimelineContext;
+  private readonly root: HTMLElement;
+  private readonly playToggle: HTMLButtonElement;
   private readonly scrub: HTMLInputElement;
   private readonly timeReadout: HTMLSpanElement;
+  private readonly timeInput: HTMLInputElement;
   private readonly durationInput: HTMLInputElement;
   private readonly fpsInput: HTMLInputElement;
   private readonly targetSelect: HTMLSelectElement;
@@ -46,28 +57,39 @@ export class TimelinePanel {
   private readonly channelSelect: HTMLSelectElement;
   private readonly interpolationSelect: HTMLSelectElement;
   private readonly addButton: HTMLButtonElement;
-  private readonly moveButton: HTMLButtonElement;
-  private readonly deleteButton: HTMLButtonElement;
   private readonly markerLayer: HTMLDivElement;
   private readonly keyframeList: HTMLDivElement;
   private readonly message: HTMLDivElement;
-  private selectedIndex: number | null = null;
 
   constructor(root: HTMLElement, context: TimelineContext) {
     this.context = context;
+    this.root = root;
 
-    const playButton = el('button', { text: 'play', on: { click: () => context.playback.play() } });
-    const pauseButton = el('button', { text: 'pause', on: { click: () => context.playback.pause() } });
-    const stopButton = el('button', { text: 'stop', on: { click: () => context.playback.stop() } });
+    // One toggle rather than three buttons: the label is the state, `setTime` keeps it in step with the transport
+    // every frame, and going back to the start is what the scrub bar is for (README D45).
+    this.playToggle = el('button', {
+      text: 'play',
+      title: 'play or pause the clip',
+      on: {
+        click: () => {
+          if (context.playback.playing) context.playback.pause();
+          else context.playback.play();
+        },
+      },
+    });
     const loopInput = el('input', {
       type: 'checkbox',
-      title: 'loop',
       on: {
         change: () => {
           context.playback.setLoop(loopInput.checked);
         },
       },
     });
+    // The word is what says what the box is for — it is the only control in this row whose meaning is not in its own
+    // text — and wrapping the box in the label is what makes the word itself toggle it. `flex: 0 0 auto` keeps the pair
+    // at its natural width, so the time readout keeps the rest of the row.
+    const loopField = el('label', undefined, [el('span', { class: 'dim', text: 'loop' }), loopInput]);
+    loopField.style.flex = '0 0 auto';
 
     this.scrub = el('input', {
       type: 'range',
@@ -77,9 +99,26 @@ export class TimelinePanel {
       on: { input: () => context.onScrub(Number(this.scrub.value)) },
     });
     this.scrub.style.width = '100%';
-    this.timeReadout = el('span', { class: 'dim', text: '0.000 s' });
+    this.scrub.style.flex = '1 1 auto';
+    this.timeReadout = el('span', { class: 'dim', text: '0 ms' });
 
-    this.durationInput = el('input', { type: 'number', min: '0', step: '0.1', on: { change: () => this.writeDuration() } });
+    // The exact time, which is the one thing a range input cannot be precise about: whole milliseconds, the same
+    // unit as the keyframe rows (README D45).
+    this.timeInput = el('input', {
+      type: 'number',
+      min: '0',
+      step: '1',
+      value: '0',
+      title: 'exact animation time in milliseconds',
+      on: { change: () => context.onScrub(Number(this.timeInput.value)) },
+    });
+
+    this.durationInput = el('input', {
+      type: 'number',
+      min: '0',
+      step: '100',
+      on: { change: () => this.writeDuration() },
+    });
     this.fpsInput = el('input', { type: 'number', min: '1', step: '1', on: { change: () => this.writeFps() } });
 
     this.targetObjectOption = el('option', { value: 'object', text: 'active object' });
@@ -94,9 +133,11 @@ export class TimelinePanel {
       INTERPOLATIONS.map((mode) => el('option', { value: mode, text: mode })),
     );
 
-    this.addButton = el('button', { text: 'add', on: { click: () => this.addKeyframeAtPlayhead() } });
-    this.moveButton = el('button', { text: 'move', on: { click: () => this.moveSelectedKeyframe() } });
-    this.deleteButton = el('button', { text: 'delete', on: { click: () => this.deleteSelectedKeyframe() } });
+    this.addButton = el('button', {
+      text: 'add',
+      title: 'key the current value at the playhead',
+      on: { click: () => this.addKeyframeAtPlayhead() },
+    });
 
     this.markerLayer = el('div');
     this.markerLayer.style.position = 'absolute';
@@ -112,17 +153,15 @@ export class TimelinePanel {
     this.message.style.color = '#ff8a8a';
 
     const panel = el('div', undefined, [
-      el('div', { class: 'row' }, [playButton, pauseButton, stopButton, loopInput, this.timeReadout]),
-      el('div', { class: 'row' }, [scrubWrap]),
+      el('div', { class: 'row' }, [this.playToggle, loopField, this.timeReadout]),
+      el('div', { class: 'row' }, [scrubWrap, this.field('time (ms)', this.timeInput)]),
       el('div', { class: 'row' }, [
-        this.field('duration', this.durationInput),
+        this.field('duration (ms)', this.durationInput),
         this.field('fps', this.fpsInput),
         this.field('target', this.targetSelect),
         this.field('channel', this.channelSelect),
         this.field('interpolation', this.interpolationSelect),
         this.addButton,
-        this.moveButton,
-        this.deleteButton,
       ]),
       this.keyframeList,
       this.message,
@@ -131,13 +170,30 @@ export class TimelinePanel {
     this.refresh();
   }
 
-  /** Moves the playhead display only: no seek, no playback state, no `onScrub`. */
-  setTime(time: number): void {
-    const duration = this.context.playback.duration;
-    const clamped = Math.min(Math.max(time, 0), Math.max(duration, 0));
+  /**
+   * Moves the playhead display only: no seek, no playback state, no `onScrub`. It also keeps the play toggle's label
+   * on the transport it reports, because the render loop is what calls this and a press is not the only thing that
+   * starts or stops playback.
+   */
+  setTime(timeMs: number): void {
+    const durationMs = this.context.project.timeline.durationMs;
+    const clamped = Math.min(Math.max(Math.round(timeMs), 0), Math.max(durationMs, 0));
     const value = String(clamped);
     if (this.scrub.value !== value) this.scrub.value = value;
-    this.timeReadout.textContent = `${fmt(clamped)} s`;
+    this.timeReadout.textContent = `${fmt(clamped, 0)} ms`;
+    // The exact-time field follows the playhead, except while it is the field being typed into.
+    if (document.activeElement !== this.timeInput) this.timeInput.value = value;
+    const playing = this.context.playback.playing;
+    const label = playing ? 'pause' : 'play';
+    if (this.playToggle.textContent !== label) this.playToggle.textContent = label;
+  }
+
+  /**
+   * Shows or hides the whole widget, the bar included. The app owns the flag and the rail's `Animation` button is
+   * what flips it, so this only writes the host: the panel neither reads the flag nor decides anything about it.
+   */
+  setVisible(visible: boolean): void {
+    this.root.hidden = !visible;
   }
 
   refresh(): void {
@@ -146,10 +202,14 @@ export class TimelinePanel {
     const active = session.activeObjectId === null ? undefined : project.get(session.activeObjectId);
     this.targetObjectOption.text = active === undefined ? 'active object (none)' : `active object: ${active.name}`;
 
-    this.durationInput.value = String(timeline.duration);
+    this.durationInput.value = String(timeline.durationMs);
+    // The duration cannot cut the clip short: its floor is the latest keyframe anywhere in the timeline, and
+    // `setDuration` clamps anyway if a keyframe ever lands past it (README D45).
+    this.durationInput.min = String(maxKeyframeTime(timeline));
     this.fpsInput.value = String(timeline.fps);
-    this.scrub.max = String(timeline.duration);
-    this.scrub.step = String(timeline.fps > 0 ? 1 / timeline.fps : 1);
+    this.scrub.max = String(timeline.durationMs);
+    // One millisecond per step: the playhead is addressed in the same unit the keyframes are stored in.
+    this.scrub.step = '1';
 
     const target = this.readTarget();
     const channel = this.renderChannelSelect(target);
@@ -159,46 +219,72 @@ export class TimelinePanel {
     this.interpolationSelect.disabled = track === undefined;
 
     const keyframes = track?.keyframes ?? [];
-    if (this.selectedIndex !== null && this.selectedIndex >= keyframes.length) this.selectedIndex = null;
-
-    const rows: HTMLButtonElement[] = [];
+    const rows: HTMLDivElement[] = [];
     const markers: HTMLSpanElement[] = [];
-    keyframes.forEach((keyframe, index) => {
-      const selected = index === this.selectedIndex;
-      const row = el('button', {
-        class: 'kf',
-        text: `#${index} t=${fmt(keyframe.time)} v=[${keyframe.value.map((component) => fmt(component)).join(', ')}]`,
-        on: {
-          click: () => {
-            this.selectedIndex = index;
-            this.refresh();
-          },
-        },
-      });
-      row.style.display = 'block';
-      row.style.width = '100%';
-      row.style.textAlign = 'left';
-      row.classList.toggle('on', selected);
-      rows.push(row);
+    if (target !== undefined && channel !== undefined) {
+      for (const keyframe of keyframes) {
+        rows.push(this.keyframeRow(timeline.durationMs, target, channel, keyframe));
 
-      const marker = el('span');
-      marker.style.position = 'absolute';
-      marker.style.top = '0';
-      marker.style.width = '2px';
-      marker.style.height = '100%';
-      marker.style.background = MARKER_COLOR;
-      marker.style.left = `${timeline.duration > 0 ? (keyframe.time / timeline.duration) * 100 : 0}%`;
-      markers.push(marker);
-    });
+        const marker = el('span');
+        marker.style.position = 'absolute';
+        marker.style.top = '0';
+        marker.style.width = '2px';
+        marker.style.height = '100%';
+        marker.style.background = MARKER_COLOR;
+        marker.style.left = `${timeline.durationMs > 0 ? (keyframe.timeMs / timeline.durationMs) * 100 : 0}%`;
+        markers.push(marker);
+      }
+    }
     this.keyframeList.replaceChildren(...rows);
     this.markerLayer.replaceChildren(...markers);
 
-    const hasTrack = target !== undefined && channel !== undefined;
-    const hasSelection = hasTrack && this.selectedIndex !== null;
-    this.addButton.disabled = !hasTrack;
-    this.moveButton.disabled = !hasSelection;
-    this.deleteButton.disabled = !hasSelection;
-    this.setTime(this.context.playback.time);
+    // `add` needs a resolved target and channel, not an existing track: the first keyframe of a channel is what
+    // creates its track.
+    this.addButton.disabled = target === undefined || channel === undefined;
+    this.setTime(Math.round(this.context.playback.time * 1000));
+  }
+
+  /**
+   * One keyframe: seek to it, retime it in place, delete it. Each row acts on its own keyframe by id, so a rebuild
+   * that reorders the list cannot make a press land on a neighbour (README D45).
+   */
+  private keyframeRow(
+    durationMs: number,
+    target: TrackTarget,
+    channel: TrackChannel,
+    keyframe: { id: string; timeMs: number; value: number[] },
+  ): HTMLDivElement {
+    const row = el('div', { class: 'kf-row' });
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.gap = '4px';
+    row.style.width = '100%';
+
+    const seek = el('button', {
+      text: 'key',
+      title: 'move the playhead to this keyframe',
+      on: { click: () => this.context.onScrub(keyframe.timeMs) },
+    });
+    const timeField = el('input', {
+      type: 'number',
+      min: '0',
+      max: String(durationMs),
+      step: '1',
+      value: String(keyframe.timeMs),
+      title: 'keyframe time in milliseconds',
+      on: { change: () => this.writeKeyframeTime(target, channel, keyframe.id, timeField) },
+    });
+    const remove = el('button', {
+      text: 'delete',
+      title: 'remove this keyframe',
+      on: { click: () => this.deleteKeyframe(target, channel, keyframe.id) },
+    });
+    const value = el('span', {
+      class: 'dim',
+      text: `v=[${keyframe.value.map((component) => fmt(component)).join(', ')}]`,
+    });
+    row.append(seek, timeField, remove, value);
+    return row;
   }
 
   private field(label: string, control: HTMLElement): HTMLLabelElement {
@@ -251,7 +337,10 @@ export class TimelinePanel {
     if (target === undefined || channel === undefined) return;
     const value = this.authoringValue(target, channel);
     if (value === undefined) return;
-    const result = addKeyframe(this.context.project.timeline, target, channel, this.context.playback.time, value);
+    // The playhead is seconds (the clip's unit) and the authoring time is milliseconds; this rounds to the
+    // millisecond the seek landed on, which is as close as the clip can be sampled anyway.
+    const timeMs = Math.round(this.context.playback.time * 1000);
+    const result = addKeyframe(this.context.project.timeline, target, channel, timeMs, value);
     if (!result.ok) {
       this.message.textContent = result.error;
       return;
@@ -261,39 +350,30 @@ export class TimelinePanel {
     this.context.onEdited();
   }
 
-  private moveSelectedKeyframe(): void {
-    const index = this.selectedIndex;
-    const target = this.readTarget();
-    const channel = this.readChannel();
-    if (index === null || target === undefined || channel === undefined) return;
-    const time = this.context.playback.time;
-    if (!moveKeyframe(this.context.project.timeline, target, channel, index, time)) {
+  /**
+   * Retimes one keyframe from its row's field. A refused move — that millisecond already holds a keyframe, or the
+   * row went stale — changes nothing, and the rebuild puts the field back to what the clip holds (README D45).
+   */
+  private writeKeyframeTime(
+    target: TrackTarget,
+    channel: TrackChannel,
+    id: string,
+    field: HTMLInputElement,
+  ): void {
+    const timeMs = Number(field.value);
+    if (!Number.isFinite(timeMs) || !moveKeyframe(this.context.project.timeline, target, channel, id, timeMs)) {
       this.refresh();
       return;
     }
-    sortKeyframes(this.context.project.timeline);
-    this.selectedIndex = this.indexAtTime(target, channel, time);
     this.refresh();
     this.context.onEdited();
   }
 
-  private indexAtTime(target: TrackTarget, channel: TrackChannel, time: number): number | null {
-    const keyframes = findTrack(this.context.project.timeline, target, channel)?.keyframes;
-    if (keyframes === undefined) return null;
-    const index = keyframes.findIndex((keyframe) => keyframe.time === time);
-    return index < 0 ? null : index;
-  }
-
-  private deleteSelectedKeyframe(): void {
-    const index = this.selectedIndex;
-    const target = this.readTarget();
-    const channel = this.readChannel();
-    if (index === null || target === undefined || channel === undefined) return;
-    if (!removeKeyframe(this.context.project.timeline, target, channel, index)) {
+  private deleteKeyframe(target: TrackTarget, channel: TrackChannel, id: string): void {
+    if (!removeKeyframe(this.context.project.timeline, target, channel, id)) {
       this.refresh();
       return;
     }
-    this.selectedIndex = null;
     this.refresh();
     this.context.onEdited();
   }
@@ -308,14 +388,16 @@ export class TimelinePanel {
   }
 
   private writeDuration(): void {
-    const duration = Number(this.durationInput.value);
-    if (Number.isFinite(duration) && duration >= 0) {
-      this.context.project.timeline.duration = duration;
+    const durationMs = Number(this.durationInput.value);
+    if (!Number.isFinite(durationMs)) {
       this.refresh();
-      this.context.onEdited();
       return;
     }
+    // The field's own `min` is the latest keyframe; the model clamps every keyframe as well, so a duration that
+    // ever does come in short drags the clip onto it instead of losing the keyframes (README D45).
+    setDuration(this.context.project.timeline, durationMs);
     this.refresh();
+    this.context.onEdited();
   }
 
   private writeFps(): void {

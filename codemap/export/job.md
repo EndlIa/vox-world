@@ -31,7 +31,7 @@ class ExportJob {
 3. Prepare: `mirror.sync()` once so objects marked dirty before the export render their current document state; `new Mp4Writer(choice, { width, height, fps })`; and `mirror.setMaskMode(true)` when `mode === 'mask'` — the mask pass is the mirror's per-object `maskColor` material switch, which `Capture` knows nothing about.
 4. The loop is `for (let i = 0; i < total; i++)` with `t = from + i / fps` computed from the index rather than accumulated, so frame times carry no float drift:
    - abort check first: `signal?.aborted` leaves the loop and returns `'cancelled'` after the writer is cancelled;
-   - `playback.setTime(t)` for frame-exact sampling — it clamps to `[0, timeline.duration]`, zeroes the mixer clock, updates once, and refreshes the camera projection itself, so the same `t` always produces the same frame and nothing is inherited from the viewport;
+   - `playback.setTime(t)` for frame-exact sampling — it clamps to the clip's length in seconds (`timeline.durationMs / 1000`, README D45), zeroes the mixer clock, updates once, and refreshes the camera projection itself, so the same `t` always produces the same frame and nothing is inherited from the viewport;
    - `capture.render(request.scene, mirror.camera)`: the render camera is the document camera, the same `PerspectiveCamera` instance `playback` drives with the camera track (README D17), never the viewport navigation camera — which is why exported framing equals authored framing;
    - `const frame = await capture.readFrame()`; a `{ ok: false }` result cancels the writer and returns `{ ok: false, error: 'encoder-failed', detail: 'capture: ' + detail }`;
    - `writer.push(frame.bitmap, i)`;

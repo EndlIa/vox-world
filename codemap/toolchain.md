@@ -60,9 +60,14 @@ repository root is the Vite root (`index.html` sits beside the config), and no p
 include: ['tests/**/*.test.ts'], globals: false }`, so tests import `describe`/`it`/`expect` from
 `vitest` and never see a DOM.
 
-`index.html`: one `<canvas id="viewport">`, the mount points `<div id="panels">`, `<div id="timeline">`,
+`index.html`: one `<canvas id="viewport">`, the mount points `<div id="panels">`, `<div id="timeline" hidden>`,
 `<div id="hud">`, `<div id="modebar">`, and `<script type="module" src="/src/app/main.ts">`. `main.ts` resolves the four ids
-once and passes the elements to `Panels`, `TimelinePanel`, `Hud`, and the renderer setup. The `:root`
+once and passes the elements to `Panels`, `TimelinePanel`, `Hud`, and the renderer setup. The timeline bar carries `hidden`
+in the markup because it starts collapsed — the rail's `Animation` button is the only thing that shows it — and the attribute
+is here rather than set by the module so the bar cannot flash while the bundle loads (README D44). For the same decision
+`#viewport` carries `min-height: 0`: a canvas' intrinsic size comes from its drawing-buffer attributes, and a grid item's
+automatic minimum would floor the row with it, which pushes the `auto` timeline row past the bottom of the `100vh` column
+where `body { overflow: hidden }` clips it away — the bar would exist and be unreachable (README D44). The `:root`
 declaration `--scene` and the `html`/`body`/`#viewport` backgrounds use it, so nothing darker shows
 behind or beside the canvas; the value must equal `DEFAULT_BACKGROUND` in `src/document/project.ts`,
 which is the definition the 3D scene and the exported frames actually use. The stylesheet also owns the
