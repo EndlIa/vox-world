@@ -1,6 +1,6 @@
 # src/document/project.ts
 
-Ring: 1 · Layer: document · Depends on: ../voxels/uniform/grid.js, ../voxels/octree/octree.js, ./timeline.js, three
+Ring: 1 · Layer: document · Depends on: ../voxels/uniform/grid.js, ./timeline.js, three
 
 ## Responsibility
 Owns the project truth: object records, identity, hierarchy, transforms, representation binding, mask colors, camera and project settings, and the single `Timeline` instance. It is not a voxel container, not the Three.js scene mirror, and not a serializer — payloads are handed in and held by reference.
@@ -9,12 +9,13 @@ Owns the project truth: object records, identity, hierarchy, transforms, represe
 ```ts
 type ObjectId = string;                                  // 'obj-<n>', allocated only here
 type Transform = { position: THREE.Vector3; quaternion: THREE.Quaternion; scale: THREE.Vector3 };
-type Representation = 'empty' | 'uniform' | 'octree';
+type Representation = 'empty' | 'uniform';
 type SceneObject = {
   id: ObjectId; name: string; parentId: ObjectId | null;
   transform: Transform; representation: Representation;
-  uniform?: UniformGrid; octree?: Octree;
+  uniform?: UniformGrid;
   maskColor: HexColor; visible: boolean;
+  alignToGrid: boolean;                       // the placement holds whole cells while set; set at creation from that placement (D42)
 };
 type CameraSettings = { fov: number; near: number; far: number; transform: Transform };
 type ProjectSettings = { background: HexColor; ambientIntensity: number };
@@ -27,53 +28,62 @@ class Project {
   allocateId(): ObjectId;
   createObject(init: { name: string; parentId?: ObjectId | null; representation: 'empty' }): SceneObject;
   createVoxelObject(init: { name: string; parentId?: ObjectId | null; maskColor: HexColor;
-    payload: { kind: 'uniform'; grid: UniformGrid } | { kind: 'octree'; octree: Octree };
-    position: THREE.Vector3 }): SceneObject;
-  setPayload(id: ObjectId, payload: { kind: 'uniform'; grid: UniformGrid } |
-    { kind: 'octree'; octree: Octree } | undefined): void;   // the only way representation changes
+    payload: { kind: 'uniform'; grid: UniformGrid };
+    position: THREE.Vector3 }): SceneObject;  // alignToGrid set iff `position` is whole cells (D42)
+  setPayload(id: ObjectId, payload: { kind: 'uniform'; grid: UniformGrid } | undefined): void;   // the only way representation changes
   get(id: ObjectId): SceneObject | undefined;
   remove(id: ObjectId): void;                 // children are reparented to the removed node's parent
   reparent(id: ObjectId, parentId: ObjectId | null): { ok: true } | { ok: false; error: 'missing' | 'cycle' };
   roots(): SceneObject[];
   childrenOf(id: ObjectId): SceneObject[];
   worldMatrix(id: ObjectId): THREE.Matrix4;
+  alignedPosition(id: ObjectId, position: THREE.Vector3): THREE.Vector3;   // nearest cell per axis while the object aligns
+  keyframePosition(target: TrackTarget, position: THREE.Vector3): THREE.Vector3;   // the placement a keyframe may store
+  alignWorldMatrix(id: ObjectId, matrix: THREE.Matrix4): THREE.Matrix4;    // the same rule in the object's own frame
   nextMaskColor(): HexColor;                  // palette walk, deterministic
 }
 ```
-`new Project()` takes no arguments: an empty object map, an identity-transform camera, default settings (background, ambient intensity), an empty timeline with `duration: 0`, which the app sets on load.
+`new Project()` takes no arguments: an empty object map, an identity-transform camera, default settings (`background: 0x3d4250`, ambient intensity `1`), an empty timeline with `duration: 0`, which the app sets on load. The background is the scene's clear color and therefore the color of every exported frame, so its one definition is here rather than in the stylesheet: `index.html` mirrors the same value as `--scene`, which only makes the page behind the canvas match, and the previous project's editor uses the same slate (its `COL_SCENE_BG`, read from its own `--scene`).
 
 ## Internal logic
 1. Fields: `objects`, `camera`, `settings`, `timeline`, a monotonic `nextId` counter, and a `maskCursor` index. `objects` is a `Map`, so iteration order is insertion order — the deterministic order of `roots()` and `childrenOf()`.
 2. `allocateId()` returns `` `obj-${this.nextId++}` ``. The counter is never decremented and the map is never consulted, so ids stay unique after `remove`.
-3. `createObject` allocates an id, builds an identity transform (`Vector3(0,0,0)`, identity `Quaternion`, `Vector3(1,1,1)`), sets `representation: 'empty'`, takes `maskColor` from `nextMaskColor()`, `visible: true`, and inserts. An unknown `parentId` throws `RangeError` before insertion.
-4. `createVoxelObject` does the same but sets `representation` from `payload.kind`, stores the payload in `uniform` or `octree` (the other stays `undefined`), uses the caller's `maskColor`, and writes a translation-only transform: `position` as given, identity quaternion, unit scale. Voxel coordinates therefore stay in the payload's own space; rotation and scale of an imported node are already baked into the payload by `voxelize`.
-5. `setPayload(id, payload)` is the only mutator that writes `representation` and the payload fields. A uniform payload sets `uniform`, clears `octree`, and derives `representation: 'uniform'`; an octree payload is the mirror image; `undefined` clears both and returns the object to `representation: 'empty'`. It writes nothing else — `transform`, `name`, `parentId`, `maskColor`, and `visible` are untouched — and it does not mark anything dirty: the caller (import → voxelize attach, editor ops) tells the mirror, per-object `dirty` (D4).
+3. `createObject` allocates an id, builds an identity transform (`Vector3(0,0,0)`, identity `Quaternion`, `Vector3(1,1,1)`), sets `representation: 'empty'`, takes `maskColor` from `nextMaskColor()`, `visible: true`, sets `alignToGrid: true` (D42), and inserts. An unknown `parentId` throws `RangeError` before insertion.
+4. `createVoxelObject` does the same, with one difference in the flag — it takes `alignToGrid` from the module-private `isOnLattice(position)` (all three components `Number.isInteger`) instead of a literal — and otherwise sets `representation` from `payload.kind`, stores `payload.grid` in `uniform`, uses the caller's `maskColor`, and writes a translation-only transform: `position` as given, identity quaternion, unit scale. Voxel coordinates therefore stay in the payload's own space; rotation and scale of an imported node are already baked into the payload by `voxelize`. A voxel object is therefore created aligned when the placement it was handed is already whole cells and unaligned when it is not, because snapping it would move content a caller placed between cells on purpose — detach's world preservation (D23) is the caller that does.
+5. `setPayload(id, payload)` is the only mutator that writes `representation` and the payload field. A payload sets `uniform` and `representation: 'uniform'`; `undefined` clears `uniform` and returns the object to `representation: 'empty'`. It writes nothing else — `transform`, `name`, `parentId`, `maskColor`, `visible`, and `alignToGrid` are untouched — and it does not mark anything dirty: the caller (import → voxelize attach, editor ops) tells the mirror, per-object `dirty` (D4).
 6. `remove(id)` walks the map once and rewrites `parentId` of every direct child to the removed object's `parentId`, deletes the entry, then calls `removeTracksFor(timeline, id)` so no track targets a dead object. Subtree geometry is not touched.
 7. `reparent` validates `id` and, when non-null, `parentId` against the map (`'missing'`), then walks the candidate parent's ancestor chain: reaching `id` means the move would close a cycle, so it returns `'cycle'` and leaves `parentId` untouched. Only after that does it assign.
 8. `worldMatrix(id)` walks the parent chain to the root, collecting the chain, then folds `Matrix4.compose(position, quaternion, scale)` from the root down (`out.multiply(local)`), yielding `M_root · … · M_parent · M_local`. One `Matrix4` and O(depth) temporaries per call; nothing is cached because transforms are mutable value objects and the mirror owns invalidation (D4).
-9. `nextMaskColor()` returns `PALETTE[this.maskCursor++ % PALETTE.length]` from a module-level frozen palette of 12 distinct `0xRRGGBB` values. The walk is a plain increment, so two fresh `Project`s produce the same sequence and colors stay stable for the project's lifetime.
+9. `alignedPosition(id, position)` is where the lattice rule lives (D42): for an id that resolves to an object with `alignToGrid` set it returns `Vector3(Math.round(position.x), Math.round(position.y), Math.round(position.z))` — the nearest cell per axis, which is what puts the object's voxels on the world grid of which a cell is the unit (D41). An unaligned object and an unknown id get `position.clone()`, so a caller can route every placement write through here without testing the flag itself; the argument is never mutated and the result is always a fresh vector.
+10. `keyframePosition(target, position)` is that rule for authoring (D42): an `'object'` target goes through `alignedPosition(target.objectId, position)`, so everything a track holds is whole cells, while every other target — the camera — gets `position.clone()`, because a viewpoint is not voxel content and a camera confined to whole cells could not frame anything. Snapping the *sampled* pose is not this method's job: the mixer interpolates freely between the placements it is handed.
+11. `alignWorldMatrix(id, matrix)` applies the same rounding in the object's own frame, so a gizmo drag previews exactly what its commit will store instead of jumping on release (D42). It returns `matrix` *itself* (no copy) for an unaligned object and for an unknown id, and never mutates that argument. Otherwise it divides the parent's world matrix out — `parent.clone().invert().multiply(matrix)`, or `matrix.clone()` when the object is a root — writes `alignedPosition`'s result into the local matrix' translation, and multiplies the parent back in (`parent.multiply(local)`), so what comes back is a matrix this call made: the fresh parent-chain product for a child, the argument's clone for a root. A whole-cell local placement therefore survives even when a rotated or scaled ancestor maps it to a fractional world one.
+12. `nextMaskColor()` returns `PALETTE[this.maskCursor++ % PALETTE.length]` from a module-level frozen palette of 12 distinct `0xRRGGBB` values. The walk is a plain increment, so two fresh `Project`s produce the same sequence and colors stay stable for the project's lifetime.
 
 ## Invariants
 - `objects` keys equal `SceneObject.id`; ids match `obj-<n>`, are unique, and are never reused, even after `remove`.
 - The hierarchy is a forest: `parentId` is `null` or an existing id, exactly one parent per object, no cycles at any time.
-- `representation` binds exactly one payload: `'empty'` has neither `uniform` nor `octree`; `'uniform'` has `uniform` and no `octree`; `'octree'` the reverse. `setPayload` is the only mutator that changes `representation`, and the invariant holds after every call.
-- `setPayload` leaves `transform`, `name`, `parentId`, `maskColor`, and `visible` byte-identical, so attaching a payload to an `'empty'` placeholder never moves, renames, or recolors an object an importer already placed; the caller marks the object dirty for the mirror afterwards (D4).
+- `representation` binds exactly one payload: `'empty'` has no `uniform`; `'uniform'` has one. `setPayload` is the only mutator that changes `representation`, and the invariant holds after every call.
+- `setPayload` leaves `transform`, `name`, `parentId`, `maskColor`, `visible`, and `alignToGrid` byte-identical, so attaching a payload to an `'empty'` placeholder never moves, renames, or recolors an object an importer already placed; the caller marks the object dirty for the mirror afterwards (D4).
 - `maskColor` is assigned once at creation from the palette walk, is independent of cell colors, and is never derived from object order at export time (D11).
 - `timeline` is one instance for the project's lifetime; mutators mutate it in place, so holding `project.timeline` stays valid.
 - Every object created here has `visible: true`; `visible` gates rendering only and never changes occupancy.
 - Objects, transforms, and payloads are plain records and typed arrays plus Three.js *value* types — no `Mesh`, `Object3D`, or scene reference is stored (D1).
 - `worldMatrix(id)` for a root equals its own composed local matrix; for a child it equals the parent chain product.
+- `alignToGrid` is set at creation from the placement: `createObject` builds the identity transform and sets it `true`, while `createVoxelObject` sets it exactly when `position` is whole cells. A voxel object whose placement an operation derived — detach under a turned or off-lattice parent — is therefore created unaligned rather than snapped (D42, D23), and only the editor's `setObjectAlignToGrid` or a direct field write changes the flag afterwards.
+- The flag governs the object's own `transform.position` and nothing else: it never gates occupancy, never constrains the camera, and never makes a world coordinate whole under a rotated or scaled ancestor.
+- `alignedPosition` never mutates its argument and always returns a fresh `Vector3` — the nearest cell per axis for an aligned object, a copy of the input for an unaligned object and for an unknown id — and `keyframePosition` has both properties, adding only the camera pass-through.
+- `alignWorldMatrix` returns its argument *itself* (no copy) for an unaligned object and for an unknown id, and never mutates it; when the object does align, the frame is the object's own — the parent chain is divided out before the rounding and multiplied back after — so a child of a moved or turned parent still gets whole cells stored locally.
 
 ## Errors
 - `reparent` returns `{ ok: false, error: 'missing' }` for an unknown `id` or an unknown non-null `parentId`, and `{ ok: false, error: 'cycle' }` when the candidate parent is the object or a descendant. Both leave state unchanged.
 - `createObject`, `createVoxelObject`, `setPayload`, and `worldMatrix` throw `RangeError` on an unknown `parentId`/`id`: callers pass ids obtained from this project, so this is a programmer error, not a user-facing result. `setPayload` validates before writing, so a failed call leaves the payload untouched.
 - `remove(unknownId)` is a no-op.
+- `alignedPosition`, `keyframePosition`, and `alignWorldMatrix` are total: an unknown id gets the input back instead of a `RangeError`, so the editor can ask about an id it is about to validate.
 - `createObject` cannot be called with a voxel representation — the parameter type admits only `'empty'`.
 
 ## Dependencies
 - `../voxels/uniform/grid.js` — `UniformGrid` payload type and `HexColor`.
-- `../voxels/octree/octree.js` — `Octree` payload type.
-- `./timeline.js` — `Timeline` type and `removeTracksFor` on deletion. `timeline.ts` imports `ObjectId` from here type-only, so the value dependency stays one-way (`document/project → document/timeline`) and no runtime cycle exists.
+- `./timeline.js` — `Timeline` type, `TrackTarget` (the `keyframePosition` argument), and `removeTracksFor` on deletion. `timeline.ts` imports `ObjectId` from here type-only, so the value dependency stays one-way (`document/project → document/timeline`) and no runtime cycle exists.
 - `three` — `Vector3`, `Quaternion`, `Matrix4` for transforms; allowed in ring 1 (D1).
 
 ## Tests

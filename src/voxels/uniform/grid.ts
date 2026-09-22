@@ -3,9 +3,13 @@
  * integer-box region operations with allocation-free packed keys.
  *
  * It holds no transform, identity, or scene state, allocates no Three.js object per cell, and never
- * converts to world space — that is the owning object's transform. Min-corner convention: a voxel of
- * size `voxelSize` at cell `(x, y, z)` occupies `[x*voxelSize, (x+1)*voxelSize]` on each axis.
+ * converts to world space — that is the owning object's transform. Min-corner convention at the world
+ * unit: cell `(x, y, z)` occupies `[x, x + 1]` on each axis, so a cell coordinate is a world position
+ * and the grid stores no size (README D41).
  */
+
+/** The world unit: one voxel is one world unit, so a cell coordinate is a world coordinate (README D41). */
+export const CELL_SIZE = 1;
 
 export type CellKey = number;
 export type HexColor = number; // 0xRRGGBB, the THREE.Color.getHex()/setHex() exchange form
@@ -93,21 +97,14 @@ function containsCell(box: IntBox3, x: number, y: number, z: number): boolean {
 }
 
 export class UniformGrid {
-  static create(voxelSize: number): UniformGrid {
-    if (!Number.isFinite(voxelSize) || voxelSize <= 0) {
-      throw new RangeError(`voxelSize must be a finite positive number, got ${voxelSize}`);
-    }
-    return new UniformGrid(voxelSize);
+  static create(): UniformGrid {
+    return new UniformGrid();
   }
-
-  readonly voxelSize: number;
 
   /** The occupied set is exactly this key set, so `size === cells.size`. */
   private readonly cells = new Map<CellKey, HexColor>();
 
-  private constructor(voxelSize: number) {
-    this.voxelSize = voxelSize;
-  }
+  private constructor() {}
 
   get size(): number {
     return this.cells.size;

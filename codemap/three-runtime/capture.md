@@ -21,7 +21,7 @@ class Capture {
 ```
 
 ## Internal logic
-1. Constructor: `new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true })`, then `setPixelRatio(1)` — export pixels are exact and `devicePixelRatio` must not scale them — `setSize(width, height, false)` so no canvas style is touched, `toneMapping = THREE.NoToneMapping`, and `outputColorSpace = THREE.SRGBColorSpace`. The canvas is never attached to the document; nothing is rendered until `render` is called.
+1. Constructor: `new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true, logarithmicDepthBuffer: true })` — the same depth buffer the viewport uses, so an exported frame cannot fight where the viewport does not (README D40) — then `setPixelRatio(1)` — export pixels are exact and `devicePixelRatio` must not scale them — `setSize(width, height, false)` so no canvas style is touched, `toneMapping = THREE.NoToneMapping`, and `outputColorSpace = THREE.SRGBColorSpace`. The canvas is never attached to the document; nothing is rendered until `render` is called.
 2. `render(scene, camera)` first sets `camera.aspect = width / height` and calls `camera.updateProjectionMatrix()`: the capture owns the export viewport, so it owns the aspect, while fov, near, far, and the transform stay the caller's data — in the app that camera is `SceneMirror.camera`, the output camera derived from `project.camera` (README D17).
 3. Then `renderer.setRenderTarget(null)` and `renderer.render(scene, camera)`, which sets the "a frame is available" flag. A mask frame is exactly this same call after `SceneMirror.setMaskMode(true)`; this file neither sets nor reads any mask color.
 4. `readFrame()` resolves `createImageBitmap(renderer.domElement)`, producing an `ImageBitmap` of exactly `width × height` pixels from the last successful render. The bitmap belongs to the caller, which must `close()` it after encoding; `Capture` keeps no reference to it.
@@ -34,7 +34,7 @@ class Capture {
 - One `render` call produces exactly one frame, and `readFrame` returns the most recent successfully rendered frame — never one from a previous size.
 - `Capture` holds no scene, camera, material, or color it did not receive as an argument, so `SceneMirror.setMaskMode(true)` plus `render` is the whole mask-pass mechanism and the `FrameSink` boundary (README D7) is fed from here.
 - No tone mapping and sRGB output mean a flat material color reaches the encoder as the hex value that was set, which is what makes the mask pass exact.
-- Scene visibility decides what is drawn: the export camera has only layer 0 enabled, so the overlay guide (layer 1) never reaches a frame.
+- Scene visibility decides what is drawn: the export camera has only layer 0 enabled, so the overlay (layer 1) never reaches a frame.
 
 ## Errors
 - `readFrame` → `{ ok: false, error: 'render-failed', detail }` when `createImageBitmap` rejects, when the drawing buffer cannot be read, or when no frame has been rendered since construction or the last `resize` (`detail: 'no frame rendered'`).

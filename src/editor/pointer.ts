@@ -1,56 +1,71 @@
 import type { ObjectId, Project } from '../document/project.js';
 import type { ActiveTool, EditorSession } from './session.js';
-import { addBox, detachSelection, mergeLeaf, paintBox, paintLeaf, removeBox, removeLeaf, splitLeaf } from './ops.js';
+import { addBox, detachSelection, paintBox, removeBox } from './ops.js';
 import type { OpResult } from './ops.js';
 import type { Picker } from '../three-runtime/picking.js';
 import type { Overlay } from '../three-runtime/overlay.js';
 import type { IntBox3 } from '../voxels/uniform/grid.js';
-import { boxCount, normalizeBox } from '../voxels/uniform/grid.js';
+import { normalizeBox } from '../voxels/uniform/grid.js';
 import { Vector2 } from 'three';
 import type { PerspectiveCamera, Vector3 } from 'three';
 
 export type PointerCallbacks = {
   onSessionChange(): void;
-  onProjectChange(): void;
-  onStatus(text: string): void;
+  /**
+   * The objects an operation wrote, so the caller can rebuild exactly their derived geometry (README D4). A
+   * region edit touches one; a detach touches two — the object the region left and the object it became.
+   */
+  onProjectChange(ids: readonly ObjectId[]): void;
 };
 
-/** The tools that consume the dragged box; `split` and `merge` consume a picked leaf instead. */
-const BOX_TOOLS: ReadonlySet<ActiveTool> = new Set<ActiveTool>(['box', 'paint', 'remove', 'detach']);
+/**
+ * The tools that drag a box. The `select` tool consumes that box as the selection and writes nothing (see
+ * `commit`); the others apply an operation to it. Every one of them reads the same region, in the same cells,
+ * from the same gesture (README D19). A detach is not one of them: it is a command on the region the selection
+ * already holds (`detachSelection`), so it can never be left armed for the next press.
+ */
+const BOX_TOOLS: Record<ActiveTool, boolean> = {
+  select: true,
+  paint: true,
+  add: true,
+  remove: true,
+};
 
-/** The one drag in flight: one object, one anchor cell, one moving corner cell. */
+/** What a commit acts with: one of the session's tools, or the detach the panel commands directly. */
+type CommitVerb = ActiveTool | 'detach';
+
+/** The one drag in flight: one object, its occupied cells, one anchor cell, one moving corner cell. */
 type DragState = {
   pointerId: number;
   objectId: ObjectId;
-  voxelSize: number;
+  bounds: IntBox3;
   anchorCell: [number, number, number];
   cornerCell: [number, number, number];
-  dragging: boolean;
 };
 
-/** Min-corner convention (README D20): the cell a local point falls in. */
-function cellAt(pointLocal: Vector3, voxelSize: number): [number, number, number] {
+/**
+ * Min-corner convention (README D20): the cell a local point falls in, held inside the object's own occupancy.
+ *
+ * A cell is the world unit (README D41), so a point's cell is its floor and nothing is scaled. The holding is
+ * what makes a face hit mean one thing rather than two: a ray that hits a face reports a point exactly on that
+ * face's plane, so on the far side of the box the floor lands one cell past the payload — a drag across that
+ * face would address cells the object does not have, and every tool would then read an empty region there while
+ * the same gesture on the near side addressed real cells. Clamping puts both on the outermost cell it does have.
+ */
+function cellAt(pointLocal: Vector3, bounds: IntBox3): [number, number, number] {
+  const inside = (value: number, min: number, max: number): number =>
+    value < min ? min : value > max ? max : value;
   return [
-    Math.floor(pointLocal.x / voxelSize),
-    Math.floor(pointLocal.y / voxelSize),
-    Math.floor(pointLocal.z / voxelSize),
+    inside(Math.floor(pointLocal.x), bounds.min[0], bounds.max[0]),
+    inside(Math.floor(pointLocal.y), bounds.min[1], bounds.max[1]),
+    inside(Math.floor(pointLocal.z), bounds.min[2], bounds.max[2]),
   ];
 }
 
-function hexColor(color: number): string {
-  return `#${color.toString(16).padStart(6, '0')}`;
-}
-
-function describeBox(box: IntBox3): string {
-  const width = box.max[0] - box.min[0] + 1;
-  const height = box.max[1] - box.min[1] + 1;
-  const depth = box.max[2] - box.min[2] + 1;
-  return `box ${width}x${height}x${depth} (${boxCount(box)} cells)`;
-}
 
 /**
- * All pointer handling in the viewport: point pick, box drag, hover preview, and the commit of the
- * active tool. Every voxel write goes through `./ops.js`; every pick resolves `getCamera()` at call
+ * All pointer handling in the viewport: point pick, box drag, and the commit of the active tool.
+ * Every voxel write goes through `./ops.js`; every pick resolves `getCamera()` at call
  * time, so it always uses the camera that rendered the frame the user is looking at — the app-owned
  * viewport camera, or `SceneMirror.camera` while the camera lock is on (README D17).
  */
@@ -107,8 +122,8 @@ export class PointerTool {
 
   /**
    * A left press the gizmo is not using selects what it hit and, for a box-consuming tool, arms the
-   * box drag. A raw source mesh selects its object and nothing else, because it has no cells or leaves
-   * to edit yet (README D24). The gizmo is the one claim that outranks the tool, and `getGizmoBusy()` is that claim:
+   * box drag. A raw source mesh selects its object and nothing else, because it has no cells to edit
+   * yet (README D24). The gizmo is the one claim that outranks the tool, and `getGizmoBusy()` is that claim:
    * `TransformControls` calls `setPointerCapture` on this shared element on *every* press, whether or
    * not a handle was hit, so neither a capture nor `defaultPrevented` marks a press as the gizmo's —
    * only its own dragging/hover state does. Buttons 1 and 2 stay navigation and touch nothing here.
@@ -127,33 +142,31 @@ export class PointerTool {
       return;
     }
     this.session.setActiveObject(hit.objectId);
-    if (hit.kind === 'object') {
-      // A raw source mesh has no voxel identity to select or edit yet: making its object active is the
-      // whole press, and it commits no operation because there is nothing to edit (README D24).
+    if (this.session.mode === 'object' || hit.kind === 'object') {
+      // Object mode transforms whole objects through the gizmo, and a raw source mesh has no voxel identity to
+      // select or edit yet: either way the press only chooses whose gizmo is shown, and it commits no operation
+      // (README D24, D39).
       this.drag = null;
       this.session.setSelection({ kind: 'none' });
       this.overlay.clear();
       this.callbacks.onSessionChange();
       return;
     }
-    if (hit.kind === 'cell') {
-      this.session.setSelection({ kind: 'box', objectId: hit.objectId, box: normalizeBox(hit.cell, hit.cell) });
-      this.armDrag(event.pointerId, ndc, hit.objectId);
-    } else {
-      this.session.setSelection({ kind: 'leaf', objectId: hit.objectId, leafId: hit.leafId });
-    }
+    // The shape the select tool is set to is what the press selects; the region is one cell until a drag
+    // extends it.
+    this.session.setSelection({
+      kind: this.session.selectionShape,
+      objectId: hit.objectId,
+      box: normalizeBox(hit.cell, hit.cell),
+    });
+    this.armDrag(event.pointerId, ndc, hit.objectId);
     this.paintSelection();
     this.callbacks.onSessionChange();
   };
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     if (this.disposed) return;
-    if (this.drag !== null && this.drag.pointerId === event.pointerId) {
-      this.trackDrag(this.toNdc(event));
-      return;
-    }
-    if (event.buttons !== 0) return;
-    this.hover(this.toNdc(event));
+    if (this.drag !== null && this.drag.pointerId === event.pointerId) this.trackDrag(this.toNdc(event));
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
@@ -163,7 +176,7 @@ export class PointerTool {
     if (!this.pressActive) return;
     this.pressActive = false;
     if (drag !== null) {
-      const box = this.boxOf(drag);
+      const box = normalizeBox(drag.anchorCell, drag.cornerCell);
       this.session.setSelection({ kind: 'box', objectId: drag.objectId, box });
     }
     this.commit();
@@ -185,21 +198,22 @@ export class PointerTool {
     return this.ndc;
   }
 
-  /** Arms a box drag only for a box-consuming tool on a uniform object; otherwise the click stands. */
+  /** Arms a box drag only in edit mode, for a box-dragging tool, on a uniform object; otherwise the click stands. */
   private armDrag(pointerId: number, ndc: Vector2, objectId: ObjectId): void {
-    if (!BOX_TOOLS.has(this.session.activeTool)) return;
-    const grid = this.project.get(objectId)?.uniform;
-    if (grid === undefined) return;
+    if (this.session.mode !== 'edit' || !BOX_TOOLS[this.session.activeTool]) return;
+    // Only a uniform object has cells to address; a group or a fresh import has nothing to drag over, and an
+    // object with no occupied cell has no cell to address at all.
+    const bounds = this.project.get(objectId)?.uniform?.bounds();
+    if (bounds === undefined || bounds === null) return;
     const surface = this.picker.pickSurface(ndc, this.getCamera());
     if (surface === undefined || surface.objectId !== objectId) return;
-    const anchor = cellAt(surface.pointLocal, grid.voxelSize);
+    const anchor = cellAt(surface.pointLocal, bounds);
     this.drag = {
       pointerId,
       objectId,
-      voxelSize: grid.voxelSize,
+      bounds,
       anchorCell: anchor,
       cornerCell: [anchor[0], anchor[1], anchor[2]],
-      dragging: false,
     };
   }
 
@@ -209,81 +223,57 @@ export class PointerTool {
     if (drag === null) return;
     const surface = this.picker.pickSurface(ndc, this.getCamera());
     if (surface !== undefined && surface.objectId === drag.objectId) {
-      drag.cornerCell = cellAt(surface.pointLocal, drag.voxelSize);
-      drag.dragging = true;
+      drag.cornerCell = cellAt(surface.pointLocal, drag.bounds);
     }
-    const box = this.boxOf(drag);
-    this.overlay.showBox(box, drag.voxelSize, this.project.worldMatrix(drag.objectId));
-    this.callbacks.onStatus(describeBox(box));
+    // The box the drag has drawn so far: inclusive on both corners, in the anchor object's cells (D19).
+    const box = normalizeBox(drag.anchorCell, drag.cornerCell);
+    this.overlay.showBox(box, this.project.worldMatrix(drag.objectId));
   }
 
   /**
-   * Inclusive box in the anchor object's cells, with the third axis overridden on request (D19).
-   * The override applies to a tracked drag only: a press with no move commits the degenerate
-   * 1×1×1 box, so a click stays a point edit even while a height is set.
+   * Runs the detach on the current selection, without a press: the panel's `detach` button is a command on the
+   * region the `Select` tool already chose rather than a tool choice, so it commits the same operation a viewport
+   * press would and ends the same way — the new object active, the region no longer selected, its box gone
+   * (README D19, D23). It is why that button is disabled while there is no selection.
    */
-  private boxOf(drag: DragState): IntBox3 {
-    const box = normalizeBox(drag.anchorCell, drag.cornerCell);
-    const height = this.session.boxHeight;
-    if (!drag.dragging || height <= 1) return box;
-    const y = drag.anchorCell[1];
-    return { min: [box.min[0], y, box.min[2]], max: [box.max[0], y + height - 1, box.max[2]] };
+  detachSelection(): void {
+    this.commit('detach');
   }
 
   /** One operation per press, chosen by the active tool over the current selection. */
-  private commit(): void {
+  private commit(tool: CommitVerb = this.session.activeTool): void {
     const selection = this.session.selection;
-    const tool = this.session.activeTool;
-    if (selection.kind === 'box') {
-      if (tool === 'select') {
-        this.paintSelection();
-        return;
-      }
-      if (tool === 'split' || tool === 'merge') {
-        this.callbacks.onStatus(`${tool} works on a picked octree leaf; box, paint, remove and detach take a box`);
-        return;
-      }
-      const result =
-        tool === 'box'
-          ? addBox(this.project, selection.objectId, selection.box, this.session.editColor)
-          : tool === 'paint'
-            ? paintBox(this.project, selection.objectId, selection.box, this.session.editColor)
-            : tool === 'remove'
-              ? removeBox(this.project, selection.objectId, selection.box)
-              : detachSelection(this.project, selection);
-      this.settle(result, tool === 'detach');
+    // Object mode writes no voxels at all: its presses only chose whose gizmo to show (see `onPointerDown`).
+    if (this.session.mode !== 'edit') return;
+    if (selection.kind === 'none') return;
+    if (tool === 'select') {
+      this.paintSelection();
       return;
     }
-    if (selection.kind === 'leaf') {
-      if (tool === 'select') {
-        this.paintSelection();
-        return;
-      }
-      if (tool === 'box') {
-        this.callbacks.onStatus('box works on a dragged uniform cell box; split, merge, remove and paint take a leaf');
-        return;
-      }
-      const result =
-        tool === 'split'
-          ? splitLeaf(this.project, selection.objectId, selection.leafId)
-          : tool === 'merge'
-            ? mergeLeaf(this.project, selection.objectId, selection.leafId)
-            : tool === 'remove'
-              ? removeLeaf(this.project, selection.objectId, selection.leafId)
-              : tool === 'paint'
-                ? paintLeaf(this.project, selection.objectId, selection.leafId, this.session.editColor)
-                : detachSelection(this.project, selection);
-      this.settle(result, tool === 'detach');
-    }
+    // `objectId` is optional on the union: only a detach carries one, and it is checked below.
+    const result: OpResult & { objectId?: ObjectId } =
+      tool === 'add'
+        ? addBox(this.project, selection.objectId, selection.box, this.session.editColor)
+        : tool === 'paint'
+          ? paintBox(this.project, selection.objectId, selection.box, this.session.editColor)
+          : tool === 'remove'
+            ? removeBox(this.project, selection.objectId, selection.box)
+            : detachSelection(this.project, selection);
+    // Both halves of a detach change geometry, and only reporting the object that gained cells would leave the
+    // source drawing cells it no longer holds (README D4, D23).
+    const changed: ObjectId[] = [selection.objectId];
+    if (tool === 'detach' && result.objectId !== undefined) changed.push(result.objectId);
+    this.settle(result, changed, tool === 'detach');
   }
 
-  private settle(result: OpResult & { objectId?: ObjectId }, detached: boolean): void {
+  private settle(result: OpResult & { objectId?: ObjectId }, changed: readonly ObjectId[], detached: boolean): void {
     if (!result.ok) {
-      this.callbacks.onStatus(result.detail);
+      // The panel has no message area any more (D38), so a refused operation — a budget refusal, a grid
+      // refusal — goes to the console instead of nowhere.
+      console.error(`${result.error}: ${result.detail}`);
       return;
     }
-    if (result.cells !== 0) this.callbacks.onProjectChange();
-    this.callbacks.onStatus(result.detail);
+    if (result.cells !== 0) this.callbacks.onProjectChange(changed);
     if (!detached) {
       this.overlay.clear();
       this.paintSelection();
@@ -298,7 +288,7 @@ export class PointerTool {
     this.overlay.clear();
   }
 
-  /** Redraws the overlay for the current selection: the committed box, or the picked leaf's bounds. */
+  /** Redraws the overlay for the current selection: the committed box. */
   private paintSelection(): void {
     const selection = this.session.selection;
     if (selection.kind === 'none') {
@@ -306,52 +296,10 @@ export class PointerTool {
       return;
     }
     const object = this.project.get(selection.objectId);
-    if (selection.kind === 'box' && object?.uniform !== undefined) {
-      this.overlay.showBox(selection.box, object.uniform.voxelSize, this.project.worldMatrix(selection.objectId));
-      return;
-    }
-    if (selection.kind === 'leaf' && object?.octree !== undefined && object.octree.hasLeaf(selection.leafId)) {
-      this.overlay.showLeafBounds(
-        object.octree.transformLeafToWorld(selection.leafId, this.project.worldMatrix(selection.objectId)),
-        object.octree.leafBox(selection.leafId).size,
-      );
+    if (object?.uniform !== undefined) {
+      this.overlay.showBox(selection.box, this.project.worldMatrix(selection.objectId));
       return;
     }
     this.overlay.clear();
-  }
-
-  /** Hover feedback: the leaf's bounds and values, the cell and its color, or the raw mesh's object. */
-  private hover(ndc: Vector2): void {
-    const hit = this.picker.pick(ndc, this.getCamera());
-    if (hit === undefined) {
-      this.overlay.clear();
-      return;
-    }
-    if (hit.kind === 'object') {
-      // An imported raw mesh on layer 2 has no cell or leaf to outline; the name is the whole feedback.
-      this.overlay.clear();
-      this.callbacks.onStatus(`raw mesh ${this.project.get(hit.objectId)?.name ?? hit.objectId}`);
-      return;
-    }
-    if (hit.kind === 'leaf') {
-      const octree = this.project.get(hit.objectId)?.octree;
-      // A pick can outlive the leaf it names by one mirror sync (a split or remove just committed),
-      // and `transformLeafToWorld` refuses an id that no longer names a leaf, so nothing is drawn.
-      if (octree === undefined || !octree.hasLeaf(hit.leafId)) {
-        this.overlay.clear();
-        return;
-      }
-      this.overlay.showLeafBounds(
-        octree.transformLeafToWorld(hit.leafId, this.project.worldMatrix(hit.objectId)),
-        hit.size,
-        hit.color,
-      );
-      const occupancy = hit.occupied ? 'occupied' : 'empty';
-      this.callbacks.onStatus(
-        `leaf ${hit.leafId} depth ${hit.depth} size ${hit.size} m ${occupancy} ${hexColor(hit.color)}`,
-      );
-      return;
-    }
-    this.callbacks.onStatus(`cell ${hit.cell[0]}, ${hit.cell[1]}, ${hit.cell[2]} ${hexColor(hit.color)}`);
   }
 }

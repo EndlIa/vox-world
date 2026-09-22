@@ -1,38 +1,31 @@
 import type { ObjectId, Project, Representation, SceneObject } from '../document/project.js';
-import { detachOctreeLeaf, detachUniformBox } from '../document/detach.js';
+import { detachUniformBox } from '../document/detach.js';
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
 import { boxCount, normalizeBox } from '../voxels/uniform/grid.js';
-import type { LeafId } from '../voxels/octree/leafId.js';
 import { DEFAULT_CELL_BUDGET, type VoxelizeResult } from '../voxels/voxelize/voxelize.js';
 import type { Selection } from './session.js';
 import type { Matrix4, Vector3 } from 'three';
 
 /**
- * What an edit did. A user-facing failure is data here, never an exception; the octree's and
- * detach's own literals pass through unchanged so the vocabulary of ring 0 is what the UI reports.
+ * What an edit did. A user-facing failure is data here, never an exception; detach's own literals
+ * pass through unchanged so the vocabulary of ring 0 is what the UI reports.
  * There is no undo and no command object (README D9): a command layer wraps these functions later.
  */
 export type OpResult = { ok: true; detail: string; cells?: number } | { ok: false; error: string; detail: string };
 
 type UniformPayload = NonNullable<SceneObject['uniform']>;
-type OctreePayload = NonNullable<SceneObject['octree']>;
 
 type UniformLookup = { ok: true; grid: UniformPayload } | { ok: false; result: OpResult };
-type OctreeLookup = { ok: true; octree: OctreePayload } | { ok: false; result: OpResult };
 
 function missingObject(objectId: ObjectId): OpResult {
   return { ok: false, error: 'missing-object', detail: `no object with id ${objectId}` };
 }
 
-function wrongRepresentation(
-  objectId: ObjectId,
-  representation: Representation,
-  expected: 'a uniform grid' | 'an octree',
-): OpResult {
+function wrongRepresentation(objectId: ObjectId, representation: Representation): OpResult {
   return {
     ok: false,
     error: 'wrong-representation',
-    detail: `object ${objectId} is ${representation}; expected ${expected}`,
+    detail: `object ${objectId} is ${representation}; expected a uniform grid`,
   };
 }
 
@@ -41,16 +34,8 @@ function requireUniform(project: Project, objectId: ObjectId): UniformLookup {
   const object = project.get(objectId);
   if (object === undefined) return { ok: false, result: missingObject(objectId) };
   const grid = object.representation === 'uniform' ? object.uniform : undefined;
-  if (grid === undefined) return { ok: false, result: wrongRepresentation(objectId, object.representation, 'a uniform grid') };
+  if (grid === undefined) return { ok: false, result: wrongRepresentation(objectId, object.representation) };
   return { ok: true, grid };
-}
-
-function requireOctree(project: Project, objectId: ObjectId): OctreeLookup {
-  const object = project.get(objectId);
-  if (object === undefined) return { ok: false, result: missingObject(objectId) };
-  const octree = object.representation === 'octree' ? object.octree : undefined;
-  if (octree === undefined) return { ok: false, result: wrongRepresentation(objectId, object.representation, 'an octree') };
-  return { ok: true, octree };
 }
 
 /**
@@ -139,58 +124,12 @@ export function paintBox(project: Project, objectId: ObjectId, box: IntBox3, col
   return { ok: true, detail: `painted ${cells} cells in ${objectId}`, cells };
 }
 
-export function splitLeaf(project: Project, objectId: ObjectId, leafId: LeafId): OpResult {
-  const found = requireOctree(project, objectId);
-  if (!found.ok) return found.result;
-  const result = found.octree.split(leafId);
-  if (!result.ok) return { ok: false, error: result.error, detail: `cannot split ${leafId} in ${objectId}: ${result.error}` };
-  return { ok: true, detail: `split ${leafId} into ${result.children.length} leaves in ${objectId}` };
-}
-
-export function mergeLeaf(project: Project, objectId: ObjectId, leafId: LeafId): OpResult {
-  const found = requireOctree(project, objectId);
-  if (!found.ok) return found.result;
-  const result = found.octree.merge(leafId);
-  if (!result.ok) return { ok: false, error: result.error, detail: `cannot merge ${leafId} in ${objectId}: ${result.error}` };
-  return { ok: true, detail: `merged ${leafId} in ${objectId}` };
-}
-
-export function removeLeaf(project: Project, objectId: ObjectId, leafId: LeafId): OpResult {
-  const found = requireOctree(project, objectId);
-  if (!found.ok) return found.result;
-  if (!found.octree.removeLeaf(leafId)) {
-    return { ok: false, error: 'missing', detail: `no leaf ${leafId} in ${objectId}` };
-  }
-  return { ok: true, detail: `removed leaf ${leafId} from ${objectId}` };
-}
-
-export function paintLeaf(project: Project, objectId: ObjectId, leafId: LeafId, color: HexColor): OpResult {
-  const found = requireOctree(project, objectId);
-  if (!found.ok) return found.result;
-  if (!found.octree.paintLeaf(leafId, color)) {
-    return { ok: false, error: 'missing', detail: `no occupied leaf ${leafId} in ${objectId}` };
-  }
-  return { ok: true, detail: `painted leaf ${leafId} in ${objectId}` };
-}
-
-export function setLeafLabel(project: Project, objectId: ObjectId, leafId: LeafId, label: string | undefined): OpResult {
-  const found = requireOctree(project, objectId);
-  if (!found.ok) return found.result;
-  if (!found.octree.setLabel(leafId, label)) {
-    return { ok: false, error: 'missing', detail: `no leaf ${leafId} in ${objectId}` };
-  }
-  return { ok: true, detail: label === undefined ? `cleared the label of ${leafId}` : `labelled ${leafId} "${label}"` };
-}
-
-/** The one cross-representation edit: the selection's kind decides the detach path. */
+/** Turns the selected box region into a new scene object. */
 export function detachSelection(project: Project, selection: Selection): OpResult & { objectId?: ObjectId } {
   if (selection.kind === 'none') {
     return { ok: false, error: 'empty-selection', detail: 'nothing is selected to detach' };
   }
-  const result =
-    selection.kind === 'box'
-      ? detachUniformBox(project, selection.objectId, selection.box)
-      : detachOctreeLeaf(project, selection.objectId, selection.leafId);
+  const result = detachUniformBox(project, selection.objectId, selection.box);
   if (!result.ok) return { ok: false, error: result.error, detail: result.detail };
   return { ok: true, detail: `detached ${result.name} as ${result.objectId}`, objectId: result.objectId };
 }
@@ -222,20 +161,35 @@ export function setObjectMaskColor(project: Project, objectId: ObjectId, color: 
   return { ok: true, detail: `mask color of ${objectId} is #${color.toString(16).padStart(6, '0')}` };
 }
 
-/** Writes the gizmo's decomposition into the object's own transform instances, in place. */
-export function setTransformFromMatrix(project: Project, objectId: ObjectId, matrix: Matrix4): OpResult {
+/**
+ * Writes a world-space transform into the object's own `position`/`quaternion`/`scale` instances, in place.
+ *
+ * The document stores each object's *local* transform — `Project.worldMatrix` is what walks the parent chain
+ * — so the parent's world matrix is divided out first: a gizmo reports the world matrix its drag derived,
+ * which for a child of a moved parent is not the local one the object has to keep.
+ *
+ * An aligned object lands on the lattice (README D42), and it does so in two steps, both needed: the
+ * placement is snapped on the world matrix first, exactly as the drag preview snapped the same matrix, so
+ * the pose that was on screen is the pose this writes; then the decomposed placement is snapped again, so
+ * what the document stores is whole cells rather than a value a matrix round trip left at 1.9999999999999998.
+ */
+export function setTransformFromWorldMatrix(project: Project, objectId: ObjectId, matrix: Matrix4): OpResult {
   const object = project.get(objectId);
   if (object === undefined) return missingObject(objectId);
-  for (const value of matrix.elements) {
+  const aligned = project.alignWorldMatrix(objectId, matrix);
+  const parentId = object.parentId;
+  const local = parentId === null ? aligned : project.worldMatrix(parentId).invert().multiply(aligned);
+  for (const value of local.elements) {
     if (!Number.isFinite(value)) {
       return { ok: false, error: 'degenerate-transform', detail: `matrix for ${objectId} has a non-finite entry` };
     }
   }
-  if (matrix.determinant() === 0) {
+  if (local.determinant() === 0) {
     return { ok: false, error: 'degenerate-transform', detail: `matrix for ${objectId} is not invertible` };
   }
   const { position, quaternion, scale } = object.transform;
-  matrix.decompose(position, quaternion, scale);
+  local.decompose(position, quaternion, scale);
+  if (object.alignToGrid) position.copy(project.alignedPosition(objectId, position));
   return { ok: true, detail: `updated the transform of ${objectId}` };
 }
 
@@ -245,6 +199,25 @@ export function setObjectVisible(project: Project, objectId: ObjectId, visible: 
   if (object === undefined) return missingObject(objectId);
   object.visible = visible;
   return { ok: true, detail: `${objectId} is now ${visible ? 'visible' : 'hidden'}` };
+}
+
+/**
+ * Sets the flag behind the panel's `Grid align` checkbox. Switching it on pulls the object onto the lattice
+ * there and then, because the flag is a property the object has to satisfy from that moment on, not a mode a
+ * later edit applies (README D42); switching it off writes nothing but the flag.
+ */
+export function setObjectAlignToGrid(project: Project, objectId: ObjectId, alignToGrid: boolean): OpResult {
+  const object = project.get(objectId);
+  if (object === undefined) return missingObject(objectId);
+  object.alignToGrid = alignToGrid;
+  if (!alignToGrid) {
+    return { ok: true, detail: `${objectId} may now be placed between cells` };
+  }
+  const aligned = project.alignedPosition(objectId, object.transform.position);
+  const moved = !aligned.equals(object.transform.position);
+  object.transform.position.copy(aligned);
+  const cell = `${aligned.x}, ${aligned.y}, ${aligned.z}`;
+  return { ok: true, detail: moved ? `aligned ${objectId} to [${cell}]` : `${objectId} is already on the grid` };
 }
 
 /** Renames the object; the name is trimmed first, so whitespace alone is refused rather than stored. */

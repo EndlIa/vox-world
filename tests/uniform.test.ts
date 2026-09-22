@@ -63,11 +63,10 @@ describe('UniformGrid cells', () => {
   let grid: UniformGrid;
 
   beforeEach(() => {
-    grid = UniformGrid.create(0.5);
+    grid = UniformGrid.create();
   });
 
   it('reports size, presence, and color', () => {
-    expect(grid.voxelSize).toBe(0.5);
     expect(grid.size).toBe(0);
     expect(grid.has(1, 2, 3)).toBe(false);
     expect(grid.getColor(1, 2, 3)).toBeUndefined();
@@ -104,7 +103,7 @@ describe('UniformGrid regions', () => {
   let grid: UniformGrid;
 
   beforeEach(() => {
-    grid = UniformGrid.create(0.5);
+    grid = UniformGrid.create();
   });
 
   it('fills and counts writes', () => {
@@ -166,7 +165,7 @@ describe('extractBox', () => {
   let grid: UniformGrid;
 
   beforeEach(() => {
-    grid = UniformGrid.create(0.5);
+    grid = UniformGrid.create();
     grid.set(0, 0, 0, 0xaa0000);
     grid.set(1, 0, 0, 0x00aa00);
     grid.set(2, 0, 0, 0x0000aa);

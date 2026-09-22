@@ -18,13 +18,14 @@ internals, and the packed key layout are not tested — only observable behavior
 - `extractBox` — `extracts without changing the grid`, `extracts and removes the cells`
 
 ## Internal logic
-1. One fresh 4×4×4 grid at `voxelSize = 0.5` per test; no grid is shared between tests.
+1. One fresh grid per test, through a bare `UniformGrid.create()` — the constructor takes no size, because a cell is the world unit (README D41); no grid is shared between tests.
 2. Region expectations are literal coordinate lists, never loops over the grid, so a count change
    fails visibly instead of re-deriving the same mistake.
 3. Packing samples the corners and interior triples containing `-512` and `511`, with `-513` and `512`
    as the rejections; `extractBox` is checked on the returned `Map` and again by re-reading the grid.
 
 ## Invariants
+- `UniformGrid.create()` takes no argument and the grid exposes no cell size: coordinates are the world unit (README D41), so there is no spacing left to pin.
 - `packKey` is injective over `[-512, 511]` per axis, throws `RangeError` outside that range, and
   `unpackKey(packKey(x, y, z))` returns `[x, y, z]`.
 - `size` equals occupancy and the count `forEach` visits; `set` on an occupied cell replaces its color

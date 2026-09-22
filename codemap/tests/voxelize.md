@@ -2,11 +2,12 @@
 
 Ring: 0 · Layer: tests (node, no GPU) · Depends on: `../src/voxels/voxelize/voxelize.js`,
 `../src/voxels/voxelize/surface.js`, `../src/voxels/voxelize/colorSampler.js`,
-`../src/voxels/uniform/grid.js`, `../src/voxels/octree/octree.js`, `three`, `vitest`
+`../src/voxels/uniform/grid.js`, `three`, `vitest`
 
 ## Responsibility
 Pins conservative surface voxelization and its color resolution: the exact cell set a closed
-axis-aligned mesh produces, the budget, cancel, and grid-fit aborts, the
+axis-aligned mesh produces at the world unit's cells (README D41), the budget, cancel, and
+container-fit aborts, the
 factor × texture × vertex-color precedence the sampler resolves, and its alpha-cutoff rule — a masked
 sample colours its cell with the texture's visible average and never loses it. It also pins the
 one-payload rule of a source's parts: a cell two parts reach is written once by the first of them, a
@@ -31,39 +32,38 @@ import path, derived meshes, or rendering.
 - `voxelize` — `returns one output per source with the requested representation`, `writes one cell per shared
   cell, coloured by the first part that claims it`, `colours a cell only a later part claims from that part`,
   `places the payload at the union AABB of every part`, `treats a source with no parts like a soup with no
-  triangles`, `derives the octree depth from targetCellSize and clamps it to maxDepth`, `places each origin at the payload world min
+  triangles`, `places each origin at the payload world min
   corner`, `returns empty for soups with no triangles`, `returns unsupported-geometry for a malformed
-  soup`, `returns exceeds-grid for a uniform extent past the key range and for an octree root box
-  smaller than the source AABB, with detail naming the sourceId and the offending axis`, `exports
+  soup`, `returns exceeds-grid for a uniform extent past the key range, with detail naming the sourceId and
+  the offending axis`, `exports
   DEFAULT_CELL_BUDGET as 4_000_000`, `reports cancel and budget failures with no outputs`, `colors each
   cell from the three vertices of the triangle that claimed it`, `keeps every cell of a masked sample,
   colouring it with the visible average`
 
 ## Internal logic
-1. The main fixture is a closed 1.9 m cube of 12 axis-aligned triangles in world space at
-   `voxelSize = 0.5`. Touching a cell counts as a hit, even along a shared boundary plane, so the
-   expected result is the `4×4×4` block minus its `2×2×2` strictly interior cells: 56 cells. The side is
-   1.9 m and not 2 m deliberately: under the `floor(min / v) .. floor(max / v)` candidate range a 2 m
-   side spans five cell indices per axis and yields 98 cells, so a fixture that is exactly four cells
-   wide cannot produce 56.
+1. The main fixture is a closed 3.8-unit cube of 12 axis-aligned triangles in world space — one cell is
+   one world unit (README D41), so the cube spans a `4×4×4` cell block and sits just under four cells.
+   Touching a cell counts as a hit, even along a shared boundary plane, so the expected result is that
+   block minus its `2×2×2` strictly interior cells: 56 cells. The side is 3.8 and not 4 deliberately:
+   under the floor-based candidate range a side of exactly four units spans five cell indices per axis,
+   so a fixture that is exactly four cells wide cannot produce 56.
 2. Expected cells are literal `packKey` values, not a count, so an off-by-one in the min-corner
    convention fails instead of matching a wrong total.
 3. Cancel uses an `AbortController` aborted before the call; the budget case uses a limit below the
    measured count, so both failures are deterministic and independent of chunk boundaries.
-4. Conservativeness is pinned separately: one right triangle with 1.8 m legs in a plane is claimed by
+4. Conservativeness is pinned separately: one right triangle with 3.6-unit legs in a plane is claimed by
    exactly 10 cells, the ones satisfying `x + y ≤ 3`, even though its candidate AABB holds more. A
    candidate-range-only implementation fails this case.
-5. Both `'exceeds-grid'` cases use tiny soups with a wildly wrong target instead of a huge mesh: a
-   one-triangle source whose extent needs more than 512 cells per axis at the given `voxelSize`, and
-   the same source against an octree `rootSize` smaller than its AABB. `DEFAULT_CELL_BUDGET` is only
+5. The `'exceeds-grid'` case uses a long thin soup instead of a huge mesh: a one-triangle source whose
+   600-unit leg floors to 601 cells on X, past the 512 cells a payload may hold.
+   `DEFAULT_CELL_BUDGET` is only
    read as the exported constant — allocating that many cells to abort on it would not be a unit test.
 6. Every source is built through `sourceOf(sourceId, soup, baseColor)`, which wraps one soup in one
    `VoxelizePart` — the single-part case the rest of the file wants — while `partOf(soup, baseColor)`
    builds the parts of a multi-part source by hand. The parts cases use boxes plain enough to predict
-   exactly: two identical 1.9 m cubes (56 cells, one colour), a 1.9 m cube plus a 0.75 m cube four metres
-   away (56 + 8 cells, two colours, split at the cell the far cube starts on), and two 1 m cubes at
-   x = 2 and x = 0.3 (origin and cell bounds of their union, in both representations; the octree origin is
-   compared with a tolerance because the soup holds float32 coordinates).
+   exactly: two identical 3.8-unit cubes (56 cells, one colour), a 3.8-unit cube plus a 1.5-unit cube
+   eight units away (56 + 8 cells, two colours, split at the cell the far cube starts on), and two
+   2-unit cubes at x = 4 and x = 0.6 (the origin and the cell bounds of their union).
 7. Texture cases build every `ColorSource` by hand, so the file stays in the node environment (no
    canvas, no GPU): `quadrantTexture()` is a 2x2 texture whose four texels are red, green, blue and
    `(64, 128, 192)` in row-major readback order, and `flatUv(u, v)` is a triangle whose three vertices
@@ -82,20 +82,20 @@ import path, derived meshes, or rendering.
    the sampler's choice did.
 
 ## Invariants
-- Cell `(x, y, z)` spans `[x*v, (x+1)*v]` on each axis, and a `SurfaceCells` value is an index into
+- Cell `(x, y, z)` spans `[x, x + 1]` on each axis — cells are the world unit (README D41), so there is
+  no size in the request to vary — and a `SurfaceCells` value is an index into
   the input triangle array; no cell strictly inside the surface and none outside a triangle AABB.
 - A cell keeps the lowest triangle index that claims it.
 - A payload holds each cell once: two parts claiming the same cell leave one cell, coloured by the
   first part, and a cell only a later part claims is coloured by that part and counted in `grid.size`
   beside the first part's cells — so the same soup twice is 56 cells, not 112, and the cell count of a
   merged payload is measured, not argued.
-- The origin of a multi-part source is the union AABB's: floor of the union minimum to the cell size for
-  uniform, the union minimum itself for octree, with every part translated by that one origin. Two parts
-  far apart land on the cells their own coordinates predict from it.
+- The origin of a multi-part source is the union AABB's min corner floored to the lattice, with every part translated by that one
+  origin. Two parts far apart land on the cells their own coordinates predict from it.
 - A source with no parts behaves like a source whose soup has no triangles: alone it makes the run
   `'empty'`, and beside a source with geometry it keeps its slot with an empty payload at `(0, 0, 0)`.
 - Budget failure and cancellation return an error object with no partial cells and mutate nothing, and
-  a source that does not fit its target grid fails the whole request with `'exceeds-grid'` rather than
+  a source that does not fit the container fails the whole request with `'exceeds-grid'` rather than
   writing clamped, wrapped, or negative coordinates.
 - `resolvePrimitiveColor` returns the product of the source's factor, its base color texture at the
   triangle's UV centroid, and the triangle's first vertex color, always as the value
@@ -113,9 +113,7 @@ import path, derived meshes, or rendering.
   names another vertex first colors its cells with that vertex's color.
 - On success `outputs.length === sources.length`, `stats.cells` equals the summed occupied counts of
   the payloads, and `stats.triangles` equals the summed input triangle counts over every part.
-- Octree depth is `clamp(ceil(log2(rootSize / targetCellSize)), 1, maxDepth)`, the octree root box is
-  `[0, rootSize]³`, and each `origin` is the payload's world min corner, so uniform coordinates inside
-  a payload are non-negative.
+- Each `origin` is the payload's world min corner, so uniform coordinates inside a payload are non-negative.
 - `DEFAULT_CELL_BUDGET` is `4_000_000` and is the value the app passes as `budget`; `voxelize` itself
   defaults nothing.
 
@@ -124,22 +122,22 @@ import path, derived meshes, or rendering.
   `'unsupported-geometry'`, `'exceeds-grid'`, `'cancelled'`, and `'budget-exceeded'` from `voxelize`,
   all as returned results rather than throws.
 - `'unsupported-geometry'` is reserved for geometry that cannot be voxelized at all (a malformed
-  soup), while `'exceeds-grid'` covers both fit failures — a uniform extent past the `[-512, 511]` key
-  range and an octree root box smaller than the union AABB of a source's parts — so the two are not interchangeable here.
-- Throws are pinned only where they are a caller bug: `RangeError` for an invalid `voxelSize` or
+  soup), while `'exceeds-grid'` covers an extent that would leave the container's 512 cells per axis,
+  past the `[-512, 511]` key range, so the two are not interchangeable here.
+- Throws are pinned only where they are a caller bug: `RangeError` for an invalid
   `budget`, for a `triangleVertices` entry that is not a non-negative integer, for a `vertexColorSize`
   of 0, for a `uv`, `vertexColors`, or `pixels` attribute that does not cover the vertex or texel it is
   indexed with, and for a non-finite UV component or a non-positive texture dimension.
 - For `'exceeds-grid'` the suite asserts `detail` names the source `sourceId` and the offending axis
-  plus the measured quantity (uniform cells on that axis, or the octree AABB extent). That wording is
+  plus the measured quantity (the cell count on that axis). That wording is
   pinned by `voxels/voxelize/voxelize.md`, not by the brief.
 
 ## Dependencies
 `../src/voxels/voxelize/voxelize.js` for `voxelize` and `DEFAULT_CELL_BUDGET` — the limit the app and
 `editor/ops.ts` share, so an edit and a voxelization cannot disagree — plus the `VoxelizeSource` and
 `VoxelizePart` types the fixtures are built from, and `surface.js` and
-`colorSampler.js` under test; `../src/voxels/uniform/grid.js` for `packKey`, `CellKey`, `IntBox3`;
-`../src/voxels/octree/octree.js` for the octree payload; `three` for `Matrix4` (baking the fixtures
+`colorSampler.js` under test; `../src/voxels/uniform/grid.js` for `packKey` and `unpackKey`;
+`three` for `Matrix4` (baking the fixtures
 into world space), `Color`, `LinearSRGBColorSpace` and `SRGBColorSpace` (the documented conversions the
 stride-4 and visible-average expectations derive from), and `Vector3`; `AbortController` and
 `Uint8ClampedArray` from Node; `vitest`.

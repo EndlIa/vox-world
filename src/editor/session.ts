@@ -1,38 +1,53 @@
 import type { ObjectId, Project } from '../document/project.js';
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
-import type { LeafId } from '../voxels/octree/leafId.js';
 
-/** The one region an edit addresses: nothing, a uniform cell box, or one octree leaf. */
+/** The one region an edit addresses: nothing, or a uniform cell box. */
 export type Selection =
   | { kind: 'none' }
-  | { kind: 'box'; objectId: ObjectId; box: IntBox3 }
-  | { kind: 'leaf'; objectId: ObjectId; leafId: LeafId };
+  | { kind: 'box'; objectId: ObjectId; box: IntBox3 };
 
-export type ActiveTool = 'select' | 'box' | 'paint' | 'remove' | 'split' | 'merge' | 'detach';
+export type ActiveTool = 'select' | 'paint' | 'add' | 'remove';
 
-/** What the active object's voxels look like right now, and at which resolution. */
+/**
+ * What a press in the viewport is for. `object` transforms whole objects through the gizmo, `edit` works on
+ * the active object's voxels with the active tool. The two exclude each other — a press either transforms or
+ * edits — and the viewport's bottom switch is what sets this.
+ */
+export type EditorMode = 'object' | 'edit';
+
+/**
+ * What a press selects. `box` is the only shape so far, and the only variant `Selection` has: an
+ * inclusive cell region, one cell when the press and the release are the same cell.
+ */
+export type SelectionShape = 'box';
+
+/**
+ * What the active object's voxels look like right now: its representation, and — for a `uniform` object
+ * with occupied cells — how large that content is, per axis, in cells. Cells are the world unit
+ * (README D41), so this is a size in the unit the whole editor works in, not a length in metres.
+ */
 export type EditResolution = {
-  representation: 'empty' | 'uniform' | 'octree';
-  voxelSize?: number;
-  leafSize?: number;
+  representation: 'empty' | 'uniform';
+  cells?: [number, number, number];
 };
 
 const WHITE: HexColor = 0xffffff;
 const MAX_HEX_COLOR = 0xffffff;
 
 /**
- * The editing state no other module owns: active object, tool, selection, box height, and the
+ * The editing state no other module owns: active object, tool, selection, and the
  * subscriber list. It holds no project data, mutates no voxel container, and performs no edit —
  * the operations live in `./ops.js` and are invoked by the caller. Being DOM- and renderer-free is
  * what lets the HUD and the composition root read it without owning a canvas.
  */
 export class EditorSession {
   activeObjectId: ObjectId | null;
+  mode: EditorMode;
   activeTool: ActiveTool;
+  /** What a press selects while the active tool builds a region (see `SelectionShape`). */
+  selectionShape: SelectionShape;
   selection: Selection;
-  /** Fixed-height override for the box drag; any value `<= 1` means "no override". */
-  boxHeight: number;
-  /** Paint and box color, the appearance channel (never `SceneObject.maskColor`). */
+  /** Add and paint color, the appearance channel (never `SceneObject.maskColor`). */
   editColor: HexColor;
 
   private readonly project: Project;
@@ -41,51 +56,69 @@ export class EditorSession {
   constructor(project: Project) {
     this.project = project;
     this.activeObjectId = null;
+    this.mode = 'object';
     this.activeTool = 'select';
+    this.selectionShape = 'box';
     this.selection = { kind: 'none' };
-    this.boxHeight = 1;
     this.editColor = WHITE;
   }
 
-  /**
-   * Reads the project on every call, so the reported resolution cannot go stale. `leafSize` is
-   * present only while the current selection is a leaf of this object; there is no depth to report
-   * before a leaf has been picked.
-   */
+  /** Reads the project on every call, so the reported resolution cannot go stale. */
   resolutionOf(objectId: ObjectId): EditResolution | undefined {
     const object = this.project.get(objectId);
     if (object === undefined) return undefined;
     if (object.representation === 'uniform') {
       const grid = object.uniform;
       if (grid === undefined) return { representation: 'empty' };
-      return { representation: 'uniform', voxelSize: grid.voxelSize };
-    }
-    if (object.representation === 'octree') {
-      const octree = object.octree;
-      if (octree === undefined) return { representation: 'empty' };
-      const selection = this.selection;
-      if (selection.kind === 'leaf' && selection.objectId === objectId && octree.hasLeaf(selection.leafId)) {
-        return { representation: 'octree', leafSize: octree.leafSize(octree.leafBox(selection.leafId).depth) };
-      }
-      return { representation: 'octree' };
+      const bounds = grid.bounds();
+      if (bounds === null) return { representation: 'uniform' };
+      return {
+        representation: 'uniform',
+        cells: [
+          bounds.max[0] - bounds.min[0] + 1,
+          bounds.max[1] - bounds.min[1] + 1,
+          bounds.max[2] - bounds.min[2] + 1,
+        ],
+      };
     }
     return { representation: 'empty' };
   }
 
-  /** A selection names its object, so it never outlives a change of active object. */
+  /**
+   * A selection names its object, so it never outlives a change of active object. Clearing the active object also
+   * leaves the edit mode, because that mode edits one object's voxels and has nothing to do without one; the UI's
+   * two ways into it are disabled until an object is chosen again (README D39).
+   */
   setActiveObject(id: ObjectId | null): void {
     if (id !== null && this.project.get(id) === undefined) {
       throw new RangeError(`unknown object: ${id}`);
     }
     const changed = id !== this.activeObjectId;
     this.activeObjectId = id;
+    if (id === null) this.mode = 'object';
     if (id === null || changed) this.selection = { kind: 'none' };
     this.notify();
   }
 
-  /** Only assigns and notifies: `box`, `paint`, `remove` and `detach` share the box, `split` and `merge` the leaf. */
+  /**
+   * Only assigns and notifies, like `setTool`. Entering `object` mode drops the cell selection: a region is what
+   * the edit mode works on, and the gizmo mode has no use for one.
+   */
+  setMode(mode: EditorMode): void {
+    this.mode = mode;
+    if (mode === 'object') this.selection = { kind: 'none' };
+    this.notify();
+  }
+
+  /** Only assigns and notifies: `add`, `paint`, `remove` and `detach` share the box region. */
   setTool(tool: ActiveTool): void {
     this.activeTool = tool;
+    this.notify();
+  }
+
+  /** Only assigns and notifies, like `setTool`: the shapes are a closed union, so nothing is checked here. */
+  setSelectionShape(shape: SelectionShape): void {
+    this.selectionShape = shape;
     this.notify();
   }
 
@@ -96,18 +129,15 @@ export class EditorSession {
       if (object === undefined) {
         throw new RangeError(`unknown object: ${selection.objectId}`);
       }
-      if (selection.kind === 'box' && object.representation !== 'uniform') {
+      if (object.representation !== 'uniform') {
         throw new RangeError(`object ${selection.objectId} is ${object.representation}, not uniform`);
-      }
-      if (selection.kind === 'leaf' && object.representation !== 'octree') {
-        throw new RangeError(`object ${selection.objectId} is ${object.representation}, not octree`);
       }
     }
     this.selection = selection;
     this.notify();
   }
 
-  /** The color the paint and box tools write at commit time — an appearance value, never an identity. */
+  /** The color the add and paint tools write at commit time — an appearance value, never an identity. */
   setEditColor(color: HexColor): void {
     if (!Number.isFinite(color) || color < 0 || color > MAX_HEX_COLOR) {
       throw new RangeError(`edit color out of range: ${color}`);

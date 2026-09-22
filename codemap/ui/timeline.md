@@ -33,8 +33,12 @@ class TimelinePanel {
    parsed.
 4. Add reads the authoring value from project truth at the current time — the target's `transform.position`/`quaternion`/`scale` components, or
    `project.camera.transform` and `project.camera.fov` for the camera — builds a fresh `number[]` of the channel length (3, 4, or 1), and calls
-   `addKeyframe(project.timeline, target, channel, time, value)`. On `ok` it calls `refresh()` then `onEdited()`; on `bad-value-length` it writes
-   that literal into the panel's own message line and changes nothing (defensive — the length is correct by construction).
+   `addKeyframe(project.timeline, target, channel, time, value)`. The `position` channel is read through
+   `project.keyframePosition(target, transform.position)` — whole cells for an object that aligns, a copy of the placement for the camera and for an
+   unaligned object — so an aligned object's keyframes land on the lattice (README D42) even while its live placement is a sampled one; that is
+   `document/project.ts`'s rule, which decides the camera case, so this file never branches on the target kind for it. On `ok` it calls `refresh()`
+   then `onEdited()`; on `bad-value-length` it writes that literal into the panel's own message line and changes nothing (defensive — the length is
+   correct by construction).
 5. Move calls `moveKeyframe(project.timeline, target, channel, index, time)`, then `sortKeyframes(project.timeline)` because `moveKeyframe`
    re-sorts only the track it touched, then `refresh()` and `onEdited()`. A `false` (stale row) means the view is out of date: `refresh()` only.
 6. Delete calls `removeKeyframe` with the same `false` handling and otherwise `refresh()` plus `onEdited()`.
@@ -61,6 +65,8 @@ class TimelinePanel {
   channel.
 - `setTime` clamps into `[0, playback.duration]`, does not fire `onScrub`, does not change `playback` state, and renders identically when called
   twice with the same value.
+- A keyframe authored here stores whole cells for the `position` channel of an aligned object, and the mixer's interpolation between those cells is
+  untouched: the value is snapped once, as it is read from project truth, and no other channel this file writes is rounded.
 
 ## Errors
 `addKeyframe`'s `{ ok: false, error: 'bad-value-length' }` is shown verbatim in the panel's own message line, since `TimelineContext` carries no
@@ -71,7 +77,8 @@ class TimelinePanel {
 - `./dom.js` — `el`, `on`, `fmt` for construction, listener detach, and the time/fps readout.
 - `../document/timeline.js` — the mutators and the `TrackTarget`, `TrackChannel`, `Interpolation` types; that file owns the data and the ordering
   rules, so the panel owns none of that logic.
-- `../document/project.js` — `Project` for `timeline`, `camera`, and object transforms (ring 1).
+- `../document/project.js` — `Project` for `timeline`, `camera`, object transforms, and `keyframePosition`, the one rule a `position` keyframe is
+  read through (ring 1).
 - `../animation/playback.js` — `Playback` for transport and playhead display only (ring 1).
 - `../editor/session.js` — `EditorSession` for the active object that keys the object tracks (ring 3).
 - No outer-ring import and no `three` import of its own: keyframe values are read as plain numbers from the `Vector3`/`Quaternion` components the

@@ -2,9 +2,9 @@
  * The scene mirror.
  *
  * Exactly one `Object3D` per document object plus the output camera, plus the derived
- * `InstancedMesh` geometry that renders uniform cells and octree leaves. It owns every derived render
- * resource and both instance-to-cell/leaf reverse maps, and it owns no project data, no renderer, no
- * DOM, and never the viewport camera.
+ * `InstancedMesh` geometry that renders uniform cells. It owns every derived render resource and the
+ * instance-to-cell reverse map, and it owns no project data, no renderer, no DOM, and never the
+ * viewport camera.
  *
  * The mirror is also the single `AnimationMixer` root of the application, which is why every mirrored
  * node is named with its `ObjectId` and the output camera is named `camera` (README D22).
@@ -16,8 +16,7 @@
  */
 
 import type { ObjectId, Project, SceneObject } from '../document/project.js';
-import { decodeLeafId } from '../voxels/octree/leafId.js';
-import type { LeafId } from '../voxels/octree/leafId.js';
+import { CELL_SIZE } from '../voxels/uniform/grid.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
 
@@ -43,16 +42,6 @@ export type CellLookup = {
   colors: HexColor[];
 };
 
-export type LeafLookupItem = {
-  leafId: LeafId;
-  depth: number;
-  size: number;
-  occupied: boolean;
-  color: HexColor;
-};
-
-export type LeafLookup = { objectId: ObjectId; leaves: LeafLookupItem[] };
-
 /** One derived instanced mesh and the state `setMaskMode` has to stash and restore. */
 type VoxelMesh = {
   mesh: THREE.InstancedMesh;
@@ -64,25 +53,28 @@ type VoxelMesh = {
 type MirrorEntry = {
   node: THREE.Object3D;
   meshes: VoxelMesh[];
-  lookup: CellLookup | LeafLookup | undefined;
+  lookup: CellLookup | undefined;
 };
 
 /**
- * One object's imported raw meshes plus the baked node matrix of the mesh node they came from (README
- * D24, D25). The matrix is the raw mesh's anchor: `applySources` places the meshes by it, so they stay
- * exactly where the import put them however the object's own transform changes.
+ * One imported raw mesh and the baked matrix of the node it came from (README D24, D25). The matrix is
+ * that mesh's own anchor: `applySources` places the mesh by it, so it stays exactly where the import put
+ * it however the object's own transform changes.
+ *
+ * It is per mesh, not per object: one object holds every mesh of one import (README D28), and those nodes
+ * sit at different places, so a single matrix shared by the object's meshes would stack them all on the
+ * last attached node's pose.
  */
 type SourceRecord = {
-  meshes: THREE.Object3D[];
+  mesh: THREE.Object3D;
   nodeMatrix: THREE.Matrix4;
 };
 
 type UniformPayload = NonNullable<SceneObject['uniform']>;
-type OctreePayload = NonNullable<SceneObject['octree']>;
 
 export class SceneMirror {
   readonly scene: THREE.Scene;
-  /** The **output** camera: derived from `project.camera`, used for export and the aspect guide. */
+  /** The **output** camera: derived from `project.camera`, used for export and for FOV tracks. */
   readonly camera: THREE.PerspectiveCamera;
 
   private readonly project: Project;
@@ -95,7 +87,7 @@ export class SceneMirror {
    * mirror parents and shows them but never disposes them: they belong to the app, which drops them at
    * teardown (README D24, D25).
    */
-  private readonly sources = new Map<ObjectId, SourceRecord>();
+  private readonly sources = new Map<ObjectId, SourceRecord[]>();
   /** The global raw-mesh override; off, a source mesh shows only while its object has no payload. */
   private sourceVisibility = false;
   /** Scratch for `applySources`: one placement at a time, never held across a call. */
@@ -198,11 +190,57 @@ export class SceneMirror {
   }
 
   /**
-   * The instance -> cell or leaf reverse map of one object, filled from document data by the rebuild
-   * that created the instances. A material swap, `setMaskMode`, or a stale `instanceId` can therefore
-   * never change what picking or the HUD reports.
+   * Puts one object's mirrored node on this world matrix without touching the document: the live half of a
+   * gizmo drag, so the object follows the pointer instead of jumping when the gesture is released.
+   *
+   * The node's transform is local, so the parent's world matrix is divided out first (`worldMatrix`), the
+   * same conversion the commit to the document performs. A clean object's transform is never rewritten by
+   * `sync()` (README D22), which is why this write stands until the caller commits: the rebuild that commit
+   * triggers then re-derives the node from the document, which by then holds the same matrix.
    */
-  lookupOf(id: ObjectId): CellLookup | LeafLookup | undefined {
+  previewTransform(id: ObjectId, matrixWorld: THREE.Matrix4): void {
+    const entry = this.entries.get(id);
+    const object = this.project.objects.get(id);
+    if (entry === undefined || object === undefined) return;
+    const local = object.parentId === null
+      ? matrixWorld
+      : this.project.worldMatrix(object.parentId).invert().multiply(matrixWorld);
+    local.decompose(entry.node.position, entry.node.quaternion, entry.node.scale);
+  }
+
+  /**
+   * The local-space center of one object's own content: the mid-point of the occupied cells' bounding box
+   * for a `uniform` object, and the origin for anything else — an `'empty'` placeholder, or a payload with
+   * no occupied cell, neither of which has content of its own to sit in the middle of. Cells are the world
+   * unit (README D41), so the center is the mid-point of the box's two outer faces.
+   *
+   * Derived, never a document value: the document's transform keeps meaning "the world position of the
+   * object's local (0, 0, 0)", which after a voxelization is the payload's min corner (README D25). This is
+   * where the edit gizmo pivots (README D37), so its handles sit on the content instead of at that corner.
+   * A raw source mesh never moves the center: it is display-only and stays on the pose the import put it on
+   * however the object's own transform changes (README D25).
+   */
+  contentCenterOf(id: ObjectId): THREE.Vector3 {
+    const center = new THREE.Vector3();
+    const grid = this.project.objects.get(id)?.uniform;
+    if (grid === undefined) return center;
+    const bounds = grid.bounds();
+    if (bounds === null) return center;
+    // Cell `i` spans `[i, i + 1]`, so the box's center is half a cell past the average of its min and max.
+    const half = CELL_SIZE / 2;
+    return center.set(
+      (bounds.min[0] + bounds.max[0] + 1) * half,
+      (bounds.min[1] + bounds.max[1] + 1) * half,
+      (bounds.min[2] + bounds.max[2] + 1) * half,
+    );
+  }
+
+  /**
+   * The instance -> cell reverse map of one object, filled from document data by the rebuild that
+   * created the instances. A material swap, `setMaskMode`, or a stale `instanceId` can therefore never
+   * change what picking reports.
+   */
+  lookupOf(id: ObjectId): CellLookup | undefined {
     return this.entries.get(id)?.lookup;
   }
 
@@ -243,12 +281,16 @@ export class SceneMirror {
   attachSourceObject(id: ObjectId, source: THREE.Object3D, nodeWorldMatrix: THREE.Matrix4): void {
     source.userData['objectId'] = id;
     source.layers.set(SOURCE_LAYER);
+    const entry: SourceRecord = { mesh: source, nodeMatrix: nodeWorldMatrix.clone() };
     const recorded = this.sources.get(id);
     if (recorded === undefined) {
-      this.sources.set(id, { meshes: [source], nodeMatrix: nodeWorldMatrix.clone() });
+      this.sources.set(id, [entry]);
     } else {
-      if (!recorded.meshes.includes(source)) recorded.meshes.push(source);
-      recorded.nodeMatrix.copy(nodeWorldMatrix);
+      const existing = recorded.findIndex((candidate) => candidate.mesh === source);
+      // The same mesh attached twice stays one entry — `Array.findIndex` is the identity test — and a
+      // second attach of it refreshes the matrix it is placed by.
+      if (existing === -1) recorded.push(entry);
+      else recorded[existing] = entry;
     }
     this.applySources(id);
   }
@@ -281,7 +323,7 @@ export class SceneMirror {
    * The caller passes the camera that draws the viewport; the output camera is a document node the
    * user or the timeline owns and is never framed here (README D17). Layer-2 source meshes are measured
    * with the voxels, so an import frames the imported model itself before any payload exists; layer-1
-   * decorations are skipped, so the overlay and the aspect guide can never widen the frame.
+   * decorations are skipped, so the overlay can never widen the frame.
    */
   frameAll(camera: THREE.PerspectiveCamera): void {
     // The nodes have to exist before they can be measured, and their world matrices have to be
@@ -344,32 +386,28 @@ export class SceneMirror {
     const object = this.project.objects.get(id);
     if (entry === undefined || object === undefined) return;
 
-    const placement = this.sourcePlacement
-      .copy(this.project.worldMatrix(id))
-      .invert()
-      .multiply(recorded.nodeMatrix);
+    // The object's inverse world matrix, held in the scratch for the whole pass: each mesh's placement is
+    // its own node matrix seen from the object, so the mesh's world matrix is exactly the import's.
+    const inverseWorld = this.sourcePlacement.copy(this.project.worldMatrix(id)).invert();
     const visible = this.sourceVisibility || object.representation === 'empty';
-    for (const source of recorded.meshes) {
-      if (source.parent !== entry.node) entry.node.add(source);
-      source.matrix.copy(placement);
-      source.matrixAutoUpdate = false;
-      source.matrixWorldNeedsUpdate = true;
-      source.visible = visible;
+    for (const { mesh, nodeMatrix } of recorded) {
+      if (mesh.parent !== entry.node) entry.node.add(mesh);
+      mesh.matrix.copy(inverseWorld).multiply(nodeMatrix);
+      mesh.matrixAutoUpdate = false;
+      mesh.matrixWorldNeedsUpdate = true;
+      mesh.visible = visible;
     }
   }
 
-  /** Creates the node of one object and, for a voxel payload, its instances and its lookup. */
+  /** Creates the node of one object and, for a uniform payload, its instances and its lookup. */
   private rebuild(id: ObjectId, object: SceneObject): void {
     const previous = this.entries.get(id);
     if (previous !== undefined) this.releaseEntry(previous);
 
     const uniform = object.uniform;
-    const octree = object.octree;
     let entry: MirrorEntry;
     if (object.representation === 'uniform' && uniform !== undefined) {
       entry = this.buildUniform(id, uniform);
-    } else if (object.representation === 'octree' && octree !== undefined) {
-      entry = this.buildOctree(id, octree);
     } else {
       const node = new THREE.Group();
       node.name = id;
@@ -385,8 +423,7 @@ export class SceneMirror {
 
   /** One `InstancedMesh` over one cube per occupied cell, in `forEach` order. */
   private buildUniform(id: ObjectId, grid: UniformPayload): MirrorEntry {
-    const voxelSize = grid.voxelSize;
-    const geometry = new THREE.BoxGeometry(voxelSize, voxelSize, voxelSize);
+    const geometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
     const mesh = new THREE.InstancedMesh(geometry, this.shadingMaterial, grid.size);
     mesh.name = id;
     mesh.userData['objectId'] = id;
@@ -398,7 +435,8 @@ export class SceneMirror {
     const color = new THREE.Color();
     let instance = 0;
     grid.forEach((x, y, z, cellColor) => {
-      matrix.makeTranslation((x + 0.5) * voxelSize, (y + 0.5) * voxelSize, (z + 0.5) * voxelSize);
+      // Cell `(x, y, z)` spans `[x, x + 1]` on each axis, so its center is half a cell past its min corner.
+      matrix.makeTranslation(x + CELL_SIZE / 2, y + CELL_SIZE / 2, z + CELL_SIZE / 2);
       mesh.setMatrixAt(instance, matrix);
       color.setHex(cellColor);
       mesh.setColorAt(instance, color);
@@ -414,71 +452,6 @@ export class SceneMirror {
       meshes: [{ mesh, instanceColor: null, maskMaterial: null }],
       lookup: cells.length === 0 ? undefined : { objectId: id, cells, colors },
     };
-  }
-
-  /**
-   * One `InstancedMesh` per leaf-size bucket, deepest bucket first and ascending `LeafId` inside a
-   * bucket — the instance order the pick contract depends on. Each bucket is one geometry sized
-   * exactly to that depth's leaf edge, and the object-wide `leaves` array is their concatenation.
-   */
-  private buildOctree(id: ObjectId, octree: OctreePayload): MirrorEntry {
-    const buckets = new Map<number, { leafId: LeafId; occupied: boolean; color: HexColor }[]>();
-    octree.forEachOccupiedLeaf((leafId, attrs) => {
-      const depth = decodeLeafId(leafId).depth;
-      let bucket = buckets.get(depth);
-      if (bucket === undefined) {
-        bucket = [];
-        buckets.set(depth, bucket);
-      }
-      bucket.push({ leafId, occupied: attrs.occupied, color: attrs.color });
-    });
-
-    const node = new THREE.Group();
-    node.name = id;
-    node.userData['objectId'] = id;
-
-    const meshes: VoxelMesh[] = [];
-    const leaves: LeafLookupItem[] = [];
-    const matrix = new THREE.Matrix4();
-    const color = new THREE.Color();
-    const center = new THREE.Vector3();
-    let instanceBase = 0;
-
-    const ordered = [...buckets.entries()].sort((a, b) => b[0] - a[0]);
-    for (const [depth, bucket] of ordered) {
-      bucket.sort((a, b) => (a.leafId < b.leafId ? -1 : a.leafId > b.leafId ? 1 : 0));
-
-      const leafSize = octree.leafSize(depth);
-      const geometry = new THREE.BoxGeometry(leafSize, leafSize, leafSize);
-      const mesh = new THREE.InstancedMesh(geometry, this.shadingMaterial, bucket.length);
-      mesh.userData['objectId'] = id;
-      mesh.userData['instanceBase'] = instanceBase;
-
-      let instance = 0;
-      for (const leaf of bucket) {
-        leafCenter(leaf.leafId, leafSize, center);
-        matrix.makeTranslation(center.x, center.y, center.z);
-        mesh.setMatrixAt(instance, matrix);
-        color.setHex(leaf.color);
-        mesh.setColorAt(instance, color);
-        leaves.push({
-          leafId: leaf.leafId,
-          depth,
-          size: leafSize,
-          occupied: leaf.occupied,
-          color: leaf.color,
-        });
-        instance += 1;
-      }
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
-
-      node.add(mesh);
-      meshes.push({ mesh, instanceColor: null, maskMaterial: null });
-      instanceBase += bucket.length;
-    }
-
-    return { node, meshes, lookup: leaves.length === 0 ? undefined : { objectId: id, leaves } };
   }
 
   private enterMask(entry: MirrorEntry, object: SceneObject): void {
@@ -511,18 +484,4 @@ export class SceneMirror {
     entry.lookup = undefined;
     entry.node.removeFromParent();
   }
-}
-
-/** The leaf center in octree-local space, `(i + 0.5) * leafSize` with `i` built from the path digits. */
-function leafCenter(leafId: LeafId, leafSize: number, target: THREE.Vector3): THREE.Vector3 {
-  const { path } = decodeLeafId(leafId);
-  let x = 0;
-  let y = 0;
-  let z = 0;
-  for (const digit of path) {
-    x = (x << 1) | (digit & 1);
-    y = (y << 1) | ((digit >> 1) & 1);
-    z = (z << 1) | ((digit >> 2) & 1);
-  }
-  return target.set((x + 0.5) * leafSize, (y + 0.5) * leafSize, (z + 0.5) * leafSize);
 }

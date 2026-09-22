@@ -12,22 +12,11 @@
  */
 
 import type { ObjectId } from '../document/project.js';
-import type { LeafId } from '../voxels/octree/leafId.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
-import type { CellLookup, LeafLookup, LeafLookupItem, SceneMirror } from './scene.js';
+import type { SceneMirror } from './scene.js';
 
 export type PickHit =
-  | {
-      kind: 'leaf';
-      objectId: ObjectId;
-      leafId: LeafId;
-      depth: number;
-      size: number;
-      occupied: boolean;
-      color: HexColor;
-      point: THREE.Vector3;
-    }
   | {
       kind: 'cell';
       objectId: ObjectId;
@@ -48,15 +37,11 @@ export type SurfaceHit = {
   pointLocal: THREE.Vector3;
 };
 
-type Payload =
-  | { kind: 'leaf'; leaf: LeafLookupItem }
-  | { kind: 'cell'; cell: [number, number, number]; color: HexColor }
-  | { kind: 'object' };
+type Payload = { kind: 'cell'; cell: [number, number, number]; color: HexColor } | { kind: 'object' };
 
 /** One resolved hit, carrying only values the lookup provided. */
 type Candidate = {
   objectId: ObjectId;
-  depth: number;
   distance: number;
   point: THREE.Vector3;
   payload: Payload;
@@ -86,20 +71,6 @@ export class Picker {
 
     if (winner.payload.kind === 'object') {
       return { kind: 'object', objectId: winner.objectId, point: winner.point.clone() };
-    }
-
-    if (winner.payload.kind === 'leaf') {
-      const leaf = winner.payload.leaf;
-      return {
-        kind: 'leaf',
-        objectId: winner.objectId,
-        leafId: leaf.leafId,
-        depth: leaf.depth,
-        size: leaf.size,
-        occupied: leaf.occupied,
-        color: leaf.color,
-        point: winner.point.clone(),
-      };
     }
 
     return {
@@ -162,7 +133,7 @@ export class Picker {
       // does not test, so an off-screen mesh would otherwise steal every click on the voxels it
       // produced: the visibility of the whole chain is part of being pickable.
       if (!isVisible(hit.object)) return undefined;
-      return { objectId: ownerId, depth: 0, distance: hit.distance, point: hit.point, payload: { kind: 'object' } };
+      return { objectId: ownerId, distance: hit.distance, point: hit.point, payload: { kind: 'object' } };
     }
 
     const lookup = this.mirror.lookupOf(ownerId);
@@ -172,21 +143,11 @@ export class Picker {
     const index = instanceId + (typeof instanceBase === 'number' ? instanceBase : 0);
     const base = { objectId: ownerId, distance: hit.distance, point: hit.point };
 
-    if (isCellLookup(lookup)) {
-      const cell = lookup.cells[index];
-      const color = lookup.colors[index];
-      if (cell === undefined || color === undefined) return undefined;
-      return { ...base, depth: 0, payload: { kind: 'cell', cell: [cell[0], cell[1], cell[2]], color } };
-    }
-
-    const leaf = lookup.leaves[index];
-    if (leaf === undefined) return undefined;
-    return { ...base, depth: leaf.depth, payload: { kind: 'leaf', leaf } };
+    const cell = lookup.cells[index];
+    const color = lookup.colors[index];
+    if (cell === undefined || color === undefined) return undefined;
+    return { ...base, payload: { kind: 'cell', cell: [cell[0], cell[1], cell[2]], color } };
   }
-}
-
-function isCellLookup(lookup: CellLookup | LeafLookup): lookup is CellLookup {
-  return 'cells' in lookup;
 }
 
 /**
@@ -204,27 +165,18 @@ function isVisible(object: THREE.Object3D): boolean {
 }
 
 /**
- * The fixed overlap order (README D5): deeper leaf depth first, then the nearer hit, then ascending
- * `LeafId`. Cells rank as depth 0 and are separated by ascending `objectId` and then ascending
- * `(x, y, z)`, so the comparator is total and the same ray always yields the same hit.
+ * The fixed overlap order (README D5): the nearer hit, then ascending `objectId`, then ascending
+ * `(x, y, z)`, which keeps the comparator total, geometry-free and deterministic — the same ray always
+ * yields the same hit.
  *
  * A raw source mesh and a voxel instance are two surfaces of the same object that overlap by
- * construction, so they are not ordered by depth — only the nearer hit wins. Depth alone would let a
- * deep leaf behind the raw mesh it produced take the pick and hide the surface the user clicked.
+ * construction, so two hits of different kinds are separated by distance alone: a voxel instance behind
+ * the raw mesh it was produced from must not take the pick and hide the surface the user clicked.
  */
 function compareCandidates(a: Candidate, b: Candidate): number {
   if ((a.payload.kind === 'object') !== (b.payload.kind === 'object')) return a.distance - b.distance;
 
-  if (a.depth !== b.depth) return b.depth - a.depth;
   if (a.distance !== b.distance) return a.distance - b.distance;
-
-  const aLeafId = a.payload.kind === 'leaf' ? a.payload.leaf.leafId : undefined;
-  const bLeafId = b.payload.kind === 'leaf' ? b.payload.leaf.leafId : undefined;
-  if (aLeafId !== undefined && bLeafId !== undefined) {
-    return aLeafId < bLeafId ? -1 : aLeafId > bLeafId ? 1 : 0;
-  }
-  if (aLeafId !== undefined) return -1;
-  if (bLeafId !== undefined) return 1;
 
   if (a.objectId !== b.objectId) return a.objectId < b.objectId ? -1 : 1;
   if (a.payload.kind !== 'cell' || b.payload.kind !== 'cell') return 0;

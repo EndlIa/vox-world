@@ -29,7 +29,14 @@ export class Capture {
     this.frameWidth = opts.width;
     this.frameHeight = opts.height;
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true });
+    // The same logarithmic depth buffer the viewport uses: an exported frame must not fight where the
+    // viewport does not, and the output camera's own near and far are the document's business (README D40).
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: false,
+      alpha: false,
+      preserveDrawingBuffer: true,
+      logarithmicDepthBuffer: true,
+    });
     // Export pixels are exact: `devicePixelRatio` must never scale them, and the canvas has no style.
     this.renderer.setPixelRatio(1);
     this.renderer.setSize(opts.width, opts.height, false);

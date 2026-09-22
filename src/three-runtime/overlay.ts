@@ -1,17 +1,17 @@
 /**
  * Transient viewport feedback.
  *
- * Draws the box-drag preview frame and the picked leaf's bounds wireframe. It is strictly
- * presentational: one wireframe object, rewritten per update, holding no persistent state, no document
- * reference, and no source data. Layer 1 keeps it out of both consumers — the picker's raycaster tests
- * layer 0 only and the export camera enables layer 0 only (README D24).
+ * Draws the box-drag preview frame. It is strictly presentational: one wireframe object, rewritten per
+ * update, holding no persistent state, no document reference, and no source data. Layer 1 keeps it out
+ * of both consumers — the picker's raycaster tests layer 0 only and the export camera enables layer 0
+ * only (README D24).
  */
 
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
 import { normalizeBox } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
 
-/** The viewport decoration layer (README D24); `controls.ts` uses the same number for its guide. */
+/** The viewport decoration layer (README D24); `controls.ts` uses the same number for its gizmo. */
 const OVERLAY_LAYER = 1;
 const DEFAULT_COLOR: HexColor = 0x38bdf8;
 const OVERLAY_RENDER_ORDER = 1000;
@@ -63,48 +63,28 @@ export class Overlay {
   /**
    * Shows the inclusive integer box an edit will write, in the owning object's space.
    *
-   * The box is min-corner indexed in cells, so its local extents are `min * voxelSize` to
-   * `(max + 1) * voxelSize`, and the wireframe matrix is
+   * The box is min-corner indexed in cells and a cell is the world unit (README D41), so its local
+   * extents are `min` to `max + 1` and the wireframe matrix is
    * `matrixWorld * translate(center) * scale(size)`.
    */
-  showBox(boxLocal: IntBox3, voxelSize: number, matrixWorld: THREE.Matrix4, color: HexColor = DEFAULT_COLOR): void {
-    if (!Number.isFinite(voxelSize) || voxelSize <= 0) {
-      throw new RangeError(`Overlay.showBox: voxelSize must be a finite positive number, got ${voxelSize}`);
-    }
+  showBox(boxLocal: IntBox3, matrixWorld: THREE.Matrix4, color: HexColor = DEFAULT_COLOR): void {
     if (!(matrixWorld instanceof THREE.Matrix4)) {
       throw new TypeError('Overlay.showBox: matrixWorld must be a THREE.Matrix4');
     }
     requireIntegerCorners(boxLocal);
 
     const box = normalizeBox(boxLocal.min, boxLocal.max);
-    const minX = box.min[0] * voxelSize;
-    const minY = box.min[1] * voxelSize;
-    const minZ = box.min[2] * voxelSize;
-    const maxX = (box.max[0] + 1) * voxelSize;
-    const maxY = (box.max[1] + 1) * voxelSize;
-    const maxZ = (box.max[2] + 1) * voxelSize;
+    const minX = box.min[0];
+    const minY = box.min[1];
+    const minZ = box.min[2];
+    const maxX = box.max[0] + 1;
+    const maxY = box.max[1] + 1;
+    const maxZ = box.max[2] + 1;
 
     _placement.makeTranslation((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
     _placement.multiply(_scale.makeScale(maxX - minX, maxY - minY, maxZ - minZ));
     _placement.premultiply(matrixWorld);
     _placement.decompose(this.lines.position, this.lines.quaternion, this.lines.scale);
-
-    this.material.color.setHex(color);
-    this.lines.visible = true;
-  }
-
-  /** Shows one leaf's bounds, centered on a world-space point. */
-  showLeafBounds(centerWorld: THREE.Vector3, size: number, color: HexColor = DEFAULT_COLOR): void {
-    if (!Number.isFinite(size) || size <= 0) {
-      throw new RangeError(`Overlay.showLeafBounds: size must be a finite positive number, got ${size}`);
-    }
-    if (!(centerWorld instanceof THREE.Vector3)) {
-      throw new TypeError('Overlay.showLeafBounds: centerWorld must be a THREE.Vector3');
-    }
-
-    this.lines.position.copy(centerWorld);
-    this.lines.quaternion.identity();
-    this.lines.scale.set(size, size, size);
 
     this.material.color.setHex(color);
     this.lines.visible = true;
