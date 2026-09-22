@@ -13,16 +13,14 @@ export type ExportRequest = {
   output: { width: number; height: number; fps: number; from: number; to: number; mode: 'beauty' | 'mask' };
 };
 
-export type ExportProgress = { frame: number; total: number };
-
 export type ExportResult =
   | { ok: true; blob: Blob; codec: string; frames: number }
   | { ok: false; error: 'cancelled' | 'no-codec' | 'encoder-failed' | 'not-finalized' | 'no-frames'; detail: string };
 
 /**
  * Walks the requested timeline range at frame rate, samples it frame-exactly, renders each frame at
- * export resolution through the output camera, and feeds the encoder. It reports progress, honours
- * cancellation, and never mutates the project: an export cannot corrupt authored data.
+ * the requested resolution through the output camera, and feeds the encoder. It honours cancellation
+ * and never mutates the project: an export cannot corrupt authored data.
  */
 export class ExportJob {
   private readonly mirror: SceneMirror;
@@ -33,7 +31,6 @@ export class ExportJob {
 
   async run(
     request: ExportRequest,
-    onProgress: (p: ExportProgress) => void,
     signal?: AbortSignal,
   ): Promise<ExportResult> {
     const { capture, playback, scene, output } = request;
@@ -62,7 +59,7 @@ export class ExportJob {
       if (mode === 'mask') this.mirror.setMaskMode(true);
       for (let i = 0; i < total; i++) {
         if (signal?.aborted === true) {
-          return { ok: false, error: 'cancelled', detail: `export cancelled at frame ${i} of ${total}` };
+          return { ok: false, error: 'cancelled', detail: `render cancelled at frame ${i} of ${total}` };
         }
         playback.setTime(from + i / fps);
         capture.render(scene, this.mirror.camera);
@@ -71,7 +68,6 @@ export class ExportJob {
           return { ok: false, error: 'encoder-failed', detail: `capture: ${frame.detail}` };
         }
         writer.push(frame.bitmap, i);
-        onProgress({ frame: i + 1, total });
         await new Promise<void>((resolve) => {
           setTimeout(resolve, 0);
         });

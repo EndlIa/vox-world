@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { Project, type ObjectId, type SceneObject } from '../src/document/project.js';
 import { addKeyframe, findTrack, type TrackTarget } from '../src/document/timeline.js';
 import { UniformGrid } from '../src/voxels/uniform/grid.js';
-import { Octree } from '../src/voxels/octree/octree.js';
 
 const CAMERA: TrackTarget = { kind: 'camera' };
 
@@ -217,45 +216,31 @@ describe('remove', () => {
 });
 
 describe('setPayload', () => {
-  function payloadFixtures() {
-    const grid = UniformGrid.create(1);
+  function payloadFixture(): UniformGrid {
+    const grid = UniformGrid.create();
     grid.set(0, 0, 0, 0xff0000);
-    const octree = Octree.create({ rootSize: 4, maxDepth: 2 });
-    octree.setLeaf('0:', { occupied: true, color: 0x00ff00 });
-    return { grid, octree };
+    return grid;
   }
 
-  it('moves empty -> uniform -> empty and empty -> octree -> empty', () => {
+  it('moves empty -> uniform -> empty', () => {
     const project = new Project();
-    const { grid, octree } = payloadFixtures();
+    const grid = payloadFixture();
     const object = project.createObject({ name: 'placeholder', representation: 'empty' });
     expect(object.representation).toBe('empty');
 
     project.setPayload(object.id, { kind: 'uniform', grid });
     expect(object.representation).toBe('uniform');
     expect(object.uniform).toBe(grid);
-    expect(object.octree).toBeUndefined();
 
     project.setPayload(object.id, undefined);
     expect(object.representation).toBe('empty');
     expect(object.uniform).toBeUndefined();
-    expect(object.octree).toBeUndefined();
-
-    project.setPayload(object.id, { kind: 'octree', octree });
-    expect(object.representation).toBe('octree');
-    expect(object.octree).toBe(octree);
-    expect(object.uniform).toBeUndefined();
-
-    project.setPayload(object.id, undefined);
-    expect(object.representation).toBe('empty');
-    expect(object.uniform).toBeUndefined();
-    expect(object.octree).toBeUndefined();
     expect(project.objects.get(object.id)).toBe(object);
   });
 
   it('leaves id, name, parentId, maskColor, transform, and visible untouched', () => {
     const project = new Project();
-    const { grid, octree } = payloadFixtures();
+    const grid = payloadFixture();
     const parent = project.createObject({ name: 'parent', representation: 'empty' });
     const object = project.createObject({
       name: 'placeholder',
@@ -279,7 +264,6 @@ describe('setPayload', () => {
     };
 
     project.setPayload(object.id, { kind: 'uniform', grid });
-    project.setPayload(object.id, { kind: 'octree', octree });
     project.setPayload(object.id, undefined);
 
     expect(object.id).toBe(snapshot.id);
@@ -294,9 +278,9 @@ describe('setPayload', () => {
     expect(project.get(object.id)).toBe(object);
   });
 
-  it('keeps representation and payload consistent in both directions', () => {
+  it('keeps representation and payload consistent', () => {
     const project = new Project();
-    const { grid, octree } = payloadFixtures();
+    const grid = payloadFixture();
     const object = project.createVoxelObject({
       name: 'terrain',
       maskColor: 0x112233,
@@ -305,21 +289,14 @@ describe('setPayload', () => {
     });
     expect(object.representation).toBe('uniform');
     expect(object.uniform).toBe(grid);
-    expect(object.octree).toBeUndefined();
 
-    project.setPayload(object.id, { kind: 'octree', octree });
-    expect(object.representation).toBe('octree');
-    expect(object.octree).toBe(octree);
-    expect(object.uniform).toBeUndefined();
-    expect(object.maskColor).toBe(0x112233);
-
-    const otherGrid = UniformGrid.create(2);
+    const otherGrid = UniformGrid.create();
     otherGrid.set(-1, 0, 0, 0x0000ff);
     project.setPayload(object.id, { kind: 'uniform', grid: otherGrid });
     expect(object.representation).toBe('uniform');
     expect(object.uniform).toBe(otherGrid);
-    expect(object.octree).toBeUndefined();
     expect(object.uniform?.size).toBe(1);
+    expect(object.maskColor).toBe(0x112233);
   });
 });
 
@@ -358,6 +335,84 @@ describe('worldMatrix', () => {
         .compose(parent.transform.position, parent.transform.quaternion, parent.transform.scale)
         .elements,
     );
+  });
+});
+
+describe('grid alignment', () => {
+  it('starts every object it creates aligned', () => {
+    const project = new Project();
+    const group = project.createObject({ name: 'group', representation: 'empty' });
+    const voxel = project.createVoxelObject({
+      name: 'voxel',
+      maskColor: 0x112233,
+      payload: { kind: 'uniform', grid: UniformGrid.create() },
+      position: new Vector3(1, 2, 3),
+    });
+    expect(group.alignToGrid).toBe(true);
+    expect(voxel.alignToGrid).toBe(true);
+
+    // A placement an operation derived is left where it is, and the flag is what follows it: content that
+    // arrived between cells is not snapped into them, it is simply not claimed to be on the lattice.
+    const offLattice = project.createVoxelObject({
+      name: 'off-lattice',
+      maskColor: 0x445566,
+      payload: { kind: 'uniform', grid: UniformGrid.create() },
+      position: new Vector3(0.5, 2, -3),
+    });
+    expect(offLattice.alignToGrid).toBe(false);
+  });
+
+  it('rounds a placement to the nearest cell while the object aligns', () => {
+    const project = new Project();
+    const aligned = project.createObject({ name: 'aligned', representation: 'empty' });
+    const free = project.createObject({ name: 'free', representation: 'empty' });
+    free.alignToGrid = false;
+    const fraction = new Vector3(1.4, -2.5, 3.5);
+
+    expect(project.alignedPosition(aligned.id, fraction).toArray()).toEqual([1, -2, 4]);
+    const untouched = project.alignedPosition(free.id, fraction);
+    expect(untouched.toArray()).toEqual([1.4, -2.5, 3.5]);
+    expect(untouched).not.toBe(fraction);
+    expect(project.alignedPosition(UNKNOWN_ID, fraction).toArray()).toEqual([1.4, -2.5, 3.5]);
+  });
+
+  it('gives a keyframe whole cells for an aligned object, and the placement itself to every other target', () => {
+    const project = new Project();
+    const object = project.createObject({ name: 'object', representation: 'empty' });
+    const fraction = new Vector3(2.4, -1.6, 0.6);
+
+    expect(project.keyframePosition(objectTarget(object.id), fraction).toArray()).toEqual([2, -2, 1]);
+    object.alignToGrid = false;
+    expect(project.keyframePosition(objectTarget(object.id), fraction).toArray()).toEqual([2.4, -1.6, 0.6]);
+    expect(project.keyframePosition(CAMERA, fraction).toArray()).toEqual([2.4, -1.6, 0.6]);
+  });
+
+  it("snaps a world matrix in the object's own frame, without touching the argument", () => {
+    const project = new Project();
+    const parent = project.createObject({ name: 'parent', representation: 'empty' });
+    parent.transform.position.set(4, 0, -2);
+    parent.transform.quaternion.setFromEuler(new Euler(0.3, -0.7, 0.2));
+    const child = project.createObject({ name: 'child', parentId: parent.id, representation: 'empty' });
+    // Away from the half cell: at exactly 0.5 the parent round trip's last bits decide which way the
+    // nearest cell falls, which is the one placement the rule cannot promise a direction for.
+    child.transform.position.set(2.4, -1.6, 0.6);
+
+    const world = project.worldMatrix(child.id);
+    const before = world.elements.slice();
+    const aligned = project.alignWorldMatrix(child.id, world);
+
+    // The frame is the child's own: dividing the parent back out has to leave whole cells behind, whatever
+    // the parent's rotation does to the world-space placement.
+    const local = project.worldMatrix(parent.id).invert().multiply(aligned);
+    expect(local.elements.slice(12, 15).map((value) => Math.round(value))).toEqual([2, -2, 1]);
+    expect(world.elements).toEqual(before);
+
+    const free = project.createObject({ name: 'free', representation: 'empty' });
+    free.alignToGrid = false;
+    free.transform.position.set(0.25, 0.25, 0.25);
+    expect(project.alignWorldMatrix(free.id, project.worldMatrix(free.id)).elements.slice(12, 15)).toEqual([
+      0.25, 0.25, 0.25,
+    ]);
   });
 });
 

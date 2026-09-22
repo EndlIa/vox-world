@@ -1,7 +1,6 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import type { HexColor, UniformGrid } from '../voxels/uniform/grid.js';
-import type { Octree } from '../voxels/octree/octree.js';
-import { removeTracksFor, type Timeline } from './timeline.js';
+import { removeTracksFor, type Timeline, type TrackTarget } from './timeline.js';
 
 export type ObjectId = string;
 export type Transform = {
@@ -9,7 +8,7 @@ export type Transform = {
   quaternion: Quaternion;
   scale: Vector3;
 };
-export type Representation = 'empty' | 'uniform' | 'octree';
+export type Representation = 'empty' | 'uniform';
 export type SceneObject = {
   id: ObjectId;
   name: string;
@@ -17,9 +16,14 @@ export type SceneObject = {
   transform: Transform;
   representation: Representation;
   uniform?: UniformGrid;
-  octree?: Octree;
   maskColor: HexColor;
   visible: boolean;
+  /**
+   * While set, the object's own placement holds whole cells, so its voxels sit on the world grid the lattice
+   * is (README D42, on D41's unit). Switched off, the object may sit between cells. A voxel object is created
+   * with the flag already set when the placement it was given is whole, and unset when it is not.
+   */
+  alignToGrid: boolean;
 };
 export type CameraSettings = {
   fov: number;
@@ -39,6 +43,22 @@ const DEFAULT_FOV = 50;
 const DEFAULT_NEAR = 0.1;
 const DEFAULT_FAR = 2000;
 const DEFAULT_FPS = 30;
+/**
+ * The scene background, and the one place it is defined. `index.html` mirrors it as `--scene`, so the
+ * page behind the canvas matches and a sub-pixel seam is not a darker line; the previous project's
+ * editor uses the same slate, where the value is read from its stylesheet as `COL_SCENE_BG`. It is kept
+ * here rather than read from the stylesheet so that editing CSS cannot change an exported video.
+ */
+const DEFAULT_BACKGROUND: HexColor = 0x3d4250;
+
+/**
+ * Whether a placement is already whole cells, which is what an aligned object holds (README D42). An object
+ * whose placement an operation derived — detach, under a parent that is turned or off the lattice — is created
+ * unaligned rather than snapped: snapping it would move content that operation promised to leave in place.
+ */
+function isOnLattice(position: Vector3): boolean {
+  return Number.isInteger(position.x) && Number.isInteger(position.y) && Number.isInteger(position.z);
+}
 
 function identityTransform(): Transform {
   return {
@@ -61,7 +81,7 @@ export class Project {
     far: DEFAULT_FAR,
     transform: identityTransform(),
   };
-  readonly settings: ProjectSettings = { background: 0x000000, ambientIntensity: 1 };
+  readonly settings: ProjectSettings = { background: DEFAULT_BACKGROUND, ambientIntensity: 1 };
   readonly timeline: Timeline = { duration: 0, fps: DEFAULT_FPS, tracks: [] };
 
   private nextId = 0;
@@ -87,6 +107,7 @@ export class Project {
       representation: 'empty',
       maskColor: this.nextMaskColor(),
       visible: true,
+      alignToGrid: true,
     };
     this.objects.set(object.id, object);
     return object;
@@ -96,7 +117,7 @@ export class Project {
     name: string;
     parentId?: ObjectId | null;
     maskColor: HexColor;
-    payload: { kind: 'uniform'; grid: UniformGrid } | { kind: 'octree'; octree: Octree };
+    payload: { kind: 'uniform'; grid: UniformGrid };
     position: Vector3;
   }): SceneObject {
     const parentId = init.parentId ?? null;
@@ -111,44 +132,30 @@ export class Project {
       representation: init.payload.kind,
       maskColor: init.maskColor,
       visible: true,
+      alignToGrid: isOnLattice(transform.position),
     };
-    if (init.payload.kind === 'uniform') object.uniform = init.payload.grid;
-    else object.octree = init.payload.octree;
+    object.uniform = init.payload.grid;
     this.objects.set(object.id, object);
     return object;
   }
 
   /**
    * The only mutator that writes `representation` and the payload fields. It touches nothing else:
-   * `transform`, `name`, `parentId`, `maskColor`, and `visible` are left as they were, and no dirty
-   * flag is set — the caller marks the object dirty for the mirror (D4).
+   * `transform`, `name`, `parentId`, `maskColor`, `visible`, and `alignToGrid` are left as they were, and
+   * no dirty flag is set — the caller marks the object dirty for the mirror (D4).
    */
-  setPayload(
-    id: ObjectId,
-    payload:
-      | { kind: 'uniform'; grid: UniformGrid }
-      | { kind: 'octree'; octree: Octree }
-      | undefined,
-  ): void {
+  setPayload(id: ObjectId, payload: { kind: 'uniform'; grid: UniformGrid } | undefined): void {
     const object = this.get(id);
     if (object === undefined) {
       throw new RangeError(`setPayload: unknown object id ${id}`);
     }
     if (payload === undefined) {
       delete object.uniform;
-      delete object.octree;
       object.representation = 'empty';
       return;
     }
-    if (payload.kind === 'uniform') {
-      object.uniform = payload.grid;
-      delete object.octree;
-      object.representation = 'uniform';
-    } else {
-      object.octree = payload.octree;
-      delete object.uniform;
-      object.representation = 'octree';
-    }
+    object.uniform = payload.grid;
+    object.representation = 'uniform';
   }
 
   get(id: ObjectId): SceneObject | undefined {
@@ -228,6 +235,47 @@ export class Project {
       out.multiply(local);
     }
     return out;
+  }
+
+  /**
+   * The placement an aligned object may take (README D42): the nearest lattice cell, per axis. A cell is the
+   * world unit (README D41), so rounding a placement is what puts the object's voxels on the world grid.
+   *
+   * An object that does not align, and an unknown id, get a copy of `position`, so a caller can route every
+   * placement write through here without testing the flag itself.
+   */
+  alignedPosition(id: ObjectId, position: Vector3): Vector3 {
+    const object = this.get(id);
+    if (object === undefined || !object.alignToGrid) return position.clone();
+    return new Vector3(Math.round(position.x), Math.round(position.y), Math.round(position.z));
+  }
+
+  /**
+   * The placement a keyframe may store for a target (README D42). An object that aligns gets whole cells, exactly
+   * as a direct transform write does, so everything a track holds is on the lattice; every other target keeps the
+   * placement it was given.
+   *
+   * The camera is one of those: it is not a scene object, its placement is a viewpoint rather than voxel content,
+   * and a camera confined to whole cells could not frame anything. Nothing here constrains what the mixer
+   * interpolates between two returned placements — smooth motion between cells is the point of a track.
+   */
+  keyframePosition(target: TrackTarget, position: Vector3): Vector3 {
+    return target.kind === 'object' ? this.alignedPosition(target.objectId, position) : position.clone();
+  }
+
+  /**
+   * The world matrix an aligned object may take: `alignedPosition`'s rule applied in the object's own frame,
+   * so a gizmo drag previews exactly what its commit will store instead of jumping on release (README D42).
+   *
+   * Returns `matrix` itself for an object that does not align and for an unknown id, and never mutates it.
+   */
+  alignWorldMatrix(id: ObjectId, matrix: Matrix4): Matrix4 {
+    const object = this.get(id);
+    if (object === undefined || !object.alignToGrid) return matrix;
+    const parent = object.parentId === null ? undefined : this.worldMatrix(object.parentId);
+    const local = parent === undefined ? matrix.clone() : parent.clone().invert().multiply(matrix);
+    local.setPosition(this.alignedPosition(id, new Vector3().setFromMatrixPosition(local)));
+    return parent === undefined ? local : parent.multiply(local);
   }
 
   /** Palette walk: a plain cursor increment, so two fresh projects produce the same sequence. */

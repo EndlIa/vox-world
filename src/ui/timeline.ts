@@ -233,7 +233,12 @@ export class TimelinePanel {
     const transform =
       target.kind === 'camera' ? this.context.project.camera.transform : this.context.project.get(target.objectId)?.transform;
     if (transform === undefined) return undefined;
-    if (channel === 'position') return [transform.position.x, transform.position.y, transform.position.z];
+    // An aligned object's keyframes land on the lattice (README D42) even while its live placement is a
+    // sampled one, which interpolation between two cells is free to produce.
+    if (channel === 'position') {
+      const position = this.context.project.keyframePosition(target, transform.position);
+      return [position.x, position.y, position.z];
+    }
     if (channel === 'quaternion') {
       return [transform.quaternion.x, transform.quaternion.y, transform.quaternion.z, transform.quaternion.w];
     }

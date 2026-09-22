@@ -64,6 +64,13 @@ export type ImportedScene = {
   /** The GLB scene's name, or `DEFAULT_SCENE_NAME` when the file names no scene. */
   name: string;
   root: THREE.Object3D;
+  /**
+   * The longest edge of `voxelizeBounds` as the file authored it, before any scaling. One voxel is one
+   * world unit (README D41), so `scaleImportedScene` divides a requested voxel count by this to get the
+   * factor that puts the model on the lattice; keeping the authored number makes that factor absolute
+   * rather than relative to whatever scale is currently applied.
+   */
+  authoredExtent: number;
   nodes: ImportedNode[];
   /** Every node's bounds, outline shells included: this is what framing has to fit, because all of them are displayed. */
   bounds: THREE.Box3;
@@ -170,7 +177,10 @@ export async function importGlb(data: ArrayBuffer): Promise<ImportResult> {
     if (!node.outline) voxelizeBounds.expandByObject(node.sourceMesh);
   }
 
-  return { ok: true, scene: { name: sceneName, root, nodes, bounds, voxelizeBounds } };
+  return {
+    ok: true,
+    scene: { name: sceneName, root, nodes, bounds, voxelizeBounds, authoredExtent: longestEdge(voxelizeBounds) },
+  };
 }
 
 /** The material name of a dedicated outline shell, matched after trimming and lowercasing. */
@@ -281,6 +291,47 @@ export function adoptImportedScene(
 
   const object = project.createObject({ name: scene.name, representation: 'empty' });
   return { objectId: object.id, sourceId: `scene-${scene.name}` };
+}
+
+
+/** The longest edge of a box, or `0` for an empty one; the extent a voxel count is divided by. */
+function longestEdge(bounds: THREE.Box3): number {
+  const size = bounds.getSize(new THREE.Vector3());
+  return Math.max(size.x, size.y, size.z);
+}
+
+/**
+ * Scales one imported scene so its longest voxelized edge is exactly `cellsAcross` cells — and, since a
+ * cell is one world unit (README D41), `cellsAcross` world units. Every mesh node's baked matrix and
+ * both bounds move with it, so the raw meshes the viewport draws stay exactly on the pose the scaled
+ * source voxelizes (README D21, D24, D25).
+ *
+ * The factor is absolute, computed against the extent the file authored (`authoredExtent`): calling this
+ * twice with one count changes nothing, and calling it with another rescales the model instead of
+ * compounding. Only a uniform scale is applied and no translation, so the model keeps the position the
+ * file gave it.
+ *
+ * The scale lives on `root`, which carries no transform of its own — a glTF scene node has none — so a
+ * recomputed `Box3.setFromObject(root)` agrees with the nodes and the bounds again. A scene whose
+ * voxelized content has no extent (every node an outline, or geometry without size) has no factor to
+ * apply and is returned as it is.
+ */
+export function scaleImportedScene(scene: ImportedScene, cellsAcross: number): ImportedScene {
+  if (!Number.isInteger(cellsAcross) || cellsAcross < 1) {
+    throw new RangeError(`scaleImportedScene: cellsAcross must be a positive integer, got ${cellsAcross}`);
+  }
+  if (!Number.isFinite(scene.authoredExtent) || scene.authoredExtent <= 0) return scene;
+
+  scene.root.scale.setScalar(cellsAcross / scene.authoredExtent);
+  scene.root.updateMatrixWorld(true);
+
+  const nodes = scene.nodes.map((node) => ({ ...node, matrixWorld: node.sourceMesh.matrixWorld.clone() }));
+  const bounds = new THREE.Box3().setFromObject(scene.root);
+  const voxelizeBounds = new THREE.Box3();
+  for (const node of nodes) {
+    if (!node.outline) voxelizeBounds.expandByObject(node.sourceMesh);
+  }
+  return { ...scene, nodes, bounds, voxelizeBounds };
 }
 
 /** Validates the GLB container and decodes its JSON chunk. */

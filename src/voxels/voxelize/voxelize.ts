@@ -1,13 +1,7 @@
 import { Vector3 } from 'three';
-import { Octree } from '../octree/octree.js';
 import { UniformGrid, unpackKey, type CellKey, type HexColor } from '../uniform/grid.js';
 import { resolvePrimitiveColor, type ColorSource } from './colorSampler.js';
 import { voxelizeSurface, type TriangleSoup } from './surface.js';
-
-/** Target representation and its resolution parameters. */
-export type VoxelizeTarget =
-  | { kind: 'uniform'; voxelSize: number }
-  | { kind: 'octree'; rootSize: number; maxDepth: number; targetCellSize: number };
 
 /** One part of a source: a world-space soup and the color source its cells are sampled from. */
 export type VoxelizePart = {
@@ -30,7 +24,6 @@ export type VoxelizeSource = {
 
 export type VoxelizeRequest = {
   sources: VoxelizeSource[];
-  target: VoxelizeTarget;
   budget: number;
   onProgress?: (ratio: number) => void;
   signal?: AbortSignal;
@@ -39,7 +32,7 @@ export type VoxelizeRequest = {
 export type VoxelizeOutput = {
   sourceId: string;
   name: string;
-  payload: { kind: 'uniform'; grid: UniformGrid } | { kind: 'octree'; octree: Octree };
+  payload: { kind: 'uniform'; grid: UniformGrid };
   origin: Vector3; // world-space position of the payload's local (0, 0, 0)
 };
 
@@ -67,19 +60,10 @@ type Failure = Extract<VoxelizeResult, { ok: false }>;
 
 type Aabb = { min: [number, number, number]; max: [number, number, number] };
 
-/** Where one source's payload lives: aligned origin, cell size, and the octree depth it uses. */
-type Placement =
-  | { kind: 'uniform'; cellSize: number; origin: readonly [number, number, number] }
-  | {
-      kind: 'octree';
-      cellSize: number;
-      origin: readonly [number, number, number];
-      depth: number;
-      rootSize: number;
-      maxDepth: number;
-    };
+/** Where one source's payload lives: the lattice-aligned origin of its local `(0, 0, 0)`. */
+type Origin = readonly [number, number, number];
 
-type PlannedSource = { source: VoxelizeSource; placement: Placement; triangles: number };
+type PlannedSource = { source: VoxelizeSource; triangles: number; origin: Origin };
 
 function cancelled(): Failure {
   return {
@@ -87,24 +71,6 @@ function cancelled(): Failure {
     error: 'cancelled',
     detail: 'voxelization cancelled; the scene was left untouched',
   };
-}
-
-function validateTarget(target: VoxelizeTarget): void {
-  if (target.kind === 'uniform') {
-    if (!Number.isFinite(target.voxelSize) || target.voxelSize <= 0) {
-      throw new RangeError(`voxelSize must be a finite positive number, received ${target.voxelSize}`);
-    }
-    return;
-  }
-  if (!Number.isFinite(target.rootSize) || target.rootSize <= 0) {
-    throw new RangeError(`rootSize must be a finite positive number, received ${target.rootSize}`);
-  }
-  if (!Number.isInteger(target.maxDepth) || target.maxDepth < 1) {
-    throw new RangeError(`maxDepth must be an integer of at least 1, received ${target.maxDepth}`);
-  }
-  if (!Number.isFinite(target.targetCellSize) || target.targetCellSize <= 0) {
-    throw new RangeError(`targetCellSize must be a finite positive number, received ${target.targetCellSize}`);
-  }
 }
 
 /** Returns the reason the soup cannot be voxelized, or null when it is well formed. */
@@ -154,9 +120,9 @@ function soupBounds(soup: TriangleSoup): Aabb | null {
   return { min: [minX, minY, minZ], max: [maxX, maxY, maxZ] };
 }
 
-/** Cells the axis spans at `voxelSize`, counting the cells on both sides of a lattice plane. */
-function cellsOnAxis(min: number, max: number, voxelSize: number): number {
-  return Math.floor(max / voxelSize) - Math.floor(min / voxelSize) + 1;
+/** Cells the axis spans, counting the cells on both sides of a lattice plane. */
+function cellsOnAxis(min: number, max: number): number {
+  return Math.floor(max) - Math.floor(min) + 1;
 }
 
 /** The union AABB of every part, or null when no part has a triangle to bound. */
@@ -177,79 +143,37 @@ function partsBounds(parts: readonly VoxelizePart[]): Aabb | null {
 }
 
 /**
- * Placement of one source: uniform floors the origin to `voxelSize` so every local coordinate is
- * `>= 0`; octree keeps the AABB minimum as the origin of the root box `[0, rootSize]³` and takes
- * its depth from the target cell size, clamped to `[1, maxDepth]` (README §12).
+ * Placement of one source: the origin is the floor of the source's min corner, so every local
+ * coordinate is `>= 0` and lands on the lattice, which is the world unit (README D41); the source is
+ * refused when the grid it would need is wider than the container (README §12).
  *
  * `bounds` is the union AABB of the source's parts: one payload holds all of them, so the origin and
  * the fit are decided by what the parts cover together, and every part's soup is translated by that
  * one origin.
  */
-function placeSource(source: VoxelizeSource, target: VoxelizeTarget, bounds: Aabb | null): Placement | Failure {
-  if (target.kind === 'uniform') {
-    const { voxelSize } = target;
-    if (bounds === null) return { kind: 'uniform', cellSize: voxelSize, origin: [0, 0, 0] };
-    const axes = [
-      ['X', cellsOnAxis(bounds.min[0], bounds.max[0], voxelSize)],
-      ['Y', cellsOnAxis(bounds.min[1], bounds.max[1], voxelSize)],
-      ['Z', cellsOnAxis(bounds.min[2], bounds.max[2], voxelSize)],
-    ] as const;
-    for (const [axis, cells] of axes) {
-      if (cells > MAX_CELLS_PER_AXIS) {
-        return {
-          ok: false,
-          error: 'exceeds-grid',
-          detail:
-            `source ${source.sourceId} needs ${cells} cells on the ${axis} axis,` +
-            ` past the container limit of ${MAX_CELLS_PER_AXIS} cells per axis`,
-        };
-      }
-    }
-    return {
-      kind: 'uniform',
-      cellSize: voxelSize,
-      origin: [
-        Math.floor(bounds.min[0] / voxelSize) * voxelSize,
-        Math.floor(bounds.min[1] / voxelSize) * voxelSize,
-        Math.floor(bounds.min[2] / voxelSize) * voxelSize,
-      ],
-    };
-  }
-
-  const { rootSize, maxDepth, targetCellSize } = target;
-  const depth = Math.min(Math.max(Math.ceil(Math.log2(rootSize / targetCellSize)), 1), maxDepth);
-  const cellSize = rootSize / 2 ** depth;
-  if (bounds === null) {
-    return { kind: 'octree', cellSize, origin: [0, 0, 0], depth, rootSize, maxDepth };
-  }
+function placeSource(source: VoxelizeSource, bounds: Aabb | null): Origin | Failure {
+  if (bounds === null) return [0, 0, 0];
   const axes = [
-    ['X', bounds.max[0] - bounds.min[0]],
-    ['Y', bounds.max[1] - bounds.min[1]],
-    ['Z', bounds.max[2] - bounds.min[2]],
+    ['X', cellsOnAxis(bounds.min[0], bounds.max[0])],
+    ['Y', cellsOnAxis(bounds.min[1], bounds.max[1])],
+    ['Z', cellsOnAxis(bounds.min[2], bounds.max[2])],
   ] as const;
-  for (const [axis, extent] of axes) {
-    if (extent > rootSize) {
+  for (const [axis, cells] of axes) {
+    if (cells > MAX_CELLS_PER_AXIS) {
       return {
         ok: false,
         error: 'exceeds-grid',
         detail:
-          `source ${source.sourceId} has an AABB extent of ${extent} on the ${axis} axis,` +
-          ` larger than its octree root box of ${rootSize}`,
+          `source ${source.sourceId} needs ${cells} cells on the ${axis} axis,` +
+          ` past the container limit of ${MAX_CELLS_PER_AXIS} cells per axis`,
       };
     }
   }
-  return {
-    kind: 'octree',
-    cellSize,
-    origin: [bounds.min[0], bounds.min[1], bounds.min[2]],
-    depth,
-    rootSize,
-    maxDepth,
-  };
+  return [Math.floor(bounds.min[0]), Math.floor(bounds.min[1]), Math.floor(bounds.min[2])];
 }
 
 /** A copy of `positions` translated by `-origin`; the caller's array is never touched. */
-function translatedPositions(positions: Float32Array, origin: readonly [number, number, number]): Float32Array {
+function translatedPositions(positions: Float32Array, origin: Origin): Float32Array {
   const out = new Float32Array(positions.length);
   for (let i = 0; i < positions.length; i += 3) {
     out[i] = positions[i]! - origin[0];
@@ -267,30 +191,13 @@ function translatedPositions(positions: Float32Array, origin: readonly [number, 
  * no matter how many parts reached it: the merge in `voxelize` keeps the first part's color and drops
  * every later claim.
  */
-function buildOutput(source: VoxelizeSource, placement: Placement, cells: Map<CellKey, HexColor>): VoxelizeOutput {
-  const origin = new Vector3(placement.origin[0], placement.origin[1], placement.origin[2]);
-
-  if (placement.kind === 'uniform') {
-    const grid = UniformGrid.create(placement.cellSize);
-    for (const [key, color] of cells) {
-      const [x, y, z] = unpackKey(key);
-      grid.set(x, y, z, color);
-    }
-    return { sourceId: source.sourceId, name: source.name, payload: { kind: 'uniform', grid }, origin };
-  }
-
-  const octree = Octree.create({ rootSize: placement.rootSize, maxDepth: placement.maxDepth });
-  const lastIndex = 2 ** placement.depth - 1;
+function buildOutput(source: VoxelizeSource, origin: Origin, cells: Map<CellKey, HexColor>): VoxelizeOutput {
+  const grid = UniformGrid.create();
   for (const [key, color] of cells) {
     const [x, y, z] = unpackKey(key);
-    // Clamping keeps a triangle exactly on the far face inside the root box `[0, rootSize]³`.
-    octree.insertAtDepth(
-      [Math.min(Math.max(x, 0), lastIndex), Math.min(Math.max(y, 0), lastIndex), Math.min(Math.max(z, 0), lastIndex)],
-      placement.depth,
-      { occupied: true, color },
-    );
+    grid.set(x, y, z, color);
   }
-  return { sourceId: source.sourceId, name: source.name, payload: { kind: 'octree', octree }, origin };
+  return { sourceId: source.sourceId, name: source.name, payload: { kind: 'uniform', grid }, origin: new Vector3(origin[0], origin[1], origin[2]) };
 }
 
 /**
@@ -315,7 +222,6 @@ function triangleVertices(index: Uint32Array, triangle: number, out: [number, nu
  * payloads, origins, and stats.
  */
 export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult> {
-  validateTarget(request.target);
   if (!Number.isInteger(request.budget) || request.budget < 0) {
     throw new RangeError(`budget must be a non-negative integer, received ${request.budget}`);
   }
@@ -339,13 +245,13 @@ export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult
     return { ok: false, error: 'empty', detail: 'no source has a triangle to voxelize' };
   }
 
-  // Step 2: one placement per source, over the union AABB of its parts; a source that cannot fit its
-  // target grid fails the whole run.
+  // Step 2: one placement per source, over the union AABB of its parts; a source that cannot fit the
+  // container fails the whole run.
   const planned: PlannedSource[] = [];
   for (const item of pending) {
-    const placement = placeSource(item.source, request.target, partsBounds(item.source.parts));
-    if ('ok' in placement) return placement;
-    planned.push({ source: item.source, triangles: item.triangles, placement });
+    const origin = placeSource(item.source, partsBounds(item.source.parts));
+    if ('ok' in origin) return origin;
+    planned.push({ source: item.source, triangles: item.triangles, origin });
   }
 
   const report = request.onProgress;
@@ -357,7 +263,7 @@ export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult
   let cellsSoFar = 0;
   let processedSources = 0; // triangles of the sources already processed, for the aggregate ratio
 
-  for (const { source, placement, triangles } of planned) {
+  for (const { source, origin, triangles } of planned) {
     if (aborted()) return cancelled();
 
     // The one payload of this source: every part writes into this map, in part order, and a cell an
@@ -371,7 +277,7 @@ export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult
       if (aborted()) return cancelled();
 
       // A copy per part: the caller's positions stay untouched, and the index is only ever read.
-      const positions = translatedPositions(part.soup.positions, placement.origin);
+      const positions = translatedPositions(part.soup.positions, origin);
       const index = part.soup.index;
 
       for (let start = 0; start < index.length; start += CHUNK * 3) {
@@ -379,7 +285,7 @@ export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult
         const end = Math.min(start + CHUNK * 3, index.length);
         const base = start / 3;
         const sliceTriangles = (end - start) / 3;
-        const outcome = voxelizeSurface({ positions, index: index.subarray(start, end) }, placement.cellSize, {
+        const outcome = voxelizeSurface({ positions, index: index.subarray(start, end) }, {
           budget: request.budget - cellsSoFar,
           onProgress: (ratio) => {
             // The kernel reports its own slice; the aggregate ratio spans every part of every source.
@@ -419,14 +325,13 @@ export async function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult
       processedParts += index.length / 3;
     }
 
-    outputs.push(buildOutput(source, placement, cells));
+    outputs.push(buildOutput(source, origin, cells));
     processedSources += triangles;
   }
 
   let cells = 0;
   for (const output of outputs) {
-    const { payload } = output;
-    cells += payload.kind === 'uniform' ? payload.grid.size : payload.octree.occupiedLeafCount;
+    cells += output.payload.grid.size;
   }
   report?.(1);
   return { ok: true, outputs, stats: { cells, triangles: totalTriangles } };

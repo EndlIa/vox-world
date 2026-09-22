@@ -1,10 +1,11 @@
 # src/voxels/voxelize/surface.ts
 
-Ring: 0 · Layer: voxels/voxelize · Depends on: `../uniform/grid.js` (types only)
+Ring: 0 · Layer: voxels/voxelize · Depends on: `../uniform/grid.js` (`CELL_SIZE`, `CellKey`)
 
 ## Responsibility
 Conservative surface voxelization: given one indexed triangle soup, produce the set of grid cells whose
-cube the surface actually touches. It is not a volume filler, it samples no colors, and it allocates no
+cube the surface actually touches. A cell is the world unit cube (`CELL_SIZE`, README D41), so the kernel
+has no cell size to take. It is not a volume filler, it samples no colors, and it allocates no
 payload container — `voxelize.ts` owns both of those steps.
 
 ## Public interface
@@ -12,7 +13,7 @@ payload container — `voxelize.ts` owns both of those steps.
 type TriangleSoup = { positions: Float32Array; index: Uint32Array };  // already in target space
 type SurfaceCells = { cells: Map<CellKey, number>; triangleCount: number };  // value = triangle index
 
-function voxelizeSurface(soup: TriangleSoup, voxelSize: number, opts: {
+function voxelizeSurface(soup: TriangleSoup, opts: {
   budget: number;
   onProgress?: (ratio: number) => void;
   signal?: AbortSignal;
@@ -29,9 +30,10 @@ translates it to a global triangle index and then to a color.
    an error is the caller's decision, not this file's.
 3. Per triangle `t`, in ascending index order:
    - read the three vertices, take the component-wise min/max;
-   - candidate cells are `Math.floor(min / voxelSize) .. Math.floor(max / voxelSize)` per axis
-     (min-corner convention, so a face lying exactly on a lattice plane claims the cells on both
-     sides);
+   - candidate cells are `Math.floor(min) .. Math.floor(max)` per axis — one cell per lattice span covered
+     by the triangle's AABB, the min-corner convention at the world unit (README D41) — and a cell's cube is
+     that cell's unit cube, half extent `CELL_SIZE / 2`. A face lying exactly on a lattice plane therefore
+     claims the cells on both sides;
    - iterate candidates in `z`, then `y`, then `x` order (deterministic);
    - keep a candidate only when the triangle and the cell cube are not separated: separating-axis test
      over 13 axes — the 3 box normals, the triangle plane normal, and the 9 cross products of each
@@ -51,7 +53,7 @@ translates it to a global triangle index and then to a color.
 ## Invariants
 - Every key in `cells` is a cell cube the surface really intersects; no candidate is kept otherwise.
 - `cells.size <= budget` on every return path.
-- Determinism: identical `soup`, `voxelSize`, and `budget` give the identical map and identical
+- Determinism: identical `soup` and `budget` give the identical map and identical
   per-key triangle indices for any callback or signal.
 - A key is never reassigned, and its triangle index is always `< triangleCount`.
 - `onProgress` receives a non-decreasing ratio in `[0, 1]`, once per processed `CHUNK`, and is not
@@ -65,21 +67,22 @@ Returned, never thrown:
 - `{ error: 'cancelled'; detail }` — `signal.aborted` at a chunk boundary.
 Thrown (programmer errors):
 - `TypeError` when `index.length % 3 !== 0` or `positions.length % 3 !== 0`.
-- `RangeError` when `voxelSize` is not finite and `> 0`, when `budget` is not a non-negative integer,
-  or when an `index` entry is not a valid vertex of `positions`. `voxelize.ts` pre-validates soups so
-  that mesh-driven malformations surface as `'unsupported-geometry'` results instead of throws.
+- `RangeError` when `budget` is not a non-negative integer, or when an `index` entry is not a valid
+  vertex of `positions`. `voxelize.ts` pre-validates soups so that mesh-driven malformations surface as
+  `'unsupported-geometry'` results instead of throws.
 
 ## Dependencies
-- `../uniform/grid.js` — `CellKey` as a type only, no runtime import. This file packs its own keys with
+- `../uniform/grid.js` — `CellKey` as a type, and `CELL_SIZE` as a value: the lattice is the world unit
+  (README D41), so the kernel reads it instead of taking a cell size. This file packs its own keys with
   the *same layout* the container uses, so the container's `unpackKey` inverts them, but without the
-  container's `[-512, 511]` guard: an octree leaf index legitimately reaches `2^maxDepth = 1024` at the
-  documented `maxDepth = 10`, and the kernel must not throw from a data-driven path. The guard stays
+  container's `[-512, 511]` guard: every coordinate that reaches this kernel is non-negative and already
+  aligned to the lattice, and the kernel must not throw from a data-driven path. The guard stays
   where an out-of-range coordinate is a caller bug, in `UniformGrid` itself.
 - No `three` import and no outer-ring import: nothing from the library is needed, because the
   intersection test is scalar arithmetic over `Float32Array` reads.
 
 ## Tests
-`tests/voxelize.test.ts` pins: an axis-aligned triangle slab at a known `voxelSize` yields exactly the
+`tests/voxelize.test.ts` pins: an axis-aligned triangle slab at unit cells yields exactly the
 expected `CellKey` set and not the cells of its interior, the first-claiming triangle index per key,
 the `budget-exceeded` abort, and the `cancelled` abort through an already-aborted signal.
 

@@ -12,15 +12,52 @@
         --text: #e6e8ea;
         --dim: #9aa2ad;
         --accent: #4da3ff;
+        /* The viewport background. Must stay equal to `DEFAULT_BACKGROUND` in src/document/project.ts,
+           which is what the 3D scene and every exported frame use. */
+        --scene: #3d4250;
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; background: #101215; color: var(--text);
+      html, body { margin: 0; height: 100%; background: var(--scene); color: var(--text);
         font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: hidden; }
-      #app { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 1fr auto;
-        grid-template-areas: "panels viewport" "timeline timeline"; height: 100vh; }
-      #viewport { grid-area: viewport; width: 100%; height: 100%; display: block; background: #0b0d10; }
-      #panels { grid-area: panels; overflow-y: auto; border-right: 1px solid var(--line);
-        background: var(--panel); padding: 8px; }
+      #app { position: relative; display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr auto;
+        grid-template-areas: "viewport" "timeline"; height: 100vh; }
+      #viewport { grid-area: viewport; width: 100%; height: 100%; display: block; background: var(--scene); }
+      /* The viewport's mode switch: the canvas' own grid area, pinned to its bottom centre and sized to its
+         buttons, so it never covers drawing space it does not need. Above the HUD, below the rail and the
+         windows, which is the same order the rest of the chrome stacks in. */
+      #modebar { grid-area: viewport; justify-self: center; align-self: end; margin-bottom: 32px; z-index: 11;
+        display: flex; gap: 4px; }
+      /* The rail is an overlay on the canvas, not a reserved column: the viewport keeps the whole window
+         width, and only the buttons and the status text take up any of it. The windows the rail opens are
+         `position: fixed` (`.window`), so they leave this box entirely and never widen it. */
+      #panels { position: absolute; left: 0; top: 0; z-index: 12; width: 112px; max-height: 100%;
+        display: flex; flex-direction: column; gap: 6px; padding: 8px; overflow-y: auto;
+        pointer-events: none; }
+      #panels > * { pointer-events: auto; }
+      /* The rail is the overlay's first row whatever order the app added nodes in: the app appends its status
+         line to this element before the panel is constructed, so document order alone would put that text
+         above the buttons. */
+      .rail { order: -1; display: flex; flex-direction: column; gap: 4px; }
+      .rail button { width: 100%; text-align: left; }
+      /* The status text, the progress row, and the error line are read over the canvas, so each carries its
+         own translucent ground — the same treatment `#hud` gets. An empty one is not shown at all: the
+         progress row is hidden by `Panels` while no job reports, and an empty error line disappears here. */
+      #panels > div:not(.rail) { background: rgba(16, 18, 21, 0.86); border: 1px solid var(--line);
+        border-radius: 3px; padding: 4px 5px; }
+      #panels > div:empty { display: none; }
+      /* A group's controls in a floating window: over the HUD (`z-index: 10`) and under the voxelize
+         modal (`z-index: 20`). `raise()` renumbers inline z-index from this base, never higher than the
+         windows in the column. A closed window is `hidden` and keeps every node it holds. */
+      .window { position: fixed; z-index: 15; display: flex; flex-direction: column;
+        width: 300px; max-height: calc(100vh - 16px); }
+      .window[hidden] { display: none; }
+      .window > h2 { display: flex; align-items: center; justify-content: space-between; gap: 6px;
+        cursor: move; user-select: none; }
+      .window > div { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+      /* A group's divider: separates the half of a window that acts on every object from the half that acts
+         on the selected one. It is a flex item like the controls around it, so it spans the body's width. */
+      .window > div > hr { width: 100%; margin: 0; border: 0; border-top: 1px solid var(--line); }
+      .window-close { padding: 0 4px; line-height: 1; font-size: 13px; }
       #timeline { grid-area: timeline; border-top: 1px solid var(--line); background: var(--panel); padding: 6px 8px; }
       #hud { position: fixed; top: 8px; right: 8px; z-index: 10; background: rgba(27, 29, 33, 0.88);
         border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; min-width: 220px;
@@ -40,6 +77,20 @@
       input[type="color"] { width: 34px; height: 22px; padding: 0; }
       .row { display: flex; gap: 4px; flex-wrap: wrap; }
       .row > * { flex: 1 1 auto; }
+      /* `display: flex` beats the user-agent's `[hidden] { display: none }`, so the progress row has to be
+         hidden explicitly while no job is reporting. */
+      .row[hidden] { display: none; }
+      /* An object row: the name takes the width — and truncates rather than pushing the trash out — and
+         the trash that deletes that object sits at the right end of the row the user clicked. */
+      .obj-row { display: flex; align-items: stretch; gap: 4px; }
+      .obj-row > button:first-child { flex: 1 1 auto; min-width: 0; text-align: left;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .row-del { flex: 0 0 auto; display: inline-flex; align-items: center; padding: 0 5px; color: var(--dim); }
+      .row-del:hover { color: var(--text); }
+      /* An unavailable control has to say so: every control carries an explicit `color`, which would keep a
+         disabled one looking live, so the text drops to `--dim` and the control is dimmed whole. It takes no
+         pointer events either, so no hover rule can light it up. */
+      button:disabled, select:disabled, input:disabled { color: var(--dim); opacity: 0.55; }
       .dim { color: var(--dim); }
     </style>
   </head>
@@ -47,6 +98,7 @@
     <div id="app">
       <div id="panels"></div>
       <canvas id="viewport"></canvas>
+      <div id="modebar"></div>
       <div id="timeline"></div>
     </div>
     <div id="hud"></div>

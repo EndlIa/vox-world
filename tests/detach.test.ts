@@ -1,13 +1,11 @@
-import { Vector3 } from 'three';
+import { Euler, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
-import { detachOctreeLeaf, detachUniformBox } from '../src/document/detach.js';
+import { detachUniformBox } from '../src/document/detach.js';
 import { Project, type ObjectId, type SceneObject } from '../src/document/project.js';
-import { UniformGrid, type IntBox3 } from '../src/voxels/uniform/grid.js';
-import { Octree } from '../src/voxels/octree/octree.js';
+import { CELL_SIZE, UniformGrid, type IntBox3 } from '../src/voxels/uniform/grid.js';
 
 /** No `Project` allocates this, because allocated ids always match `obj-<n>`. */
 const UNKNOWN_ID: ObjectId = 'obj-unknown';
-const VOXEL_SIZE = 2;
 /** Inclusive box over cells `(-2, -1, 0)`..`(-1, 0, 0)`, three of which are occupied. */
 const BOX: IntBox3 = { min: [-2, -1, 0], max: [-1, 0, 0] };
 
@@ -23,7 +21,7 @@ function maskColorAt(cursor: number): number {
 
 function uniformFixture() {
   const project = new Project();
-  const grid = UniformGrid.create(VOXEL_SIZE);
+  const grid = UniformGrid.create();
   grid.set(-2, -1, 0, 0xff0000);
   grid.set(-1, -1, 0, 0x00ff00);
   grid.set(-2, 0, 0, 0x0000ff);
@@ -37,25 +35,9 @@ function uniformFixture() {
   return { project, grid, source };
 }
 
-function octreeFixture() {
-  const project = new Project();
-  const octree = Octree.create({ rootSize: 4, maxDepth: 3 });
-  octree.insertAtDepth([0, 0, 0], 2, { occupied: true, color: 0x3366ff, label: 'hand' });
-  octree.insertAtDepth([1, 0, 0], 2, { occupied: true, color: 0x3366ff, label: 'hand' });
-  octree.insertAtDepth([0, 1, 0], 2, { occupied: true, color: 0xff8800 });
-  octree.insertAtDepth([0, 0, 1], 2, { occupied: true, color: 0x00ff00, label: '' });
-  const source = project.createVoxelObject({
-    name: 'character',
-    maskColor: 0x112233,
-    payload: { kind: 'octree', octree },
-    position: new Vector3(8, 0, 4),
-  });
-  return { project, octree, source };
-}
-
-/** The world position of a cell center, in the object's own frame. */
+/** The world position of a cell center, in the object's own frame: a cell is the world unit (D41). */
 function cellCenterWorld(project: Project, object: SceneObject, x: number, y: number, z: number) {
-  return new Vector3((x + 0.5) * VOXEL_SIZE, (y + 0.5) * VOXEL_SIZE, (z + 0.5) * VOXEL_SIZE)
+  return new Vector3(x + CELL_SIZE / 2, y + CELL_SIZE / 2, z + CELL_SIZE / 2)
     .applyMatrix4(project.worldMatrix(object.id));
 }
 
@@ -68,7 +50,6 @@ describe('detachUniformBox', () => {
     const grid = detached?.uniform;
     if (grid === undefined) throw new Error('detached object has no uniform payload');
 
-    expect(grid.voxelSize).toBe(VOXEL_SIZE);
     expect(grid.size).toBe(3);
     expect(grid.bounds()).toEqual({ min: [0, 0, 0], max: [1, 1, 0] });
     expect(grid.getColor(0, 0, 0)).toBe(0xff0000);
@@ -85,9 +66,9 @@ describe('detachUniformBox', () => {
     if (detached === undefined) throw new Error('detached object is missing');
 
     expect(detached.transform.position.toArray()).toEqual([
-      BOX.min[0] * VOXEL_SIZE + 10,
-      BOX.min[1] * VOXEL_SIZE,
-      BOX.min[2] * VOXEL_SIZE - 3,
+      BOX.min[0] + 10,
+      BOX.min[1],
+      BOX.min[2] - 3,
     ]);
     expect(detached.transform.quaternion.toArray()).toEqual([0, 0, 0, 1]);
     expect(detached.transform.scale.toArray()).toEqual([1, 1, 1]);
@@ -120,6 +101,27 @@ describe('detachUniformBox', () => {
     });
   });
 
+  it("leaves the flag off when the parent it inherits is turned, instead of snapping the region", () => {
+    const { project, source } = uniformFixture();
+    const parent = project.createObject({ name: 'turn', representation: 'empty' });
+    parent.transform.quaternion.setFromEuler(new Euler(0.4, -0.9, 0.3));
+    expect(project.reparent(source.id, parent.id).ok).toBe(true);
+    parent.transform.position.set(0.25, 0, 0);
+
+    const result = detachUniformBox(project, source.id, BOX);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const part = project.get(result.objectId)!;
+    // The region stays exactly where D23 put it, between cells, so the object is not claimed to be on the
+    // lattice — and it was not moved onto it either.
+    expect(part.alignToGrid).toBe(false);
+    const expected = cellCenterWorld(project, source, -2, -1, 0);
+    const actual = cellCenterWorld(project, part, 0, 0, 0);
+    expect(actual.x).toBeCloseTo(expected.x, 9);
+    expect(actual.y).toBeCloseTo(expected.y, 9);
+    expect(actual.z).toBeCloseTo(expected.z, 9);
+  });
+
   it('removes the extracted cells and leaves the rest intact', () => {
     const { project, grid, source } = uniformFixture();
     const result = detachUniformBox(project, source.id, BOX);
@@ -144,7 +146,7 @@ describe('detachUniformBox', () => {
     const project = new Project();
     const parent = project.createObject({ name: 'island', representation: 'empty' });
     parent.transform.position.set(1, 1, 1);
-    const grid = UniformGrid.create(VOXEL_SIZE);
+    const grid = UniformGrid.create();
     grid.set(-2, -1, 0, 0xff0000);
     grid.set(0, 0, 0, 0x00ff00);
     const source = project.createVoxelObject({
@@ -167,11 +169,7 @@ describe('detachUniformBox', () => {
     expect(detached.parentId).toBe(parent.id);
     expect(detached.maskColor).toBe(expectedMaskColor);
 
-    const localMin = new Vector3(
-      BOX.min[0] * VOXEL_SIZE,
-      BOX.min[1] * VOXEL_SIZE,
-      BOX.min[2] * VOXEL_SIZE,
-    );
+    const localMin = new Vector3(BOX.min[0], BOX.min[1], BOX.min[2]);
     const detachedMinWorld = new Vector3(0, 0, 0).applyMatrix4(project.worldMatrix(detached.id));
     expect(detachedMinWorld.toArray()).toEqual(
       localMin.applyMatrix4(project.worldMatrix(source.id)).toArray(),
@@ -200,15 +198,8 @@ describe('detachUniformBox', () => {
   });
 
   it('fails with missing-object or wrong-representation', () => {
-    const { project, grid, source } = uniformFixture();
-    const octree = Octree.create({ rootSize: 4, maxDepth: 3 });
-    octree.insertAtDepth([0, 0, 0], 2, { occupied: true, color: 0x3366ff });
-    const octreeObject = project.createVoxelObject({
-      name: 'character',
-      maskColor: 0x445566,
-      payload: { kind: 'octree', octree },
-      position: new Vector3(0, 0, 0),
-    });
+    const { project, grid } = uniformFixture();
+    const placeholder = project.createObject({ name: 'character', representation: 'empty' });
 
     const missing = detachUniformBox(project, UNKNOWN_ID, BOX);
     expect(missing.ok).toBe(false);
@@ -217,227 +208,14 @@ describe('detachUniformBox', () => {
       expect(missing.detail.length).toBeGreaterThan(0);
     }
 
-    const wrong = detachUniformBox(project, octreeObject.id, BOX);
+    const wrong = detachUniformBox(project, placeholder.id, BOX);
     expect(wrong.ok).toBe(false);
     if (!wrong.ok) {
       expect(wrong.error).toBe('wrong-representation');
-      expect(wrong.detail).toContain(octreeObject.id);
+      expect(wrong.detail).toContain(placeholder.id);
     }
-
-    const octreeWay = detachOctreeLeaf(project, source.id, '2:00');
-    expect(octreeWay.ok).toBe(false);
-    if (!octreeWay.ok) expect(octreeWay.error).toBe('wrong-representation');
 
     expect(grid.size).toBe(4);
-    expect(octree.leafCount).toBe(15);
     expect(project.objects.size).toBe(2);
-  });
-});
-
-describe('detachOctreeLeaf', () => {
-  it('creates a one-leaf root box whose rootSize equals the leaf edge', () => {
-    const { project, octree, source } = octreeFixture();
-    const leafEdge = octree.leafSize(2);
-    expect(leafEdge).toBe(4 / 4);
-    const result = detachOctreeLeaf(project, source.id, '2:00');
-    if (!result.ok) throw new Error(result.detail);
-    const detached = project.get(result.objectId);
-    const newOctree = detached?.octree;
-    if (newOctree === undefined) throw new Error('detached object has no octree payload');
-
-    expect(newOctree.rootSize).toBe(leafEdge);
-    expect(newOctree.maxDepth).toBe(octree.maxDepth);
-    expect(newOctree.leafCount).toBe(1);
-    expect(newOctree.leafBox('0:').size).toBe(leafEdge);
-    expect(detached?.representation).toBe('octree');
-    expect(detached?.visible).toBe(true);
-    expect(detached?.transform.quaternion.toArray()).toEqual([0, 0, 0, 1]);
-    expect(detached?.transform.scale.toArray()).toEqual([1, 1, 1]);
-  });
-
-  it('carries the source leaf attributes into the new root leaf', () => {
-    const { project, octree, source } = octreeFixture();
-    const sourceLeafEdge = octree.leafBox('2:00').size;
-    const result = detachOctreeLeaf(project, source.id, '2:00');
-    if (!result.ok) throw new Error(result.detail);
-    const detached = project.get(result.objectId);
-    const newOctree = detached?.octree;
-    if (newOctree === undefined) throw new Error('detached object has no octree payload');
-
-    expect(newOctree.getLeaf('0:')).toEqual({ occupied: true, color: 0x3366ff, label: 'hand' });
-    expect(newOctree.leafSize(0)).toBe(sourceLeafEdge);
-
-    // The attrs were copied: repainting the new root leaf leaves the source siblings as they were.
-    expect(newOctree.paintLeaf('0:', 0x000000)).toBe(true);
-    expect(newOctree.getLeaf('0:')?.color).toBe(0x000000);
-    expect(octree.getLeaf('2:01')).toEqual({ occupied: true, color: 0x3366ff, label: 'hand' });
-  });
-
-  it('can be split further after the detach', () => {
-    const { project, source } = octreeFixture();
-    const result = detachOctreeLeaf(project, source.id, '2:00');
-    if (!result.ok) throw new Error(result.detail);
-    const detached = project.get(result.objectId);
-    const newOctree = detached?.octree;
-    if (detached === undefined || newOctree === undefined) throw new Error('missing payload');
-
-    expect(newOctree.split('0:').ok).toBe(true);
-    expect(newOctree.leafCount).toBe(8);
-    const again = detachOctreeLeaf(project, detached.id, '1:0');
-    expect(again.ok).toBe(true);
-    if (!again.ok) throw new Error(again.detail);
-    const second = project.get(again.objectId);
-    expect(second?.octree?.rootSize).toBe(newOctree.rootSize / 2);
-    expect(second?.octree?.leafCount).toBe(1);
-    expect(second?.octree?.getLeaf('0:')).toEqual({
-      occupied: true,
-      color: 0x3366ff,
-      label: 'hand',
-    });
-  });
-
-  it('uses the leaf label as the object name', () => {
-    const { project, source } = octreeFixture();
-    project.createObject({ name: 'character part 1', representation: 'empty' });
-
-    const labelled = detachOctreeLeaf(project, source.id, '2:00');
-    if (!labelled.ok) throw new Error(labelled.detail);
-    expect(labelled.name).toBe('hand');
-    expect(project.get(labelled.objectId)?.name).toBe('hand');
-
-    // An empty label is no label: the object falls back to the source name and the smallest free n.
-    const emptyLabel = detachOctreeLeaf(project, source.id, '2:04');
-    if (!emptyLabel.ok) throw new Error(emptyLabel.detail);
-    expect(emptyLabel.name).toBe('character part 2');
-
-    const labelless = detachOctreeLeaf(project, source.id, '2:02');
-    if (!labelless.ok) throw new Error(labelless.detail);
-    expect(labelless.name).toBe('character part 3');
-  });
-
-  it('removes the source leaf and prunes the branches it empties', () => {
-    const { project, octree, source } = octreeFixture();
-    const leafCountBefore = octree.leafCount;
-    const result = detachOctreeLeaf(project, source.id, '2:00');
-    if (!result.ok) throw new Error(result.detail);
-
-    expect(octree.hasLeaf('2:00')).toBe(false);
-    expect(octree.leafCount).toBe(leafCountBefore - 1);
-    expect(octree.occupiedLeafCount).toBe(3);
-    expect(octree.getLeaf('2:01')).toEqual({ occupied: true, color: 0x3366ff, label: 'hand' });
-    expect(octree.getLeaf('2:02')).toEqual({ occupied: true, color: 0xff8800 });
-    expect(octree.getLeaf('1:1')).toEqual({ occupied: false, color: 0xffffff });
-    expect(source.name).toBe('character');
-    expect(source.maskColor).toBe(0x112233);
-    expect(source.transform.position.toArray()).toEqual([8, 0, 4]);
-    expect(source.octree).toBe(octree);
-
-    // Detaching every child of a branch empties it; the root branch collapses back to a root leaf.
-    const drained = new Project();
-    const drainedOctree = Octree.create({ rootSize: 4, maxDepth: 1 });
-    const children = ['1:0', '1:1', '1:2', '1:3', '1:4', '1:5', '1:6', '1:7'];
-    const cells: readonly (readonly [number, number, number])[] = [
-      [0, 0, 0],
-      [1, 0, 0],
-      [0, 1, 0],
-      [1, 1, 0],
-      [0, 0, 1],
-      [1, 0, 1],
-      [0, 1, 1],
-      [1, 1, 1],
-    ];
-    cells.forEach((cell, index) => {
-      drainedOctree.insertAtDepth(cell, 1, { occupied: true, color: 0x100000 + index });
-    });
-    const drainedSource = drained.createVoxelObject({
-      name: 'subtree',
-      maskColor: 0x223344,
-      payload: { kind: 'octree', octree: drainedOctree },
-      position: new Vector3(0, 0, 0),
-    });
-    expect(drainedOctree.leafCount).toBe(8);
-    for (const childId of children) {
-      const detached = detachOctreeLeaf(drained, drainedSource.id, childId);
-      expect(detached.ok).toBe(true);
-      if (!detached.ok) throw new Error(detached.detail);
-      expect(drained.get(detached.objectId)?.octree?.rootSize).toBe(drainedOctree.leafSize(1));
-    }
-    expect(drainedOctree.leafCount).toBe(1);
-    expect(drainedOctree.occupiedLeafCount).toBe(0);
-    expect(drainedOctree.hasLeaf('0:')).toBe(true);
-    expect(drainedOctree.hasLeaf('1:0')).toBe(false);
-    expect(drained.objects.size).toBe(9);
-  });
-
-  it('detaches a root leaf by clearing the source root occupancy', () => {
-    // A one-leaf octree is its root leaf, and `removeLeaf` never removes the root: the source gives
-    // up that leaf's occupancy instead of losing the detach.
-    const solo = new Project();
-    const soloOctree = Octree.create({ rootSize: 4, maxDepth: 3 });
-    soloOctree.setLeaf('0:', { occupied: true, color: 0x445566, label: 'hand' });
-    const soloSource = solo.createVoxelObject({
-      name: 'solo',
-      maskColor: 0x223344,
-      payload: { kind: 'octree', octree: soloOctree },
-      position: new Vector3(0, 0, 0),
-    });
-
-    const result = detachOctreeLeaf(solo, soloSource.id, '0:');
-    if (!result.ok) throw new Error(result.detail);
-    const detached = solo.get(result.objectId);
-    expect(detached?.octree?.getLeaf('0:')).toEqual({
-      occupied: true,
-      color: 0x445566,
-      label: 'hand',
-    });
-    expect(detached?.octree?.rootSize).toBe(4);
-    expect(detached?.octree?.maxDepth).toBe(3);
-    expect(detached?.octree?.leafCount).toBe(1);
-    expect(detached?.octree?.occupiedLeafCount).toBe(1);
-    expect(soloOctree.getLeaf('0:')).toEqual({ occupied: false, color: 0x445566 });
-    expect(soloOctree.occupiedLeafCount).toBe(0);
-    expect(soloOctree.leafCount).toBe(1);
-    expect(soloSource.name).toBe('solo');
-    expect(soloSource.maskColor).toBe(0x223344);
-    expect(soloSource.transform.position.toArray()).toEqual([0, 0, 0]);
-    expect(soloSource.octree).toBe(soloOctree);
-    expect(soloSource.representation).toBe('octree');
-
-    // The emptied root leaf is an empty region on a second attempt rather than a failure to throw.
-    const again = detachOctreeLeaf(solo, soloSource.id, '0:');
-    expect(again.ok).toBe(false);
-    if (!again.ok) expect(again.error).toBe('empty-region');
-  });
-
-  it('fails with not-a-leaf for a branch id', () => {
-    const { project, octree, source } = octreeFixture();
-    const leafCountBefore = octree.leafCount;
-
-    const branch = detachOctreeLeaf(project, source.id, '1:0');
-    expect(branch.ok).toBe(false);
-    if (!branch.ok) {
-      expect(branch.error).toBe('not-a-leaf');
-      expect(branch.detail.length).toBeGreaterThan(0);
-      expect(branch.detail).toContain('1:0');
-    }
-
-    const absent = detachOctreeLeaf(project, source.id, '3:070');
-    expect(absent.ok).toBe(false);
-    if (!absent.ok) expect(absent.error).toBe('not-a-leaf');
-
-    const unoccupied = detachOctreeLeaf(project, source.id, '2:05');
-    expect(unoccupied.ok).toBe(false);
-    if (!unoccupied.ok) {
-      expect(unoccupied.error).toBe('empty-region');
-      expect(unoccupied.detail.length).toBeGreaterThan(0);
-    }
-
-    const missing = detachOctreeLeaf(project, UNKNOWN_ID, '2:00');
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.error).toBe('missing-object');
-
-    expect(octree.leafCount).toBe(leafCountBefore);
-    expect(octree.hasLeaf('2:00')).toBe(true);
-    expect(project.objects.size).toBe(1);
   });
 });

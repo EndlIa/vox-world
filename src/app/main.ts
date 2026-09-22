@@ -16,31 +16,35 @@ import {
   deleteObject,
   renameObject,
   reparentObject,
-  setLeafLabel,
   setObjectMaskColor,
+  setObjectAlignToGrid,
   setObjectVisible,
-  setTransformFromMatrix,
+  setTransformFromWorldMatrix,
 } from '../editor/ops.js';
 import { PointerTool } from '../editor/pointer.js';
 import type { PointerCallbacks } from '../editor/pointer.js';
 import { DEFAULT_CELL_BUDGET, voxelize } from '../voxels/voxelize/voxelize.js';
-import type { VoxelizeSource, VoxelizeTarget } from '../voxels/voxelize/voxelize.js';
+import type { VoxelizeSource } from '../voxels/voxelize/voxelize.js';
 import { UniformGrid } from '../voxels/uniform/grid.js';
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
-import { adoptImportedScene, buildVoxelizeSource, importGlb } from '../three-runtime/import.js';
+import { adoptImportedScene, buildVoxelizeSource, importGlb, scaleImportedScene } from '../three-runtime/import.js';
 import type { ImportedScene } from '../three-runtime/import.js';
 import { SceneMirror } from '../three-runtime/scene.js';
 import { Picker } from '../three-runtime/picking.js';
-import { OutputPreview, ViewportControls } from '../three-runtime/controls.js';
+import { ViewportControls } from '../three-runtime/controls.js';
 import { Capture } from '../three-runtime/capture.js';
 import { Overlay } from '../three-runtime/overlay.js';
+import { WorldGrid } from '../three-runtime/grid.js';
 import { Playback } from '../animation/playback.js';
 import { ExportJob } from '../export/job.js';
 import { Panels } from '../ui/panels.js';
 import type { PanelContext } from '../ui/panels.js';
+import { DEFAULT_VOXELS_ACROSS, VoxelizeDialog } from '../ui/voxelizeDialog.js';
+import type { VoxelizeDialogDefaults } from '../ui/voxelizeDialog.js';
 import { TimelinePanel } from '../ui/timeline.js';
 import type { TimelineContext } from '../ui/timeline.js';
 import { Hud } from '../ui/hud.js';
+import { ModeBar } from '../ui/modeBar.js';
 import type { HudState } from '../ui/hud.js';
 import { el } from '../ui/dom.js';
 import { pickGlbFile, saveMp4, wireDropTarget } from './files.js';
@@ -55,36 +59,33 @@ export type AppContext = {
   pointer: PointerTool;
   capture: Capture;
   overlay: Overlay;
+  worldGrid: WorldGrid;
 };
 
 type ImportedAssets = {
   scene: ImportedScene;
   /** The one object the import created: every source mesh and the payload of the import live on it. */
   objectId: ObjectId;
-};
-
-type VoxelizeDefaults = {
-  uniformVoxelSize: number;
-  targetCellSize: number;
-  octreeMaxDepth: number;
-  octreeRootSize: number;
+  /** One raw mesh per scene node, in node order: created once and re-placed when the scene is rescaled. */
+  meshes: Mesh[];
 };
 
 const VIEWPORT_FOV = 60;
 const VIEWPORT_NEAR = 0.1;
 const VIEWPORT_FAR = 5000;
-/** Initial capture and aspect-guide size; every export resizes the capture to what the panel asked for. */
+/** Initial capture size; every export resizes the capture to what the panel asked for. */
 const DEFAULT_EXPORT_WIDTH = 1280;
 const DEFAULT_EXPORT_HEIGHT = 720;
 const EXPORT_FILENAME = 'vox-world.mp4';
 const DEFAULT_DURATION_SECONDS = 10;
 const DEFAULT_FPS = 30;
-const DEFAULT_MAX_DEPTH = 10;
-const DEFAULT_ROOT_SIZE = 10;
-/** Before any import the panel's uniform voxel size is `root / 96` and its cell size `root / 64`. */
-const VOXEL_SIZE_DIVISOR = 96;
-const CELL_SIZE_DIVISOR = 64;
-const DEMO_CELL_SIZE = 0.5;
+/** The dialog's extent seed before any import. */
+/**
+ * The extent the dialog seeds from when there is no import to measure: one default model's worth, in
+ * voxels. One voxel is one world unit (README D41), so an extent and a voxel count are the same kind of
+ * number, and the dialog's fallback is the count it already opens at.
+ */
+const DEFAULT_EXTENT = DEFAULT_VOXELS_ACROSS;
 const DEMO_CELLS = 4;
 const DEMO_COLOR = 0x4da3ff;
 const DEMO_TOP_COLOR = 0x9aa2ad;
@@ -117,7 +118,7 @@ function resizeViewport(renderer: WebGLRenderer, canvas: HTMLCanvasElement, came
 
 /** The demo object: a small uniform cube so the viewport is not empty before the first import. */
 function buildDemoGrid(): UniformGrid {
-  const grid = UniformGrid.create(DEMO_CELL_SIZE);
+  const grid = UniformGrid.create();
   for (let x = 0; x < DEMO_CELLS; x += 1) {
     for (let y = 0; y < DEMO_CELLS; y += 1) {
       for (let z = 0; z < DEMO_CELLS; z += 1) {
@@ -126,13 +127,6 @@ function buildDemoGrid(): UniformGrid {
     }
   }
   return grid;
-}
-
-/** The octree root seed: the largest extent of the imported bounds, or the demo default. */
-function boundsRootSize(bounds: Box3): number {
-  const size = bounds.getSize(new Vector3());
-  const largest = Math.max(size.x, size.y, size.z);
-  return largest > 0 ? largest : DEFAULT_ROOT_SIZE;
 }
 
 /** Width x height x depth and the cell count of an inclusive integer box, for status text. */
@@ -146,6 +140,7 @@ function boxText(box: IntBox3): string {
 export function main(): void {
   // 1. The four page elements, the project, and one demo voxel object.
   const viewport = canvasById('viewport');
+  const modebarRoot = elementById('modebar');
   const panelsRoot = elementById('panels');
   const timelineRoot = elementById('timeline');
   const hudRoot = elementById('hud');
@@ -157,17 +152,21 @@ export function main(): void {
     name: 'Demo cube',
     maskColor: project.nextMaskColor(),
     payload: { kind: 'uniform', grid: buildDemoGrid() },
-    position: new Vector3(-1, 0, -1),
+    position: new Vector3(-2, 0, -2),
   });
 
   // 2. Viewport: renderer, mirror and its output camera, navigation, decorations, capture.
   const viewportCamera = new PerspectiveCamera(VIEWPORT_FOV, 1, VIEWPORT_NEAR, VIEWPORT_FAR);
-  // The overlay, the aspect guide, and the gizmo live on camera layer 1 and the imported raw meshes on
-  // layer 2 (README D24), so the viewport camera draws all three while the raycaster tests layers 0
+  // The overlay and the gizmo live on camera layer 1 and the imported raw meshes on layer 2
+  // (README D24), so the viewport camera draws both while the raycaster tests layers 0
   // and 2 and the export camera — and the `Capture` that renders through it — stays on layer 0 alone.
   viewportCamera.layers.enable(1);
   viewportCamera.layers.enable(2);
-  const renderer = new WebGLRenderer({ canvas: viewport, antialias: true });
+  // The logarithmic depth buffer is what keeps a scene of any size drawable: an imported file is metres
+  // per unit as authored, which for a centimetre-authored model is a scene kilometres across, and a linear
+  // depth buffer with the near plane at 1e-4 spends its whole precision in the first metres — surfaces far
+  // away then fight each other (README D40). It costs the depth test's early-out, which nothing here needs.
+  const renderer = new WebGLRenderer({ canvas: viewport, antialias: true, logarithmicDepthBuffer: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   resizeViewport(renderer, viewport, viewportCamera);
 
@@ -177,8 +176,10 @@ export function main(): void {
   });
   const controls = new ViewportControls(viewport, viewportCamera);
   const overlay = new Overlay(mirror.scene);
-  const outputPreview = new OutputPreview({ aspect: DEFAULT_EXPORT_WIDTH / DEFAULT_EXPORT_HEIGHT, visible: true });
-  mirror.scene.add(outputPreview.guide);
+  // The world grid is viewport decoration like the overlay: layer 1, so it is never picked and never
+  // reaches a frame, and `frameAll` ignores it.
+  const worldGrid = new WorldGrid();
+  mirror.scene.add(worldGrid.root);
   const capture = new Capture({ width: DEFAULT_EXPORT_WIDTH, height: DEFAULT_EXPORT_HEIGHT });
   mirror.sync();
   mirror.frameAll(viewportCamera);
@@ -194,33 +195,36 @@ export function main(): void {
   /** While set, navigation drives the output camera and the viewport renders through it. */
   let cameraLocked = false;
   let resolutionCache: EditResolution | null = null;
-  let leafCache: HudState['leaf'] = null;
+  /** The mirror node the gizmo is attached to, so a rebuilt replacement is noticed (see `syncGizmo`). */
+  let gizmoNode: Object3D | undefined;
   let lastImport: ImportedAssets | undefined;
   let jobController: AbortController | undefined;
   /** The raw meshes on layer 2, one per imported node: app-owned, kept for teardown (README D24). */
   const sourceMeshes: Mesh[] = [];
 
-  // 4. UI over the actions of step 5; `pickImportFile` stays in app/.
-  const statusLine = el('div', { class: 'dim', text: 'ready' });
-  panelsRoot.append(statusLine);
+  // 4. UI over the actions of step 5; `pickImportFile` stays in app/. The voxelize settings live in the
+  // dialog alone (README D26), so it is the fourth UI element, mounted like the panels into `panelsRoot`.
+  // The status line starts empty rather than with a placeholder word: an empty status box is not shown at
+  // all (`#panels > div:empty` in `index.html`), so the editor opens with the rail and nothing else, and
+  // the line appears with the first operation that has something to say.
+  const voxelizeDialog = new VoxelizeDialog(panelsRoot, () => defaults());
 
   const panelContext: PanelContext = {
     project,
     session,
     sceneVisible: () => mirror.sourceVisible,
-    defaults,
     actions: {
       pickImportFile: openImportDialog,
-      revoxelize: applyRevoxelize,
       exportMp4: runExport,
       createGroup: applyCreateGroup,
-      deleteActive: applyDeleteActive,
+      deleteObject: applyDeleteObject,
+      detachSelection: applyDetachSelection,
       setActiveMaskColor: applyMaskColor,
       setActiveVisible: applySetActiveVisible,
+      setActiveAlignToGrid: applySetActiveAlignToGrid,
       setSourceVisible,
       renameActive: applyRenameActive,
       reparentActive: applyReparent,
-      setLeafLabel: applyLeafLabel,
       setCameraLock,
       setCameraFov,
     },
@@ -241,13 +245,12 @@ export function main(): void {
   const panels = new Panels(panelsRoot, panelContext);
   const timelinePanel = new TimelinePanel(timelineRoot, timelineContext);
   const hud = new Hud(hudRoot);
+  // The mode switch is a view of the session like the panels are, so it takes no state of its own.
+  const modeBar = new ModeBar(modebarRoot, { session });
 
   const pointerCallbacks: PointerCallbacks = {
     onSessionChange: sessionChanged,
     onProjectChange: projectChanged,
-    onStatus: (text) => {
-      statusLine.textContent = text;
-    },
   };
   const pointer = new PointerTool({
     dom: viewport,
@@ -260,42 +263,29 @@ export function main(): void {
     callbacks: pointerCallbacks,
   });
 
-  const app: AppContext = { project, mirror, picker, session, playback, controls, pointer, capture, overlay };
+  const app: AppContext = { project, mirror, picker, session, playback, controls, pointer, capture, overlay, worldGrid };
 
   // 5. Flow wiring: the only place the modules meet.
   /**
-   * The panel's voxelize defaults, seeded from the imported voxelize bounds: root size = largest
-   * extent, uniform voxel size = `root / 96`, octree target cell size = `root / 64`, `maxDepth = 10`.
-   * Before any import the root size falls back to `DEFAULT_ROOT_SIZE`, so the panel is usable with no
-   * scene.
+   * The dialog's seed, derived from the retained import's voxelize bounds: their per-axis extent, which the
+   * count is read against to print the model's dimensions (README D29, D41). Before any import the extent
+   * falls back to `DEFAULT_EXTENT`, so the dialog is usable with no scene.
    *
    * Those bounds are the nodes that are voxelized, not the nodes that are displayed: a stylized
    * export's outline shells are drawn around the model and a little larger than it, so letting them in
-   * would inflate the octree root and the default voxel size for content they do not cover. A scene of
+   * would inflate that extent for content they do not cover. A scene of
    * nothing but outlines has no outline-free bounds and falls back to the displayed ones (README D27);
    * framing uses those displayed bounds regardless, because every node is shown.
    */
-  function defaults(): VoxelizeDefaults {
+  function defaults(): VoxelizeDialogDefaults {
     const scene = lastImport?.scene;
     const sizeBounds =
       scene === undefined ? undefined : scene.voxelizeBounds.isEmpty() ? scene.bounds : scene.voxelizeBounds;
-    const octreeRootSize = sizeBounds === undefined ? DEFAULT_ROOT_SIZE : boundsRootSize(sizeBounds);
-    return {
-      uniformVoxelSize: octreeRootSize / VOXEL_SIZE_DIVISOR,
-      targetCellSize: octreeRootSize / CELL_SIZE_DIVISOR,
-      octreeMaxDepth: DEFAULT_MAX_DEPTH,
-      octreeRootSize,
-    };
-  }
-
-  /**
-   * The target a fresh import is voxelized at: the uniform default the panel seeds itself with (README
-   * D26). `/96` of the imported extent keeps a first import at a sensible cell count rather than a
-   * million cells, and every later change of a voxelize control replaces this with the panel's own
-   * `VoxelizeTarget` through `revoxelize`.
-   */
-  function importTarget(): VoxelizeTarget {
-    return { kind: 'uniform', voxelSize: defaults().uniformVoxelSize };
+    if (sizeBounds === undefined || sizeBounds.isEmpty()) {
+      return { extent: { x: DEFAULT_EXTENT, y: DEFAULT_EXTENT, z: DEFAULT_EXTENT } };
+    }
+    const size = sizeBounds.getSize(new Vector3());
+    return { extent: { x: size.x, y: size.y, z: size.z } };
   }
 
   function openImportDialog(): void {
@@ -312,90 +302,103 @@ export function main(): void {
    * a whole file: the model's placement lives in the mesh matrices, not in the object's transform. The
    * meshes share the imported geometry and materials, are never disposed by the mirror, and stay in
    * `sourceMeshes` so teardown can detach them.
+   *
+   * `meshes` is filled on the first call for a scene and reused afterwards: confirming the dialog rescales
+   * the import to the model's voxel count (README D41) and the same meshes are re-placed by their new node
+   * matrices, which the mirror's per-mesh records accept as a refresh rather than a second copy.
    */
-  function attachSourceMeshes(scene: ImportedScene, objectId: ObjectId): void {
-    for (const node of scene.nodes) {
-      const mesh = new Mesh(node.geometry, node.sourceMesh.material);
-      sourceMeshes.push(mesh);
+  function attachSourceMeshes(scene: ImportedScene, objectId: ObjectId, meshes: Mesh[]): void {
+    scene.nodes.forEach((node, index) => {
+      const existing = meshes[index];
+      const mesh = existing ?? new Mesh(node.geometry, node.sourceMesh.material);
+      if (existing === undefined) {
+        meshes.push(mesh);
+        sourceMeshes.push(mesh);
+      }
       mirror.attachSourceObject(objectId, mesh, node.matrixWorld);
-    }
+    });
   }
 
   async function importFile(file: File): Promise<void> {
-    panels.clearProgress();
-    statusLine.textContent = `importing ${file.name}`;
     const data = await file.arrayBuffer();
     const result = await importGlb(data);
     if (!result.ok) {
-      statusLine.textContent = 'import failed';
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
-    const adopted = adoptImportedScene(project, result.scene);
-    lastImport = { scene: result.scene, objectId: adopted.objectId };
-    attachSourceMeshes(result.scene, adopted.objectId);
+    // One voxel is one world unit (README D41), so the model is scaled onto the lattice before anything
+    // sees it: the dialog's count then says how long it is, and both the raw meshes and the payload the
+    // job later attaches are placed in the same unit.
+    const scene = scaleImportedScene(result.scene, DEFAULT_VOXELS_ACROSS);
+    const adopted = adoptImportedScene(project, scene);
+    const meshes: Mesh[] = [];
+    lastImport = { scene, objectId: adopted.objectId, meshes };
+    attachSourceMeshes(scene, adopted.objectId, meshes);
     dirtyIds.add(adopted.objectId);
     bindingsDirty = true;
-    // The imported object has to exist before anything can measure or name it, so sync before the job:
-    // this frame shows the raw meshes on layer 2, and the payload below replaces them.
-    mirror.sync();
+    // The object has to exist and its bounds have to be measurable before the settings can be asked in
+    // context, so the view is fitted here, on the raw meshes (D24): `frameAll` syncs, creates the node,
+    // and measures layers 0 and 2. Nothing has voxelized it yet, so it is still `'empty'`.
+    mirror.frameAll(viewportCamera);
     commitDirty();
-    statusLine.textContent = `imported ${result.scene.name} (${result.scene.nodes.length} node(s))`;
-    // Importing is the moment the content becomes editable (README D26): the whole imported scene is
-    // voxelized right here at the import default, so no click separates the import from voxels.
-    await runVoxelizeJob(buildVoxelizeSource(result.scene), importTarget(), adopted.objectId);
+    // The resolution is a per-model decision made when the model arrives (README D26), so the settings
+    // dialog comes last: confirming voxelizes this import, cancelling leaves it as the raw model the
+    // user is looking at.
+    await promptVoxelize(scene, adopted.objectId);
   }
 
   /**
-   * Re-voxelizes the whole retained import at the settings the panel now holds (README D26). Before any
-   * import there is nothing to re-voxelize, so the request is dropped.
+   * Asks for the voxelization settings of one retained import (README D26) and runs the shared job when
+   * the user confirms. The dialog is the only place the count exists, so nothing is derived here: a confirm
+   * scales the import to that count — the model's length in voxels — re-places its raw meshes so they stay
+   * glued to the content the job voxelizes (README D24, D41), and runs the shared job on the scaled source;
+   * a cancel leaves the object `'empty'` with its raw meshes displayed, which is what the user is looking
+   * at.
    */
-  async function applyRevoxelize(options: { target: VoxelizeTarget }): Promise<void> {
-    const retained = lastImport;
-    if (retained === undefined) return;
-    await runVoxelizeJob(buildVoxelizeSource(retained.scene), options.target, retained.objectId);
+  async function promptVoxelize(scene: ImportedScene, objectId: ObjectId): Promise<void> {
+    const outcome = await voxelizeDialog.open({ title: `Voxelize ${scene.name}` });
+    if (outcome.kind === 'cancel') {
+      return;
+    }
+    const assets = lastImport;
+    const scaled = scaleImportedScene(scene, outcome.cellsAcross);
+    if (assets !== undefined && assets.objectId === objectId) {
+      assets.scene = scaled;
+      attachSourceMeshes(scaled, objectId, assets.meshes);
+    }
+    await runVoxelizeJob(buildVoxelizeSource(scaled), objectId);
   }
 
   /**
-   * The one voxelization job, shared by the import path and `applyRevoxelize` (README D26). It cancels
-   * whatever was in flight — a superseded job must not attach its payloads — then voxelizes the source
-   * of one import at `target` and attaches its payload to `objectId`, the object `adoptImportedScene`
-   * created for that import, through an `attachTo` map built from the source's own id: that is the key
-   * every output carries, so the imported object gains the voxels instead of being duplicated next to
-   * them. An import with nothing to voxelize — every node an outline shell — has no source and stops
-   * after the abort, because there is nothing to attach. Success marks the id dirty, refreshes the
-   * panels, and re-frames the viewport; framing belongs here, after the payload: an object that rendered
-   * as raw meshes until this call renders as voxels now, and `frameAll` syncs first, so the instance
-   * meshes rebuilt for the id just marked dirty are what it measures. Progress is written while it runs,
-   * and a failure reaches the user through `reportError` with the `Result` literal and detail.
+   * The one voxelization job, run for the import a confirmed settings dialog was about (README D26). It
+   * cancels whatever was in flight — a superseded job must not attach its payloads — then voxelizes the
+   * source of one import at `target` and attaches its payload to `objectId`, the object
+   * `adoptImportedScene` created for that import, through an `attachTo` map built from the source's own
+   * id: that is the key every output carries, so the imported object gains the voxels instead of being
+   * duplicated next to them. An import with nothing to voxelize — every node an outline shell — has no
+   * source and stops after the abort, because there is nothing to attach. Success marks the id dirty,
+   * refreshes the panels, and re-frames the viewport; framing belongs here, after the payload: an object
+   * that rendered as raw meshes until this call renders as voxels now, and `frameAll` syncs first, so
+   * the instance meshes rebuilt for the id just marked dirty are what it measures. Nothing is written while
+   * it runs, and a failure reaches `reportFailure` with the `Result` literal and detail (D38).
    */
-  async function runVoxelizeJob(
-    source: VoxelizeSource | undefined,
-    target: VoxelizeTarget,
-    objectId: ObjectId,
-  ): Promise<void> {
+  async function runVoxelizeJob(source: VoxelizeSource | undefined, objectId: ObjectId): Promise<void> {
     // The abort comes first: it is what keeps a superseded job from attaching its payloads, and an
     // import that has nothing to voxelize still supersedes the job that is running.
     jobController?.abort();
     jobController = undefined;
-    panels.clearProgress();
     if (source === undefined) return;
 
     const controller = new AbortController();
     jobController = controller;
     const result = await voxelize({
       sources: [source],
-      target,
       budget: DEFAULT_CELL_BUDGET,
-      onProgress: (ratio) => {
-        panels.setProgress('voxelizing', ratio);
-      },
       signal: controller.signal,
     });
     if (jobController === controller) jobController = undefined;
-    panels.clearProgress();
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
     const applied = applyVoxelizeResult(project, result, {
@@ -405,7 +408,14 @@ export function main(): void {
     bindingsDirty = true;
     commitDirty();
     mirror.frameAll(viewportCamera);
-    statusLine.textContent = `voxelized ${result.stats.cells} cell(s) from ${result.stats.triangles} triangle(s)`;
+  }
+
+  /**
+   * Reports a failed `Result`. The panel has no message area any more (D37), so the console is the only
+   * channel a failure has; the text is the same literal-and-detail pair the UI used to show.
+   */
+  function reportFailure(result: { error: string; detail: string }): void {
+    console.error(`${result.error}: ${result.detail}`);
   }
 
   async function runExport(options: {
@@ -419,12 +429,10 @@ export function main(): void {
     if (jobController !== undefined) return;
     const controller = new AbortController();
     jobController = controller;
-    panels.clearProgress();
     // The gizmo is viewport feedback on camera layer 0; it must not reach an exported frame.
     controls.detachGizmo();
-    // The capture renders at the requested resolution and the guide marks the same aspect.
+    // The capture renders at the requested resolution; nothing in the viewport marks it.
     capture.resize(options.width, options.height);
-    outputPreview.setAspect(options.width / options.height);
     const result = await new ExportJob({ mirror }).run(
       {
         project,
@@ -440,32 +448,26 @@ export function main(): void {
           mode: options.mode,
         },
       },
-      (progress) => {
-        panels.setProgress(`frame ${progress.frame}/${progress.total}`, progress.total > 0 ? progress.frame / progress.total : 0);
-      },
       controller.signal,
     );
     if (jobController === controller) jobController = undefined;
     syncGizmo();
-    panels.clearProgress();
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
     saveMp4(result.blob, EXPORT_FILENAME);
-    statusLine.textContent = `exported ${result.frames} frame(s) as ${result.codec}`;
   }
 
   /**
    * Turns the camera lock on or off. Locked, `ViewportControls` navigates the **output** camera, so
-   * what the viewport shows is what an export captures, and the guide frame is redundant; unlocked,
+   * what the viewport shows is what an export captures; unlocked,
    * navigation goes back to the app-owned viewport camera (D17). The flag is set before retargeting,
    * so the retarget's own `change` event never writes authored data on the way out of the lock.
    */
   function setCameraLock(enabled: boolean): void {
     cameraLocked = enabled;
     controls.setOrbitTarget(enabled ? mirror.camera : viewportCamera);
-    outputPreview.followOutputCamera(enabled);
   }
 
   /**
@@ -485,7 +487,7 @@ export function main(): void {
   function applyCreateGroup(): void {
     const result = createGroup(project, 'Group');
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
     session.setActiveObject(result.objectId);
@@ -494,16 +496,15 @@ export function main(): void {
     commitDirty();
   }
 
-  function applyDeleteActive(): void {
-    const objectId = session.activeObjectId;
-    if (objectId === null) return;
+  /** Deletes one object by id: the row's trash button names it, so the active object need not be it. */
+  function applyDeleteObject(objectId: ObjectId): void {
     const result = deleteObject(project, objectId);
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
     dirtyIds.delete(objectId);
-    session.setActiveObject(null);
+    if (session.activeObjectId === objectId) session.setActiveObject(null);
     bindingsDirty = true;
     commitDirty();
   }
@@ -513,11 +514,20 @@ export function main(): void {
     if (objectId === null) return;
     const result = setObjectMaskColor(project, objectId, color);
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
     dirtyIds.add(objectId);
     commitDirty();
+  }
+
+  /**
+   * Detaches the selected region into a new object, through the pointer tool so the button and a viewport press
+   * commit the same operation and end the same way: the new object active, the region cleared, both objects
+   * rebuilt (README D19, D23).
+   */
+  function applyDetachSelection(): void {
+    pointer.detachSelection();
   }
 
   /** Shows or hides the active object; the mirror applies `object.visible` on its next `sync()`. */
@@ -526,7 +536,20 @@ export function main(): void {
     if (objectId === null) return;
     const result = setObjectVisible(project, objectId, visible);
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
+      return;
+    }
+    dirtyIds.add(objectId);
+    commitDirty();
+  }
+
+  /** Turns the active object's grid alignment on or off; the op snaps the placement when it turns on. */
+  function applySetActiveAlignToGrid(alignToGrid: boolean): void {
+    const objectId = session.activeObjectId;
+    if (objectId === null) return;
+    const result = setObjectAlignToGrid(project, objectId, alignToGrid);
+    if (!result.ok) {
+      reportFailure(result);
       return;
     }
     dirtyIds.add(objectId);
@@ -548,7 +571,7 @@ export function main(): void {
     if (objectId === null) return;
     const result = renameObject(project, objectId, name);
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
     dirtyIds.add(objectId);
@@ -560,22 +583,10 @@ export function main(): void {
     if (objectId === null) return;
     const result = reparentObject(project, objectId, parentId);
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
     dirtyIds.add(objectId);
-    commitDirty();
-  }
-
-  function applyLeafLabel(label: string): void {
-    const selection = session.selection;
-    if (selection.kind !== 'leaf') return;
-    const result = setLeafLabel(project, selection.objectId, selection.leafId, label === '' ? undefined : label);
-    if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
-      return;
-    }
-    dirtyIds.add(selection.objectId);
     commitDirty();
   }
 
@@ -592,11 +603,14 @@ export function main(): void {
     if (session.activeObjectId !== null) dirtyIds.add(session.activeObjectId);
     refreshReadouts();
     syncGizmo();
+    modeBar.refresh();
     panels.refresh();
     timelinePanel.refresh();
   }
 
-  function projectChanged(): void {
+  /** The objects an operation rewrote: they are the ones whose derived geometry is rebuilt (README D4). */
+  function projectChanged(ids: readonly ObjectId[]): void {
+    for (const id of ids) dirtyIds.add(id);
     bindingsDirty = true;
     commitDirty();
   }
@@ -605,31 +619,36 @@ export function main(): void {
   function refreshReadouts(): void {
     const objectId = session.activeObjectId;
     resolutionCache = objectId === null ? null : session.resolutionOf(objectId) ?? null;
-    leafCache = objectId === null ? null : leafState(objectId);
   }
 
-  function leafState(objectId: ObjectId): HudState['leaf'] {
-    const selection = session.selection;
-    if (selection.kind !== 'leaf' || selection.objectId !== objectId) return null;
-    const octree = project.get(objectId)?.octree;
-    if (octree === undefined) return null;
-    const attrs = octree.getLeaf(selection.leafId);
-    if (attrs === undefined) return null;
-    const box = octree.leafBox(selection.leafId);
-    return {
-      leafId: selection.leafId,
-      depth: box.depth,
-      size: box.size,
-      occupied: attrs.occupied,
-      color: attrs.color,
-    };
+  /**
+   * The node the gizmo belongs on right now: the active object's, while object mode is active, and none at all
+   * in edit mode or with an empty selection.
+   *
+   * A rebuild replaces that node (`mirror.rebuild` releases the old one), so the identity is compared
+   * against the attached one on every frame and a replacement is what re-attaches the gizmo.
+   */
+  function gizmoNodeNow(): Object3D | undefined {
+    const objectId = session.activeObjectId;
+    if (objectId === null || session.mode !== 'object') return undefined;
+    return mirror.objectOf(objectId);
   }
 
+  /**
+   * Puts the gizmo on the active object, pivoting at the center of its content so the handles sit on what
+   * the user edits rather than at the node origin, which is the payload's min corner (`contentCenterOf`,
+   * README D37). Called on every session change and whenever the node under the gizmo was replaced.
+   */
   function syncGizmo(): void {
     const objectId = session.activeObjectId;
-    const node = objectId === null ? undefined : mirror.objectOf(objectId);
-    if (node !== undefined && session.activeTool === 'select') controls.attachGizmo(node, 'translate');
-    else controls.detachGizmo();
+    const node = gizmoNodeNow();
+    if (node === undefined || objectId === null) {
+      controls.detachGizmo();
+      gizmoNode = undefined;
+      return;
+    }
+    controls.attachGizmo(node, 'translate', mirror.contentCenterOf(objectId));
+    gizmoNode = node;
   }
 
   /** Binds the mixer to the mirrored nodes of every current object. */
@@ -664,7 +683,6 @@ export function main(): void {
   function selectionText(): string {
     const selection = session.selection;
     if (selection.kind === 'box') return `${boxText(selection.box)} on ${objectName(selection.objectId)}`;
-    if (selection.kind === 'leaf') return `leaf ${selection.leafId} on ${objectName(selection.objectId)}`;
     return 'none';
   }
 
@@ -678,7 +696,6 @@ export function main(): void {
       selectionText: selectionText(),
       frame: Math.round(playback.time * project.timeline.fps),
       fps: project.timeline.fps,
-      leaf: leafCache,
     };
   }
 
@@ -692,18 +709,24 @@ export function main(): void {
       project.camera.transform.quaternion.copy(mirror.camera.quaternion);
     }
   });
-  controls.onGizmoChange(() => {
+  /**
+   * Live drag feedback: the object follows the pointer through the mirror, not the document, so a gesture
+   * that is abandoned or cancelled has written nothing. The document write happens once, on commit.
+   */
+  controls.onGizmoChange((matrix) => {
     const objectId = session.activeObjectId;
-    if (objectId !== null) statusLine.textContent = `moving ${objectName(objectId)}`;
+    // The preview takes the same aligned matrix the commit will, so a drag steps the object from cell to
+    // cell and the release writes the pose already on screen (README D42).
+    if (objectId !== null) mirror.previewTransform(objectId, project.alignWorldMatrix(objectId, matrix));
   });
-  controls.onGizmoCommit(() => {
+  controls.onGizmoCommit((matrix) => {
     const objectId = session.activeObjectId;
-    const node = objectId === null ? undefined : mirror.objectOf(objectId);
-    if (objectId === null || node === undefined) return;
-    node.updateMatrixWorld(true);
-    const result = setTransformFromMatrix(project, objectId, node.matrixWorld);
+    if (objectId === null || project.get(objectId) === undefined) return;
+    // The world matrix the gizmo derived, not the node's own: the gizmo moves a pivot proxy and never the
+    // node, and the object's live transform is discarded by the rebuild this write triggers.
+    const result = setTransformFromWorldMatrix(project, objectId, matrix);
     if (!result.ok) {
-      panels.reportError(`${result.error}: ${result.detail}`);
+      reportFailure(result);
       return;
     }
     dirtyIds.add(objectId);
@@ -729,12 +752,15 @@ export function main(): void {
     lastTime = now;
     playback.advance(dt);
     mirror.sync();
+    // A dirty object is rebuilt as a new node, which releases the one an attached gizmo drives; comparing
+    // identities is what re-attaches it, and it has to happen after `sync()` because that is what replaces
+    // the node. Nothing else moves the gizmo: `syncGizmo` on a session change covers the rest.
+    if (gizmoNode !== gizmoNodeNow()) syncGizmo();
     if (bindingsDirty) {
       bindingsDirty = false;
       if (!bindingsCurrent()) rebuildBindings();
     }
     controls.update();
-    outputPreview.update(viewportCamera);
     const renderCamera = cameraLocked ? mirror.camera : viewportCamera;
     if (cameraLocked) {
       // The locked output camera draws the viewport too, so it needs the canvas' aspect: an export
@@ -759,12 +785,16 @@ export function main(): void {
     detachDrop();
     jobController?.abort();
     jobController = undefined;
+    // A prompt still on screen is settled as a cancel, so nothing is left waiting on a modal that is
+    // going away with the page.
+    voxelizeDialog.dispose();
     window.removeEventListener('resize', handleResize);
     window.removeEventListener('pagehide', dispose);
     unsubscribeSession();
     app.pointer.dispose();
     app.capture.dispose();
     app.overlay.dispose();
+    app.worldGrid.dispose();
     // Also drops the orbit-change registration: the callbacks live in the controls.
     app.controls.dispose();
     app.playback.dispose();
@@ -772,7 +802,6 @@ export function main(): void {
     // The raw meshes are the app's, and so are their geometry and materials (the imported scene's):
     // teardown only takes them out of the scene graph the mirror just released.
     for (const mesh of sourceMeshes) mesh.removeFromParent();
-    outputPreview.dispose();
     renderer.dispose();
   }
 

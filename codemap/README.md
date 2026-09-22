@@ -6,12 +6,12 @@ A greenfield TypeScript + Three.js 3D voxel animation editor. The user imports a
 voxelizes it, edits spatial layout and shading, animates objects and the output camera, and exports
 a playable MP4 plus per-frame aligned scene data.
 
-Two voxel representations coexist:
+Voxels are a **sparse uniform grid**: object-local integer cell coordinates with a per-object voxel size,
+held as *editable source data*. Render meshes, GPU buffers, LOD, and caches are always derived.
 
-- **Uniform voxels** — rule integer grid, used for objects that are animated (characters, vehicles, props).
-- **Editable octree** — variable local resolution, used for very large static environments (terrain, city, scenery).
-
-Both are *editable source data*. Render meshes, GPU buffers, LOD, and caches are always derived.
+The editable octree the SRS asked for as a second representation was removed at the user's request (D34),
+so there is no variable local resolution and no leaf-level editing: a very large static environment is
+voxelized at one resolution like everything else, and shares the same cell budget.
 
 `shithill/` is a behavior and product reference only. Its architecture, runtime constraints, and
 implementation patterns are not carried over.
@@ -54,7 +54,7 @@ Five rings. Ring 0 is the innermost; the number grows outward. Dependencies poin
 
 ```mermaid
 graph BT
-  R0["ring 0 — voxels<br/>uniform · octree · voxelize"]
+  R0["ring 0 — voxels<br/>uniform · voxelize"]
   R1["ring 1 — document · animation"]
   R2["ring 2 — three-runtime · workers"]
   R3["ring 3 — editor · export"]
@@ -70,17 +70,16 @@ graph BT
 | Ring | Module | Responsibility | May import |
 | --- | --- | --- | --- |
 | 0 | `voxels/uniform` | Sparse uniform voxel grid, cell access and mutation, integer box region query, fill, clear, and extract. | `three` (any) |
-| 0 | `voxels/octree` | Sparse octree: leaf cells with depth, size, occupancy, color, label; `split`, `merge`, `remove`, `paint`, leaf iteration, subtree extraction. | `three` (any) |
-| 0 | `voxels/voxelize` | Surface voxelization of `BufferGeometry` into either representation, including color sampling and per-primitive object separation. | `voxels/*`, `three` (any) |
+| 0 | `voxels/voxelize` | Surface voxelization of `BufferGeometry` into a uniform payload, including color sampling and per-primitive object separation. | `voxels/*`, `three` (any) |
 | 1 | `document` | Project truth: scene objects, identity, parent/child hierarchy, transforms, representation binding, timeline data, exported-camera settings, mask colors. | `voxels/*`, `three` (any) |
-| 1 | `document/detach` | Cross-representation detach: octree leaf, or uniform box region, becomes a new scene object. | `voxels/*`, `three` (any) |
+| 1 | `document/detach` | Detach: a uniform box region becomes a new scene object. | `voxels/*`, `three` (any) |
 | 1 | `animation` | Keyframe authoring data compiled to a Three.js `AnimationClip`; frame-exact sampling through `AnimationMixer`. | `document`, `three` (any) |
 | 2 | `three-runtime` | Scene and render state: GLB import into document objects, document-to-scene mirror, derived meshes, raycast picking, viewport controls, offscreen frame capture. | `voxels/*`, `document`, `three` |
 | 2 | `workers` | Job boundary for off-main-thread work. Payloads must be plain records and transferables. | `voxels/*`, `document` |
 | 3 | `editor` | Editing session: active object, selection, target cell selection, edit operations, output camera versus viewport navigation. | `voxels/*`, `document`, `animation`, `three-runtime` |
 | 3 | `export` | Export job: frame loop over the timeline, capture orchestration, encoder and muxer. | `document`, `animation`, `three-runtime`, encoder library |
 | 4 | `ui` | DOM panels, toolbars, timeline widget, export dialog, HUD. Renders state and forwards intent; owns no project state. | `document`, `animation`, `editor`, `export` |
-| 4 | `app` | Composition root: the only place that knows every module. Session, jobs with progress and cancel, file input and output. | everything |
+| 4 | `app` | Composition root: the only place that knows every module. Session, jobs with cancel, file input and output, and the console report a failure gets. | everything |
 
 **Hard rule.** An `import` may only target its own ring or an inner ring, except for the edges
 registered in section 8 (D8). This rule is about our modules. Three.js is a library and may be
@@ -107,7 +106,7 @@ hand-rolling is the thing that has to be justified. What that means in practice:
 | Voxelizer input, derived meshes | `BufferGeometry`, `BufferAttribute` |
 | Keyframe interpolation and playback | `KeyframeTrack`, `AnimationClip`, `AnimationMixer` — `InterpolateDiscrete` for step, `InterpolateLinear` for linear, `InterpolateSmooth` and `InterpolateBezier` for smooth |
 | GLB parsing, navigation, gizmos | `GLTFLoader`, `OrbitControls`, `TransformControls` |
-| Voxel and leaf rendering | `InstancedMesh`, `InstancedBufferAttribute` |
+| Voxel rendering | `InstancedMesh`, `InstancedBufferAttribute` |
 
 Rejected alternatives are recorded in D1 and D2.
 
@@ -118,9 +117,6 @@ src/
   voxels/
     uniform/
       grid.ts         UniformGrid, cell key packing, integer boxes, colored cells
-    octree/
-      leafId.ts       LeafId codec and octant helpers
-      octree.ts       sparse octree: split, merge, insert, leaf queries
     voxelize/
       surface.ts      conservative surface voxelization, triangles -> cells
       colorSampler.ts per-primitive color resolution
@@ -135,31 +131,32 @@ src/
   three-runtime/
     import.ts         GLB -> document objects + comparison meshes
     scene.ts          document -> scene mirror, derived instanced meshes, dirty rebuild
-    picking.ts        raycast -> leaf, cell, or object hit
-    controls.ts       OrbitControls, TransformControls, output-frame guide
+    picking.ts        raycast -> cell or object hit
+    controls.ts       OrbitControls, TransformControls, gizmo claim
     capture.ts        offscreen renderer at export resolution
-    overlay.ts        box preview and leaf bounds feedback
+    overlay.ts        box preview feedback
   editor/
-    session.ts        active object, tool, selection, box height
+    session.ts        active object, tool, selection
     ops.ts            edit operations over document state
     pointer.ts        pointer handling: pick, box drag, gizmo handoff
   export/
     encode.ts         codec selection, WebCodecs encoder, mp4-muxer
-    job.ts            export frame loop, progress, cancel, failure reporting
+    job.ts            export frame loop, cancel, failure reporting
   ui/
     dom.ts            element and listener helpers
-    panels.ts         import, voxelize, edit, and export panels
+    floatingWindow.ts movable, closable window holding one group's controls
+    panels.ts         the group rail and each group's window content
+    voxelizeDialog.ts voxelization settings modal
     timeline.ts       timeline panel
-    hud.ts            status: representation, edit resolution, leaf detail
+    hud.ts            status: representation and edit resolution
+    modeBar.ts        viewport mode switch: Object (gizmo) / Edit (voxel tools)
   app/
     main.ts           composition root
     files.ts          file input, drag and drop, download
   workers/            deliberately empty in this slice; see section 9
 tests/
-  uniform.test.ts     octree.test.ts     voxelize.test.ts
-  detach.test.ts      timeline.test.ts   project.test.ts
-tools/
-  make-demo-glb.mjs   deterministic generator for the demo GLB assets
+  uniform.test.ts     voxelize.test.ts   detach.test.ts
+  timeline.test.ts    project.test.ts
 ```
 
 Every file above has a contract in this directory (D15); `tests/` and the root config files are
@@ -174,7 +171,6 @@ covered by `codemap/tests/*.md` and `codemap/toolchain.md`.
 | `Project.objects` and their hierarchy | Three.js `Object3D` hierarchy |
 | Object transforms and names | Matrix world caches |
 | Uniform cells (keys and colors) | `InstancedMesh` instances and per-instance colors |
-| Octree leaves (depth, occupancy, color, label) | Leaf box geometry and leaf `BufferGeometry` |
 | Timeline tracks and keyframes | `AnimationClip`, `AnimationMixer`, and the per-frame `Object3D` transforms they drive |
 | Output camera settings and its track | Viewport camera and controls state |
 | Object mask colors | Mask-pass material instances |
@@ -192,9 +188,8 @@ SceneObject {
   name: string
   parentId: string | null
   transform: { position, quaternion, scale }
-  representation: 'empty' | 'uniform' | 'octree'
+  representation: 'empty' | 'uniform'
   uniform?: UniformGrid  // present iff representation === 'uniform'
-  octree?: Octree        // present iff representation === 'octree'
   maskColor: number      // object-level color, hex number as exchanged with THREE.Color
 }
 ```
@@ -202,48 +197,45 @@ SceneObject {
 - Hierarchy is legal at all times: one parent per object, no cycles, deletion detaches children.
 - `representation` binds the object to exactly one voxel container, and `Project.setPayload` is the only
   transition: importing creates `'empty'` placeholder nodes, voxelizing attaches a payload to the
-  matching placeholder (turning it into a `'uniform'` or `'octree'` object without changing its id,
-  name, parent, or mask color), and clearing the payload returns it to `'empty'`.
-- Converting between `'uniform'` and `'octree'` is not required; only attaching and clearing payloads
-  is supported.
-- An object with `representation: 'empty'` is a transform-only node (group). Object hierarchy
-  expresses scene structure; the octree expresses spatial resolution. The octree is never used as a
-  parent/child structure, and a scene node is never used to express voxel resolution.
+  matching placeholder (turning it into a `'uniform'` object without changing its id, name, parent, or
+  mask color), and clearing the payload returns it to `'empty'`.
+- Placement sits on the world grid by default (D42): every object is created with `alignToGrid` set, and
+  while it is set the object's own transform holds whole cells, so its voxels fall on the lattice D41 defines
+  rather than half a cell off it. A transform write snaps to the nearest cell — the gizmo's live preview is
+  snapped the same way, so a release never jumps — and a keyframe authored for the object's position stores
+  whole cells, while the mixer keeps interpolating smoothly between them. The flag is the panel's `Grid align`
+  checkbox, and switching it on pulls the object onto the grid there and then.
+- An object with `representation: 'empty'` is a transform-only node (group). Object hierarchy is the
+  only structure there is: a scene node is never used to express voxel resolution, and no voxel
+  container ever holds object structure (D10).
 
 ### Voxel cell semantics
 
-- **Uniform grid** — object-local integer coordinates with a per-object voxel size. Occupied cells
+- **Uniform grid** — object-local integer coordinates on the world lattice: one voxel is one world unit (D41), so a
+  cell coordinate is a world position and a grid carries no size. An import is scaled onto that lattice as it arrives, so
+  a model's length in the world is its voxel count. Occupied cells
   map to a color stored as a hex number, the form `Color.getHex()` and `Color.setHex()` exchange, so
   conversion, color-space handling, and mixing go through `THREE.Color`. Cell keys are integers
   packed from the three coordinates to keep `Map` lookups allocation-free.
-- **Octree** — a root box `[0, rootSize]³` in object-local space, a maximum depth, and sparse children.
-  At depth `d` the leaf edge is `rootSize / 2^d`, coordinates run over `[0, 2^d)³`, and a leaf carries
-  `occupied`, `color`, and an optional `label`. Leaves at different depths are spatially disjoint by
-  construction, which satisfies the non-overlap requirement for occupied cells.
-- `split(leaf)` replaces one occupied leaf with eight children that inherit occupancy, color, and
-  label, so the occupied volume and the visible appearance are unchanged.
-- `merge(children)` is the inverse and must refuse unless all eight children are leaves with
-  compatible occupancy, color, and label; it never silently discards a difference.
-- `detach` moves a leaf (or a uniform box region) out of its container into a new object of the
-  same representation, re-indexes the extracted content so its min corner becomes local `(0, 0, 0)`,
+- `detach` moves a uniform box region out of its container into a new object of the same
+  representation, re-indexes the extracted content so its min corner becomes local `(0, 0, 0)`,
   and sets the transform per D23 so the world-space position, volume, and appearance are unchanged.
   The source container must not keep a duplicate occupancy at that location.
 - **Uniform region selection is an axis-aligned integer box**, as in shithill's Box tool: the anchor
   is taken where the pointer goes down, the opposite corner follows the pointer, and both resolve to
-  integer cell coordinates in the object's local grid. An optional fixed-height parameter overrides
-  the third axis to `anchor.y + height - 1`, which is how a drag that naturally lies in a plane
-  produces a slab instead of a flat sheet. A single click is the degenerate 1×1×1 box, so point
-  editing needs no separate tool. Add, remove, paint, and detach all consume that one box, and the
-  box volume is checked against the budget before anything is written.
+  integer cell coordinates in the object's local grid, inclusive on both corners and one cell deep on the
+  axis the drag runs along, so what the pointer draws is what commits (D19, D36). A single click is the
+  degenerate 1×1×1 box, so point editing needs no separate tool. In edit mode `select` consumes that box as the selection
+  and writes nothing; `add`, `paint`, and `remove` apply an operation to it, and the box volume is checked against the
+  budget before anything is written. Detaching that region is a command on it rather than a fourth mode — the Edit
+  group's `detach` button, disabled while nothing is selected — so no tool can be left armed to detach the next
+  thing a press lands on.
 
 **Overlap semantics.** Two different voxel objects may overlap in space: they are scene leaf nodes,
 and the renderer draws both. *Within one container* voxels are never duplicated — a uniform cell is
-one `Map` entry keyed by its coordinates, and octree leaves are disjoint by construction — so there
-is no arbitration rule, no priority field, and no resolution pass, and none is built. Writes resolve
-at allocation time instead: a write that lands in a region already covered by finer leaves descends
-and paints those leaves, a write into empty space allocates at the requested depth, and painting an
-occupied cell or leaf replaces its color. `merge` is the only operation that could destroy a
-difference, and it refuses unless the eight children are compatible.
+one `Map` entry keyed by its coordinates — so there is no arbitration rule, no priority field, and no
+resolution pass, and none is built. Writing a cell that is already occupied replaces its color, which
+is the only collision a single container can have.
 
 ## 7. Cross-layer ports
 
@@ -286,31 +278,34 @@ persistence, all of which SRS requires.
 **D4 — Derived meshes rebuild lazily behind a per-object `dirty` flag.** No resource manager, no
 incremental update graph, no scheduler.
 
-**D5 — Picking raycasts against derived meshes, then maps `instanceId` back to a cell or leaf.** No
-CPU voxel traversal. When several candidates overlap, the order is fixed: deeper leaf first, then
-nearer hit distance, then ascending leaf id. SRS requires a deterministic pick order.
+**D5 — Picking raycasts against derived meshes, then maps `instanceId` back to a cell.** No CPU voxel
+traversal. When several candidates overlap, the order is fixed: nearer hit distance first, then ascending
+object id, then ascending cell coordinates. SRS requires a deterministic pick order. The deeper-leaf and
+ascending-leaf-id ranks this order used to carry left with the octree (D33).
 
-**D6 — Detach is a `document` operation, not a `voxels` operation.** `voxels` exposes leaf and box
-region primitives; `document` owns identity, transforms, and hierarchy. This is what
-makes a second detach (a character into hands and feet) work without a special case.
+**D6 — Detach is a `document` operation, not a `voxels` operation.** `voxels` exposes the box region
+primitive; `document` owns identity, transforms, and hierarchy. This is what makes a second detach (a
+character into hands and feet) work without a special case. Half of the original decision — the octree
+leaf it also covered — left with the octree (D33).
 
 **D7 — `export` splits capture from encoding behind `FrameSink`.** Codec selection is tried in the
 order `avc1`, `av01`, `vp09`, and the chosen codec is reported to the user. Browsers without a
 software H.264 encoder produce AV1-in-MP4; that is accepted and stated at export time rather than
 silently substituting.
 
-**D8 — Registered same-ring edges.** Exactly three are allowed:
-`voxels/voxelize -> voxels/{uniform,octree}`, `voxels/octree -> voxels/uniform` (shared value types
-`HexColor` and `IntBox3` only), and `animation -> document`. Any new one must be added to this list
-with a reason.
+**D8 — Registered same-ring edges.** Exactly two are allowed: `voxels/voxelize -> voxels/uniform`
+(shared value types `HexColor` and `IntBox3` only) and `animation -> document`. Any new one must be
+added to this list with a reason.
 
 **D9 — The demo slice omits undo, project persistence, and the worker.** Edit operations are written
 as pure functions over document state with an explicit apply step, so a command and undo layer can
 wrap them without rewriting them, and voxelization takes nothing but geometry, a world matrix, and
 options, so it can move into a worker unchanged. See section 9.
 
-**D10 — Object hierarchy is the runtime truth; the octree holds no object structure.** SRS requires
-this split, and it also keeps octree operations independent of scene editing.
+**D10 — Object hierarchy is the runtime truth, and no voxel container holds object structure.** SRS
+requires this split. Its second half — that octree operations stay independent of scene editing — is
+moot now that there is no octree (D33); the rule that survives is that a parent/child relation is
+expressed by `SceneObject.parentId` and never by a container.
 
 **D11 — Mask color is an explicit per-object field**, assigned from a palette on creation and
 editable by the user, rather than derived from object order at export time. It is a channel separate
@@ -329,7 +324,7 @@ math, while a cell still stores one plain number — cheap at millions of cells 
 an `InstancedMesh` instance color. No palette indirection.
 
 **D15 — Contract paths mirror `src/` one-to-one without an extra `src` segment** — that is,
-`src/voxels/octree/octree.ts` is described by `codemap/voxels/octree/octree.md`. `AGENTS.md` writes the
+`src/voxels/uniform/grid.ts` is described by `codemap/voxels/uniform/grid.md`. `AGENTS.md` writes the
 contract root as `codemap/src/**/*.md`; the `src` segment is redundant here and the existing
 `codemap/` scaffold does not have it. `tests/` and the root config files are covered by
 `codemap/tests/*.md` and `codemap/toolchain.md`. This deviation is recorded deliberately so it is not
@@ -343,7 +338,7 @@ is a document node with position, orientation, and vertical FOV. The viewport na
 Three.js runtime state and is never project data. Both voxel representations share this convention,
 which is what allows one timeline and one export path to cover both. Concretely there are exactly two
 cameras at runtime: `SceneMirror.camera` is the **output** camera, derived from `project.camera` and
-used for export, for the aspect guide, and for FOV tracks; the **viewport** camera is created by the
+used for export and for FOV tracks; the **viewport** camera is created by the
 app, is the one `ViewportControls` moves by default, and is never rendered into the output. The single
 exception is the camera lock: while the user locks navigation to the output camera, `ViewportControls`
 retargets to `mirror.camera`, the viewport renders through it, and each navigation change is copied
@@ -353,31 +348,28 @@ while the mixer is playing, because authored data must never be written from a r
 **D18 — Overlap between objects is allowed; inside one container there is nothing to arbitrate.** A
 voxel object is a scene leaf node, so a car may overlap terrain voxels and no cross-object resolution
 is attempted. Within one container, occupied cells are unique by construction — one `Map` entry per
-uniform coordinate, disjoint octree leaves — so no priority field, no resolution pass, and no
-last-writer bookkeeping exists, and none is built for the demo. Writes resolve at allocation time
-instead, and repainting an occupied cell simply replaces its color (section 6).
+uniform coordinate — so no priority field, no resolution pass, and no last-writer bookkeeping exists,
+and none is built for the demo. Repainting an occupied cell simply replaces its color (section 6).
 
 **D19 — Uniform selection is exactly one dragged box, and nothing else.** The box is an axis-aligned
 integer box in the object's local grid: anchor at pointer-down, opposite corner following the
-pointer, and an optional fixed height overriding the third axis (shithill's Box tool:
-`box_add`/`box_remove` take `startBox` on pointer-down, read `fixedHeight` from the height field, and
-`boxShape` derives the integer min/max corners; a drag that exceeds `MAX_VOXELS_DRAW` is abandoned
-rather than clamped). Add, remove, paint, and detach all consume this one region, and a click is the
-degenerate 1×1×1 box. Deliberately excluded: screen-space marquee selection with a surface-only
+pointer (shithill's Box tool: `box_add`/`box_remove` take `startBox` on pointer-down and `boxShape`
+derives the integer min/max corners; a drag that exceeds `MAX_VOXELS_DRAW` is abandoned rather than
+clamped). Its fixed-height field is not carried over — that override is gone (D36). The `select` tool drags the same
+region and keeps it as the selection, writing nothing; add, remove, paint, and detach consume it as the operands of an
+edit; and a click is the degenerate 1×1×1 box. Deliberately excluded: screen-space marquee selection with a surface-only
 versus all-depth policy (shithill's `rect_*`), and flood-fill or connected-component picking. Both
 were considered and dropped — a box is exact, cheap to implement, needs no similarity heuristic, and
-already covers splitting a car or a hand off a body. Octree selection is unaffected: there the unit
-stays a single picked leaf.
+already covers splitting a car or a hand off a body. It is the only selection: the octree's single-leaf
+selection left with the octree (D33).
 
-**D20 — Cell indexing is min-corner, in object-local space, in both representations.** A voxel of size
-`v` at integer cell `(x, y, z)` occupies `[x*v, (x+1)*v]` on each axis. Uniform coordinates may be
-negative and key packing covers `[-512, 511]`; an octree's root box is `[0, rootSize]³` with
-coordinates `[0, 2^depth)³` at depth `depth`, so octree coordinates are never negative. Detach
-re-indexes the extracted content so its min corner becomes local `(0, 0, 0)` and gives the new object
-a translation-only transform equal to the extracted region's world min corner. A detached octree leaf
-becomes an octree whose root box *is* that leaf box, carrying the same `maxDepth` as its source, so it
-can be split and detached again. Min-corner indexing is what keeps this rebase exact for odd-sized
-regions; a center-origin convention would introduce half-cell offsets.
+**D20 — Cell indexing is min-corner, in object-local space.** A voxel of size `v` at integer cell
+`(x, y, z)` occupies `[x*v, (x+1)*v]` on each axis, coordinates may be negative, and key packing covers
+`[-512, 511]`. Detach re-indexes the extracted content so its min corner becomes local `(0, 0, 0)` and
+gives the new object a translation-only transform equal to the extracted region's world min corner.
+Min-corner indexing is what keeps this rebase exact for odd-sized regions; a center-origin convention
+would introduce half-cell offsets. The octree's `[0, rootSize]³` box and its never-negative coordinates
+left with the octree (D33).
 
 **D21 — Voxelization bakes node transforms.** Triangle soups are transformed into world space before
 voxelization, so a voxelized object carries a translation-only transform and its payload is
@@ -401,8 +393,7 @@ so that a rotated or scaled ancestor cannot silently misplace a detached child l
 
 **D24 — Camera layers separate what is edited, what is only shown, and what is exported.** Layer 0 is
 scene content: the voxel instances and the output camera, and it is the only layer an export renders.
-Layer 1 is viewport feedback — the box preview, leaf bounds, and the export aspect guide — which is
-never picked and never exported. Layer 2 is the imported source mesh, kept for the raw-mesh versus
+Layer 1 is viewport feedback — the box preview — which is never picked and never exported. Layer 2 is the imported source mesh, kept for the raw-mesh versus
 voxel comparison: the viewport camera enables 0, 1, and 2; the raycaster tests 0 and 2; the export
 camera and `Capture` use 0 alone, which is what keeps an un-voxelized source mesh out of an exported
 frame (SRS forbids exporting the mesh and its voxels together). `frameAll` measures 0 and 2 so an
@@ -418,13 +409,21 @@ what a Sketchfab export exposes, where the root chain mixes a -90° X rotation w
 non-uniform scales, and the whole scene lands rotated, sheared, and mis-scaled. The mirror then keeps
 the raw-mesh comparison glued to its import position by giving each source object its baked node
 matrix (`matrix = project.worldMatrix(id)⁻¹ ∘ nodeWorldMatrix`, `matrixAutoUpdate = false`), which
-reduces to the identity before voxelization and to a `-origin` offset after it.
+reduces to the identity before voxelization and to a `-origin` offset after it. It is one matrix per
+source mesh, never one per object: an object holds every mesh of one import (D28), and a single shared
+matrix would stack them all on the last attached node's pose, which is the overlap this rule exists to
+prevent.
 
-**D26 — Importing a GLB voxelizes immediately.** There is no separate voxelize step: the import path
-runs voxelization with the current settings and attaches one payload per imported node, and the
-resolution controls re-voxelize the retained import instead of gating a button. The import is the
-moment the user's content becomes editable, so a second confirmation click is friction with no
-decision behind it (the settings are the decision, and they are visible).
+**D26 — The voxelization settings are asked for once per import, in a dialog, not kept in the panel.**
+Choosing a GLB parses it, adopts it as one object, fits the view, and then opens a modal dialog with the
+voxelization settings seeded from the imported bounds; confirming runs the job and cancelling leaves the
+raw model visible as an `'empty'` object. The settings therefore have exactly one home, and it is a place
+the user reaches in context: resolution is a per-model decision made when the model arrives, so it should
+not occupy permanent panel space. The dialog is the only way in: no panel control, no stored default and
+no re-run entry point exists, so a cancelled or regretted voxelization is re-run by importing the file
+again — a deliberate trade for a panel that stays free of per-model settings. This replaces the earlier
+"import voxelizes immediately with whatever the panel currently shows" flow, whose controls the user
+asked to remove.
 
 **D27 — Stylized content needs an alpha cutoff and an outline-mesh rule, both name/flag driven.**
 Ported from the previous project's fix (`shithill` commit `54b73b6c0c480014736909b52868fb42cc246e87`,
@@ -433,8 +432,8 @@ Ported from the previous project's fix (`shithill` commit `54b73b6c0c48001473690
 - **Outline meshes** are the inverted-hull shells stylized exports add. A mesh is one when *every*
   assigned material is named exactly `line` (trimmed, case-insensitive) — never inferred from a black
   colour, because ordinary black geometry is model content. Outline meshes are excluded from
-  voxelization and from the bounds that derive the octree root and the default voxel size, so a shell
-  slightly larger than the model cannot inflate either. They stay in the raw-mesh display, because they
+  voxelization and from the bounds that derive the default voxel size, so a shell slightly larger than
+  the model cannot inflate it. They stay in the raw-mesh display, because they
   are part of how the source model looks, so their document objects simply remain `'empty'`.
 - **Alpha cutoffs**: a texel below `material.alphaTest` keeps its voxel — dropping the cell is what
   fragments foliage and grass at low resolution — and takes the cached average colour of that
@@ -448,44 +447,338 @@ same cell draw coincident cubes in different colours and the scene looks doubled
 carry **parts** (one per material-bearing mesh, in traversal order) that all write into one payload,
 where the first part to claim a cell keeps it and later parts skip claimed cells — one cell, one
 colour, deterministic. Consequences, accepted with the decision: the imported scene is no longer
-separately selectable per node, so a car inside an island import is separated with the box tool plus
-Detach (scenario A), and a part's colour wins wherever it is *inside* another part's volume — the
+separately selectable per node, so a car inside an island import is separated by dragging a box over it and
+choosing Detach (scenario A), and a part's colour wins wherever it is *inside* another part's volume — the
 merged grid has no interior geometry at all, which is the point. Two axes of the earlier model stay
 untouched: per-object payloads are still the unit of animation and of Detach, and objects created
 after the import still overlap each other freely (D18), because nothing merges across objects.
 
+**D29 — Resolution is asked for as "voxels across the longest edge", not as a world edge length.**
+Adopted from the previous project's control shape (`shithill`'s `Scale` field: an integer, default 63, the
+model normalized so its longest axis is exactly that many voxels). The user picked this after using the
+metre-based field, and the reason is ergonomic: a count is what the request actually is, the derived
+length is a consequence (`voxelSize = maxExtent / count`), and the seed stops depending on the model — the
+dialog opens at the same 96 whatever was imported, where a metre seed moved with the import's size and had
+to be reasoned about. Only the input changes: the payload stays world-space metres, the object stays
+translation-only (D20/D25), so the lattice, the placement code and the export are untouched. The count is
+capped at 511 because the container keys allow 512 cells per axis and a payload touching both sides of the
+aligned lattice can occupy one cell more than the nominal count; `exceeds-grid` remains the backstop. The
+dialog now has exactly one branch: the octree arm, whose depth is a power-of-two subdivision of a root box,
+was removed with the octree (D33).
+
+**D30 — One background, defined in the project, mirrored by the page.** The editor opened on a pure black
+viewport, because `ProjectSettings.background` defaulted to `0x000000` and that color is what the renderer
+clears to. It is now `0x3d4250`, the previous project's editor background (its `COL_SCENE_BG`, read from
+`--scene: #3D4250` there), and `index.html` mirrors the value as `--scene` for the page and the canvas, so
+nothing darker shows behind or beside the viewport. The definition stays in `document` rather than moving
+to the stylesheet where the previous project keeps it, because this color is also the background of every
+exported frame: a CSS edit must not be able to change a rendered video. `WebGLRenderer` is consequently
+never given an explicit clear color — the scene's `background` is the single knob, and the clear-to-
+transparent dance the previous project performs around screenshots belongs to its thumbnail path, which
+this slice does not have.
+
+**D31 — The left side is a rail of buttons floating over the canvas, and a group's controls live in a movable,
+closable window.** Requested by the user after using the always-expanded column, and then corrected by them
+again: the controls must not occupy a reserved column of their own at all. So the viewport keeps the whole
+window — there is no panel grid column — and the UI is an overlay on top of it, the way the previous project's
+editor is built (`#toolbar` is `position: absolute` over its canvas, one button per category, the category's
+panel appearing on click). One `Edit` button is visible instead of every group's controls at once, and the
+controls appear only when asked for, in a window that can be dragged out of the way and closed; those two
+abilities are the user's additions, the previous project's panels are anchored and fixed. A group's controls
+exist in exactly one place — the window body — so there is still one node per control and `refresh()` keeps
+writing to the same nodes; closing hides the window and keeps them, so a reopened window shows the state the
+user left behind and a hidden window still tracks the project. One button is more than a window opener: the rail's `Edit` is also a way into the edit mode its tools belong to (D39),
+and it is disabled while no object is active, because that mode edits one object's voxels. Three consequences are
+deliberate rather than
+incidental: the overlay is `pointer-events: none` with `pointer-events: auto` on its children, so a press that
+is not on a button or a status box reaches the canvas; the status boxes carry their own translucent ground and
+an empty one is taken off the screen entirely, because a bare frame over the canvas is chrome nobody asked
+for; and `app/main.ts` stays out of all of it, since the rail is inserted inside the element `main` already
+hands to `Panels` and is ordered first by CSS rather than by append order, which is what puts the buttons above
+the status line `main` appended before the panel existed. Stacking is fixed rather than incidental: windows sit
+above the HUD and below the voxelize modal, so the one modal in the app is never covered by a window the user
+opened.
+
+**D32 — The export-aspect guide is gone.** The viewport used to carry a thin white outline marking the
+rectangle an export would capture (D17's `OutputPreview`, drawn on layer 1 and hidden while the camera lock
+was on). The user asked for it to be removed after seeing it as two white lines across an otherwise dark
+viewport: at an export aspect close to the window's, the outline's top and bottom edges land on the viewport's
+own edges and only the two verticals show, which reads as a rendering defect rather than as a framing aid. It
+is removed rather than restyled — the dim-grey corner brackets it was first changed into would have kept the
+same problem in a quieter colour — so `three-runtime/controls.ts` is navigation and the gizmo only, and the
+layer-1 decoration is the box preview. Nothing else took over the job: with the lock on,
+the viewport is the export framing itself; with it off, the export resolution is what the export panel says and
+the HUD reports, and no viewport decoration claims to show the crop.
+
+**D33 — The octree is gone; one voxel representation remains.** The user's senior dropped the
+requirement, so the editable octree and everything that existed only for it were removed: `voxels/octree`
+and `leafId`, the octree arm of the voxelizer, `detachOctreeLeaf`, the leaf side of the scene mirror, the
+leaf picking candidate, the leaf half of the overlay, the `'leaf'` selection variant, the leaf operations
+(`split`, `merge`, `remove`, `paint`, `setLeafLabel`), the `split` and `merge` tools, the leaf-label
+field, the HUD's leaf lines, the dialog's representation select and its cell size / root size / max depth
+fields, and every octree test. What this voids in the SRS, deliberately: its `Octree 大场景`,
+`Octree 叶单元选择`, `Octree 局部细化`, `Octree 单元编辑`, `Octree 叶单元分离` and `混合场景`
+requirements, the three octree design constraints, and acceptance scenario B. Section 12's octree
+questions are therefore closed by removal rather than answered. The cost is stated where it lands: a very
+large static environment now gets one resolution and the same 4,000,000-cell budget as everything else, so
+a scene that the octree would have carried at variable resolution has to be voxelized coarser or split
+into objects, and reintroducing variable local resolution later means adding a container back rather than
+editing one. The removed code is in git history — the last commit that carries it is `bc49061`.
+
+**D34 — The status line does not report what the pointer rests on.** The pointer tool used to re-pick on
+every button-free `pointermove` and write the hovered cell and its colour — or the name of the raw mesh
+behind it — into the status line. The user asked for that to go: the read-out was not actionable, it
+competed for the same line as the messages that report operations and jobs, and the HUD already carries the
+state that matters (active object, representation, resolution, selection, playhead). Hovering therefore does
+nothing at all: no pick, no overlay change, no status write, and the pointer acts only on a press. That also
+removes the last reason for the tool to touch the overlay between drags, so a box preview now stands until
+something replaces it.
+
+**D35 — The viewport carries a world grid at `y = 0`.** Requested by the user, on the reference project's
+model: its editor grid is a `GridMaterial` plane with `gridRatio = 1`, a major line every 20 cells, minor
+lines at 40% visibility, and white lines, so the port keeps the two-level arrangement — one-metre cells and a
+brighter ten-metre level — and changes two things. `three` has no grid material and a fixed two-level line
+grid does not need a shader, so the grid is the library's `GridHelper` twice rather than a hand-written
+material; and the colours are panel greys instead of white, because D32 was the user's reaction to white lines
+across this viewport and a grid is no reason to bring them back (minor `0x9aa2ad` at 0.28, major `0xe6e8ea` at
+0.5). It is decoration in every direction: layer 1, so never picked and never exported; `depthWrite = false`,
+so it cannot occlude a voxel below the plane; and outside `frameAll`'s measurement, so it can never widen the
+framing of an import. The extent is a fixed 200 m and there is no visibility toggle; the contract records both
+as open.
+
+**D36 — The box drag has no height override.** The Edit group used to carry a `Box height` field: a value
+above one forced the dragged box's third axis to `[anchor.y, anchor.y + height - 1]`, turning a surface drag
+into a slab of a chosen thickness. The user asked for it to go — it was the one control in that group whose
+meaning was not self-evident, and the only reason a drag could commit something other than what the pointer
+described. A drag now always commits exactly the box it drew, one cell deep on the surface it runs along; a
+column of a chosen height is built by dragging in the plane that spans it, or by repeating the box. The field
+left `EditorSession` with it, and so did `DragState.dragging`, whose only reader was the override — the
+degenerate 1×1×1 click falls out of the corner cell never leaving the anchor cell.
+**D38 — No message area: the app has no status line, no progress row, and no error line.** The editor kept three
+text rows in the left overlay — the app's status line (`importing …`, `imported N nodes`, `voxelized N cells`,
+`rendered N frames`, `moving <object>`), the panel's progress row (`voxelizing 67%`, `frame 3/300`) and its error
+line — all mounted into the same element as the rail, which is why they rendered under the `Scene` button. The
+user asked for them to go, accepting the loss of feedback. The cost, stated where it lands: a long voxelization
+or a three-hundred-frame export now shows nothing while it runs, a failure is only in the console
+(`console.error` from `main.reportFailure`, and from `pointer.settle` for a refused edit), and the object list
+plus the HUD are the read-outs that remain. The `Result` unions are untouched — every error literal and detail
+is still produced and still reaches its caller — and `ExportJob.run` lost the `onProgress` parameter along with
+the row that displayed it, so that job reports no progress at all; its chunked loop and its macrotask yields
+stay, which is what keeps a cancel click landing between frames. The timeline panel's own message line is
+untouched: it lives in the timeline bar, not under the rail.
+
+**D37 — The edit gizmo pivots at the object's content center, and the drag moves the object live.** Requested by the
+user, who found the handles sitting at a corner of the object instead of on it, and then found that the first version of
+this change moved the object only on release. What the document means is not changed: `object.transform.position` is still
+the world position of the object's local `(0, 0, 0)`, which voxelization aligns to the payload's min corner (D20, D25),
+because the cell lattice, the raw-mesh placement, `detach`, and the exported per-frame scene data all read that. The pivot
+is a viewport fact and nothing else: `SceneMirror.contentCenterOf(id)` derives it from the occupied cells' bounding box —
+the origin for an object with no content of its own — and `ViewportControls.attachGizmo` puts the gizmo on an empty proxy
+object in the scene at that point.
+
+Two library constraints shape the rest, both read from the pinned `three@0.186.0`: `TransformControls` has no pivot or
+offset option — a drag writes the attached object's own `position`/`quaternion`/`scale` and the handles are drawn at that
+object's origin — and `Object3D.pivot` (added to the core for rotation and scale) is ignored by it, so it can centre a
+rotation but not the handles. The ecosystem answer to both is the proxy object, and the two halves of a gesture are what
+make it work here:
+
+- **Live**: `objectChange` reports the node matrix the drag derives from the proxy's world-space delta
+  (`pivotNow · pivotStart⁻¹ · nodeStart`), which `main` applies through `SceneMirror.previewTransform` — a scene write, no
+  document write. The proxy is a child of the **scene**, not of the object: a child would be carried along by the motion
+  the drag asks for, and since the library measures a drag against the attached object's parent, the object would run away
+  from the pointer at twice the rate. A scene-level proxy is also what keeps the handles under the pointer.
+- **Committed**: `mouseUp` hands the same matrix to `setTransformFromWorldMatrix`, which converts it to the object's local
+  transform against its parent — the document stores local transforms, and the gizmo reports a world one, which is a
+  correction for a child of a moved parent as well — and marks the object dirty. Exactly one document write per gesture,
+  and the rebuild it triggers discards the preview.
+
+The mirror's rebuild replaces the node a gizmo is attached to, so the render loop re-attaches it when the node identity
+changes. An `'empty'` object pivots at its origin — a raw source mesh is display-only and stays on the pose the import put
+it on however the object's transform changes (D25), so it cannot define the object's own center.
+
+**D39 — The viewport has two modes, `Object` and `Edit`, switched by a pair of buttons at the bottom centre of the canvas.**
+Requested by the user, who wanted one mode where clicking a model shows its transform gizmo and one where the model itself is edited. The mode is
+session state (`EditorSession.mode`) and it is the *only* thing that decides what a press is for: in `object` mode a press activates the object
+under the pointer and the composition root shows the gizmo on it, and in `edit` mode the gizmo is gone and the Edit group's tool does the work —
+`select` dragging a region, `add`/`paint`/`remove` consuming it. The two are therefore exclusive by construction rather than by
+convention, and the pointer tool's voxel path is gated on the mode, so no press can transform an object and edit one. Why a switch rather than a
+tool: the gizmo used to hang off the `select` tool, which is also the tool that drags a voxel region, so the same button meant two unrelated
+things. Entering `object` mode drops the cell selection, because a region is what the edit mode works on. Edit mode also needs an object to be
+about: its two ways in — the mode bar's `Edit` and the rail's `Edit` group button — are disabled while no object is active, and clearing the
+active object (deleting it, most directly) leaves the mode for `object` rather than standing there with nothing to edit. Costs, accepted: the tool row and the
+`Select` field are inert in `object` mode — they are the edit mode's parameters — and the app opens in `object` mode, so the first press on a
+model shows its gizmo rather than editing it. `ui/modeBar.ts` renders the switch and `index.html` pins it to the bottom centre of the canvas'
+grid area, so it sits over the viewport's own bottom edge whatever the timeline's height is (D31, D35).
+
+**D40 — Both renderers use a logarithmic depth buffer.** Found while importing a centimetre-authored model
+(`public/carrier_scene.glb`, 29 643 units ≈ 296 m of ship, units read as metres by the importer, since glTF carries no
+unit): the viewport renders it cleanly up close, but the further the camera pulls back the more the model shimmers with
+surfaces that seem to overwrite each other. That is depth precision, not geometry: `frameAll` frames the whole model
+(radius ≈ 15 740, camera at ≈ 34 600) while the near plane stays at 1e-4/0.1, so the buffer spans a ~500 000:1 ratio and a
+24-bit linear depth buffer resolves ≈ 714 units at the model's depth — coarser than the 309-unit cell spacing, so
+neighbouring voxel faces and coincident raw-mesh shells fight each other. A logarithmic buffer resolves ≈ 0.03 units
+there, which is what removes the class of artifact. Costs, accepted: `gl_FragDepth` is written by every material, so the
+depth test loses its early-out, and the app grows one more renderer flag to keep in step — `Capture` sets it too, because
+an export must not fight where the viewport does not. Rejected alternatives: moving `near` out with the framed content
+(would clip whatever the user zooms into next, and needs a heuristic per scene size) and normalising the import's scale
+(silently rescaling user content from a guess). What this does *not* fix is the aliasing that a 30 km model at ~2–6 px per
+cell shows while moving: that is sampling, not depth, and its levers are render resolution or a saner model scale.
+
+**D41 — The voxel is the world's base unit: the lattice spacing is a world constant and an import is scaled to its voxel
+count.** The user's rule — "让一体素成为最基本的单位", one voxel is the basic unit — after the carrier import exposed the
+cost of the opposite rule (D29). Today's model derives the spacing from the model (`voxelSize = maxExtent / count`, D29),
+which fixes the model's length and lets the file's authored units decide the *world*: a centimetre-authored file
+(`public/carrier_scene.glb`, 29 643 units for the ~296 m of a real Nimitz) arrives 100× oversized, and both symptoms
+follow from that one fact — a ~30 km scene against a near plane at 1e-4, whose depth range a 24-bit buffer cannot resolve
+(D40), and a model whose whole length lands in ~185 px and therefore shimmers when the camera moves (sampling, which no
+depth buffer touches).
+
+The reference implementation does the opposite, deliberately: `shithill` fixes the lattice at one world unit per voxel
+and scales the *model* to fit it — `voxelizeMeshNode` bakes `scaleFactor = Scale / maxSize` and a min-corner translation
+into a copy of every mesh before voxelizing it (`src/core/raycaster/voxelizer.js:135`), where `Scale` is that model's
+length in voxels (`src/index.html:583`, default 63; D29's note that shithill normalizes the longest axis to exactly that
+many voxels) — which is why its editor camera can hold `near = 1`, `far = 5000` and never adjust either
+(`src/core/sandbox/sandbox.js:98`). vox-world adopted the count but not the normalization (D29), so it inherited the
+file's units instead.
+
+The decision, in vox-world's own terms:
+
+- **One voxel is one world unit.** The spacing is a world constant, not a per-object value derived from content.
+- **The importer scales the content it read**, so a model's longest edge is exactly its voxel count. The scale is baked
+  into each imported mesh's node matrix and into the voxelize source's world positions. What is scaled is the *content*,
+  never the document's semantics: the payload stays world space (D21), the object stays translation-only (D25), cells
+  stay object-local integer boxes (D20), and Detach keeps re-indexing to a min corner (D20, D23). The lattice is simply
+  the same unit everywhere now.
+- **`Voxels across` keeps its control shape and narrows its meaning** (D29): it is how long this model is, in voxels, not
+  a count that divides an authored extent into metres.
+- **Every world constant becomes voxel-relative**: the viewport camera's near and far, the view grid's cell, and the demo
+  content, so nothing in the scene is expressed in a unit the importer has to guess.
+
+Accepted costs:
+
+- The metric reading goes: `1 voxel = X m` (D29's derived line) stops being a length, and a real-world size becomes a
+  voxel count ("this character is 300 voxels tall"). The dialog, the HUD, the panel and the grid all move to voxel units
+  together, in one change, or they disagree.
+- A model's size in the world *is* its voxel count, so size stops being comparable across imports: a large environment
+  imported at a low count is small in the world and a small prop imported at a high count is large. That is what
+  shithill's `Scale` does too, and it is the trade this decision makes on purpose.
+- The container's per-axis key space (`[-512, 511]`, D20) and the cell budget (4 000 000) become the only size governors;
+  §12's question about splitting the budget per object stays open, while its "real-world scale" half is answered here:
+  scale is voxels, not metres.
+- D40's logarithmic depth buffer stops being load-bearing — a world a few hundred voxels across cannot fight at any
+  camera distance — but it stays as the belt-and-braces setting for whatever a future import does.
+- The import now decides a scale the user cannot read off the file, and glTF carries no unit field, so the decision must
+  stay *visible*: the count is the model's length in voxels and nothing is guessed silently. A file authored in cm, m or
+  inches lands the same size, which is the point — and the app can no longer report how large the model "really" is.
+
+Rejected alternatives:
+
+- **Keep the derived spacing and patch the symptoms** (D40's depth buffer plus viewport supersampling and a tighter
+  `frameAll` fit). Rejected as the *rule*: it leaves the world's scale decided by each file's units, so the grid, the
+  camera constants, an exported frame's scene data, and a voxel's on-screen density all drift per import. Those remain
+  quality levers, not a unit model.
+- **Scale to a metric target** ("fit the longest edge to 100 m"): the target would still be chosen per file, and it
+  re-introduces exactly the metric reading the decision removes. The voxel count is the size the app already asks for.
+- **Guess the unit from the file** ("extents above 1000 units are centimetres"): a silent, lossy guess about user
+  content, with no glTF field to confirm it.
+
+**Landed in two slices.** The first one carries the unit model itself: `CELL_SIZE` in `voxels/uniform/grid.ts`, a
+`UniformGrid` that stores no size, a `voxelize` with no target, an importer that scales content onto the lattice
+(`scaleImportedScene`, absolute against the file's `authoredExtent`), a dialog whose count is the model's length in
+voxels, and readouts in cells rather than metres — with the contracts and tests of those files moved in the same change.
+Nothing migrated, because this slice has no persistence (D9). Still to come, and still described as they are because
+they have not changed yet: the viewport camera's `near`/`far` constants, the world grid's cell, the demo content's
+placement, and `frameAll`'s fit (D35, D40). What the two slices move, and what in each:
+
+| Contract | What changes |
+| --- | --- |
+| this file, §6 (Voxel cell semantics) | the per-object spacing becomes the world lattice |
+| `voxels/uniform/grid.md` | who owns `voxelSize`, and what the key space means |
+| `voxels/voxelize/{voxelize,surface}.md` | placement, the kernel's unit cells, and the `maxExtent / count` derivation D29 introduced |
+| `document/project.md` | where the lattice lives (settings, not per object) |
+| `document/detach.md` | re-indexing onto the same lattice |
+| `three-runtime/import.md` | scaling the read content; `voxelizeBounds` in voxels |
+| `three-runtime/{scene,overlay}.md` | unit cells in geometry and placement; the box preview (moved) |
+| `three-runtime/{grid,controls,capture}.md` | the grid cell, the camera's near and far — the second slice |
+| `editor/{session,ops}.md` | the resolution readout and the budget check |
+| `ui/{panels,voxelizeDialog,hud}.md` | the count field's meaning and the readout line it writes |
+| `app/main.md` | the viewport constants and the demo content |
+| `tests/{voxelize,detach}.md` | expectations written in metres |
+
+
+### D42. An object's placement is on the world grid by default
+
+**Decided.** Every object carries `alignToGrid`, set when it is created and offered as the `Grid align` checkbox
+under `Visible`. While it is set, the object's own `transform.position` holds whole cells, so its voxels sit on
+D41's lattice instead of half a cell off it.
+
+- **One rule, one owner.** `Project.alignedPosition` rounds a local placement to the nearest cell, and
+  `Project.alignWorldMatrix` applies that rounding to a world matrix in the object's own frame; an object that does
+  not align, and an unknown id, get their input back unchanged. `Project` owns both because it owns the flag and the
+  parent chain a local placement is expressed in.
+- **A drag previews what it stores.** `app/main.ts` sends the gizmo's live preview through `alignWorldMatrix`, and
+  `setTransformFromWorldMatrix` aligns the same matrix before dividing the parent out. Previewing the fraction would
+  step the object back onto the grid on release — the jump D37 and D39 were about — and rounding again after the
+  decomposition is what makes the document store `2` rather than the `1.9999999999999998` a matrix round trip leaves.
+- **Keyframes store cells; interpolation stays smooth.** `Project.keyframePosition` is what the `position` channel
+  of a keyframe is authored through, so everything a track *holds* for an aligned object is on the lattice, while the
+  mixer interpolates freely between those cells. The camera is never snapped: it is not a scene object, its placement
+  is a viewpoint rather than voxel content, and a camera confined to whole units could not frame anything.
+- **Turning it on moves the object.** The flag is a property the object satisfies from that moment, not a tool mode
+  that a later edit applies, so `setObjectAlignToGrid` snaps the placement when it is switched on and writes only the
+  flag when it is switched off.
+- **Creation never moves content.** A voxel object is created with the flag already set when the placement it was
+  handed is whole cells, and unset when it is not. Detaching a region under a parent that is turned or off the
+  lattice therefore yields an object that is off the lattice and knows it: D23's world preservation is the stronger
+  promise, so the object is not snapped onto the grid behind the user's back.
+
+Accepted costs: a rotated or scaled ancestor maps a whole-cell local placement to a fractional world one — the flag
+governs the object's own transform, not world coordinates under a transformed ancestor; and the exact half cell is the
+one placement the nearest-cell rule cannot promise a direction for, because the parent round trip's last bits decide
+it, though either neighbour is a legal snap.
+
+Rejected: snapping world coordinates instead (a child of a turned parent would have to store a fraction, which is what
+the rule exists to prevent); snapping the sampled pose during playback (the motion would stutter, and smooth
+interpolation is what the tracks are for); snapping rotation and scale too (a payload is axis-aligned world content
+per D21, and a turned or scaled voxel object is not something voxelization produces).
+
+Affected contracts: `document/project.md` (the flag and the two placement rules), `editor/ops.md`
+(`setObjectAlignToGrid`, and the two-step snap), `tests/{project,ops}.md` (what is now pinned),
+`ui/panels.md` (the checkbox), `ui/timeline.md` (the authored keyframe value), `app/main.md` (the previewed matrix),
+and this file's §6.
+
+
 ## 9. Demo slice
 
-The first runnable version must demonstrate the two acceptance scenarios end to end. Everything
-listed as deferred is deferred deliberately, not forgotten.
+The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
+deferred is deferred deliberately, not forgotten.
 
 ### In scope
 
 - Import a GLB, auto-frame the view, and show the raw mesh for comparison against the voxel result.
-- Voxelization runs on import as one object with one payload, as uniform or octree, with progress,
-  cancel, and a budget guard; changing the resolution re-runs it.
+- Voxelization is asked for when a model arrives: parse, scale it onto the world lattice, adopt as one object, fit the
+  view, then a modal dialog with the one setting — how long the model is in voxels (D29, D41); confirm runs it with
+  cancel and a budget guard, and cancel leaves the raw model visible.
 - Toggle the raw mesh against the voxel result; assign one mask color per object.
 - Select and edit voxel objects: create, name, delete, hide, transform, reparent.
-- Octree: pick a leaf and show its bounds, depth, size, occupancy, and color; split, merge, remove,
-  paint; detach a leaf as a new object.
-- Uniform: drag a box (anchor, opposite corner, optional fixed height) and add, remove, paint, or
+- Voxels: drag a box (anchor, opposite corner) to select it, or to add, remove, paint, or
   detach it as a new object; a click is a 1×1×1 box.
 - Timeline: duration and frame rate, keyframes on object transforms and on the output camera,
   step/linear/smooth interpolation, play, pause, stop, loop, scrub.
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range,
-  with progress, cancel, and failure reporting.
+  with cancel; a failure reaches the console (D38).
 
 ### Acceptance flows
 
-- **Scenario A** — import `island.glb`, which arrives as one object with one payload; separate the car
-  from it with the box tool plus Detach, give the car and the output camera keyframes, export an MP4
-  with the mask colors.
-- **Scenario B** — import `big.glb`, voxelize as octree, pick leaves and split/remove/paint them,
-  detach a leaf into a character object, split it further, detach hands and feet, animate all three
-  objects on the same timeline, export through the same path.
+- **Scenario A** — import a GLB whose parts are separate nodes and which arrives as one object with one
+  payload; separate one part from it by dragging a box over it and choosing Detach, give that part and the camera
+  keyframes, export an MP4 with the mask colors.
+Scenario B, which walked the octree — voxelize as octree, pick and split leaves, detach hands and feet —
+was removed with the representation itself (D33), and so was the mixed-scene requirement it served.
 
-Both flows use one timeline and one export path; that is the acceptance criterion for the mixed
-scene requirement.
+The models the flow was first run on were generated by `tools/make-demo-glb.mjs`; that generator and its
+`island.glb`/`big.glb` outputs have since been removed, so the flow now runs on a GLB supplied for the walk.
+What it asserts is unchanged: the node structure above is the only requirement an asset has to meet.
 
 ### Deferred
 
@@ -497,7 +790,7 @@ scene requirement.
 | Depth and object-id frame export | The mask pass already proves the second pass path; the MP4 is the required deliverable. |
 | Base color texture sampling | Demo assets use material base color and vertex colors; sampling will go through `THREE.Color` and the geometry attributes. |
 | Skinning, morph targets, animations inside GLB | SRS explicitly does not require them. |
-| View-dependent LOD, octree pruning, GPU memory offload | Not needed at demo scale. |
+| View-dependent LOD, GPU memory offload | Not needed at demo scale. |
 
 ## 10. Validation
 
@@ -510,10 +803,9 @@ npm run build       # production build
 git diff --check
 ```
 
-Unit tests cover our own modules — voxels, document, animation: octree split/merge invariants (volume
-and appearance preserved, no overlapping occupied leaves), detach identity and world-space
-preservation, uniform box region math and extraction, project hierarchy legality and payload
-transitions, clip compilation and frame-exact sampling, and voxelization surface correctness.
+Unit tests cover our own modules — voxels, document, animation: uniform box region math and extraction,
+detach identity and world-space preservation, project hierarchy legality and payload transitions, clip
+compilation and frame-exact sampling, and voxelization surface correctness.
 Rendering, picking, and export are verified by running the application and by inspecting the produced
 MP4.
 
@@ -523,10 +815,10 @@ Per-file contracts live in this directory, mirroring `src/` (D15):
 
 ```
 codemap/voxels/uniform/grid.md      -> src/voxels/uniform/grid.ts
-codemap/voxels/octree/octree.md     -> src/voxels/octree/octree.ts
 codemap/document/project.md         -> src/document/project.ts
+codemap/editor/pointer.md           -> src/editor/pointer.ts
 codemap/animation/playback.md       -> src/animation/playback.ts
-codemap/tests/octree.md             -> tests/octree.test.ts
+codemap/tests/detach.md             -> tests/detach.test.ts
 codemap/toolchain.md                -> package.json, tsconfig.json, vite.config.ts,
                                        vitest.config.ts, index.html
 ```
@@ -546,7 +838,8 @@ reported, not silently followed.
   (bad argument type, out-of-range index, violated invariant) throw `TypeError` or `RangeError`.
 - Long operations run as chunked loops that yield to the host every `CHUNK = 512` items and accept an
   `AbortSignal`, so progress and cancel work on the main thread without a worker.
-- Units are meters; cell indexing, color channels, identity rules, box semantics, and traversal order
+- Units are voxels: one voxel is one world unit (D41), so cell coordinates, box extents, object transforms, and every
+  size the UI reports are in that one unit; cell indexing, color channels, identity rules, box semantics, and traversal order
   are as specified in sections 4, 6, and D11/D18/D19/D20.
 - Tests live in `tests/<name>.test.ts` and run under vitest in the node environment: no GPU, no DOM,
   no `WebGLRenderer`. Importing `three` for math and geometry is allowed.
@@ -559,12 +852,6 @@ a provisional answer is a working default, not a settled design.
 
 | Question | Provisional answer for this slice | Still open |
 | --- | --- | --- |
-| Octree root extent and extension policy | The root box is fixed per object as `[0, rootSize]³` (D20). Sizing comes from the source bounds at voxelization time; there is no dynamic root extension yet. | Root growth for a scene that outgrows its box. The reference paper doubles the root and re-parents the eight depth-1 nodes into the new root's central octant at `O(1)` cost; that is the shape to adopt when it is needed. |
-| Maximum depth and minimum leaf size | `maxDepth = 10` per octree object, so the minimum leaf is `rootSize / 1024`. | Whether the limit should be global, per object, or driven by a target leaf size. |
-| How leaf depth is chosen on first voxelization | From a target cell size: `depth = clamp(ceil(log2(rootSize / targetCellSize)), 1, maxDepth)`. The user sets the target size; nothing is derived from camera distance (SRS forbids that). | Whether the demo needs a per-region target (for example finer near the camera path). |
-| Stable leaf identity | `LeafId` is `"<depth>:<octant digits>"` (D20), stable across splits because a child extends its parent's id. | Whether leaf identity must survive a merge/split round trip as the same id; today a re-split produces the original ids again, which is the same thing in practice. |
-| Label data form | A single optional `label: string` per leaf, inherited by split and used as the detached object's name. | Whether labels need to be multi-valued, structured, or indexed for selection. |
-| Representation of a detached object whose source is an octree | Octree, with the root box equal to the detached leaf box and the source's `maxDepth`, so it can be split and detached again (D20). | Whether a detached object should ever be flattened to uniform voxels for cheaper animation. |
 | GLB feature range | Uncompressed glTF 2.0 geometry, `pbrMetallicRoughness.baseColorFactor`, and vertex colors. Draco, Meshopt, and KTX2 are reported as `unsupported` rather than half-loaded. | Which extensions real content actually needs. |
 | Color sampling for textures | Base color factor and vertex colors only; texture sampling is deferred and the sampling seam is `ColorSource`. | UV sampling rules, wrapping, and color space handling for textured content. |
-| Real-world scale and budget | Voxelization aborts above `budget = 4_000_000` cells and the existing scene is left untouched. | The budget for real content, and whether it must be split into a per-object quota plus a total. |
+| Real-world scale and budget | Scale is answered: content is scaled onto the world lattice, so a model's size is its voxel count (D41) and `budget = 4_000_000` cells is what a job may claim; a run above it leaves the existing scene untouched. | The budget for real content, and whether it must be split into a per-object quota plus a total. |

@@ -1,3 +1,4 @@
+import { CELL_SIZE } from '../uniform/grid.js';
 import type { CellKey } from '../uniform/grid.js';
 
 /** One indexed triangle soup, already expressed in the target space. */
@@ -26,9 +27,8 @@ const KEY_SPAN = 1024;
  * Packs aligned cell coordinates into the container's key layout —
  * `(x + 512) * 1024² + (y + 512) * 1024 + (z + 512)`, exactly what `grid.packKey` builds and
  * `grid.unpackKey` takes apart. The arithmetic is repeated instead of called because `packKey`
- * also enforces the container's own storage range `[-512, 511]`, while an octree's aligned leaf
- * indices legitimately run up to `2^maxDepth` (1024 at the documented `maxDepth` of 10); every
- * coordinate reaching this kernel is non-negative and already aligned.
+ * also enforces the container's storage range `[-512, 511]` on every write, while every coordinate
+ * reaching this kernel is non-negative and already aligned to the target lattice.
  */
 function cellKey(x: number, y: number, z: number): CellKey {
   return (x + 512) * KEY_SPAN * KEY_SPAN + (y + 512) * KEY_SPAN + (z + 512);
@@ -67,17 +67,11 @@ function separatedBy(ax: number, ay: number, az: number): boolean {
  * apart, so a cell the surface merely passes near is never kept. A face lying exactly on a lattice
  * plane therefore claims the cell on each side of it that its AABB reaches.
  *
- * Cell indices are neither clamped nor aligned here: `voxelize.ts` aligns the soup so the payload
- * container's coordinate range holds (README D20).
+ * Cells are the world unit (README D41), so a candidate cell is the floor of a vertex and a cell's
+ * cube is that cell's unit cube. Cell indices are neither clamped nor aligned here: `voxelize.ts`
+ * aligns the soup so the payload container's coordinate range holds (README D20).
  */
-export function voxelizeSurface(
-  soup: TriangleSoup,
-  voxelSize: number,
-  opts: SurfaceOptions,
-): SurfaceCells | SurfaceFailure {
-  if (!Number.isFinite(voxelSize) || voxelSize <= 0) {
-    throw new RangeError(`voxelSize must be a finite positive number, received ${voxelSize}`);
-  }
+export function voxelizeSurface(soup: TriangleSoup, opts: SurfaceOptions): SurfaceCells | SurfaceFailure {
   const budget = opts.budget;
   if (!Number.isInteger(budget) || budget < 0) {
     throw new RangeError(`budget must be a non-negative integer, received ${budget}`);
@@ -95,7 +89,7 @@ export function voxelizeSurface(
   if (triangleCount === 0) return { cells: new Map(), triangleCount: 0 };
 
   const vertexCount = positions.length / 3;
-  const half = voxelSize / 2;
+  const half = CELL_SIZE / 2;
   const cells = new Map<CellKey, number>();
   const report = opts.onProgress;
   const signal = opts.signal;
@@ -137,24 +131,24 @@ export function voxelizeSurface(
     const ny = e0z * e1x - e0x * e1z;
     const nz = e0x * e1y - e0y * e1x;
 
-    const minX = Math.floor(Math.min(v0x, v1x, v2x) / voxelSize);
-    const maxX = Math.floor(Math.max(v0x, v1x, v2x) / voxelSize);
-    const minY = Math.floor(Math.min(v0y, v1y, v2y) / voxelSize);
-    const maxY = Math.floor(Math.max(v0y, v1y, v2y) / voxelSize);
-    const minZ = Math.floor(Math.min(v0z, v1z, v2z) / voxelSize);
-    const maxZ = Math.floor(Math.max(v0z, v1z, v2z) / voxelSize);
+    const minX = Math.floor(Math.min(v0x, v1x, v2x));
+    const maxX = Math.floor(Math.max(v0x, v1x, v2x));
+    const minY = Math.floor(Math.min(v0y, v1y, v2y));
+    const maxY = Math.floor(Math.max(v0y, v1y, v2y));
+    const minZ = Math.floor(Math.min(v0z, v1z, v2z));
+    const maxZ = Math.floor(Math.max(v0z, v1z, v2z));
 
     // Deterministic candidate order: z, then y, then x.
     for (let z = minZ; z <= maxZ; z++) {
-      const cz = (z + 0.5) * voxelSize;
+      const cz = z + half;
       for (let y = minY; y <= maxY; y++) {
-        const cy = (y + 0.5) * voxelSize;
+        const cy = y + half;
         for (let x = minX; x <= maxX; x++) {
           const key = cellKey(x, y, z);
           // First claim wins: a claimed cell keeps its lower triangle index.
           if (cells.has(key)) continue;
 
-          const cx = (x + 0.5) * voxelSize;
+          const cx = x + half;
           probe[0] = v0x - cx;
           probe[1] = v0y - cy;
           probe[2] = v0z - cz;

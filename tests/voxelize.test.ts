@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { Color, LinearSRGBColorSpace, Matrix4, SRGBColorSpace, Vector3 } from 'three';
-import { Octree } from '../src/voxels/octree/octree.js';
 import { packKey, unpackKey } from '../src/voxels/uniform/grid.js';
 import { resolvePrimitiveColor } from '../src/voxels/voxelize/colorSampler.js';
 import { voxelizeSurface } from '../src/voxels/voxelize/surface.js';
@@ -132,10 +131,11 @@ function onlyOutput(result: OkResult): VoxelizeOutput {
 
 describe('voxelizeSurface', () => {
   it('voxelizes an axis-aligned cube into exactly the cells its faces intersect', () => {
-    const soup = boxSoup(1.9);
-    const { cells, triangleCount } = surfaceCells(voxelizeSurface(soup, 0.5, { budget: 100_000 }));
+    const soup = boxSoup(3.8);
+    const { cells, triangleCount } = surfaceCells(voxelizeSurface(soup, { budget: 100_000 }));
 
-    // The 4x4x4 cell block the 1.9 m cube spans, minus its strictly interior 2x2x2 block.
+    // The 4x4x4 cell block the 3.8-unit cube spans — one cell is one world unit — minus its strictly
+    // interior 2x2x2 block.
     const expected: number[] = [];
     for (let x = 0; x <= 3; x++) {
       for (let y = 0; y <= 3; y++) {
@@ -159,13 +159,14 @@ describe('voxelizeSurface', () => {
     expect(cells.has(packKey(4, 0, 0))).toBe(false);
   });
   it('never emits a cell outside a triangle AABB', () => {
-    // A right triangle of legs 1.8 m at z = 0.05: cells (x, y, 0) with x + y <= 3 are touched,
-    // while (3, 3, 0) sits inside the candidate AABB but outside the triangle.
+    // A right triangle of legs 3.6 at z = 0.1: on unit cells its legs reach cells 0..3 on both axes
+    // and its hypotenuse, x + y = 3.8, stays inside that 4x4 block, so cells (x, y, 0) with
+    // x + y <= 3 are touched, while (3, 3, 0) sits inside the candidate AABB but outside the triangle.
     const soup: TriangleSoup = {
-      positions: Float32Array.of(0.05, 0.05, 0.05, 1.85, 0.05, 0.05, 0.05, 1.85, 0.05),
+      positions: Float32Array.of(0.1, 0.1, 0.1, 3.7, 0.1, 0.1, 0.1, 3.7, 0.1),
       index: Uint32Array.of(0, 1, 2),
     };
-    const { cells } = surfaceCells(voxelizeSurface(soup, 0.5, { budget: 1000 }));
+    const { cells } = surfaceCells(voxelizeSurface(soup, { budget: 1000 }));
 
     const expected: number[] = [];
     for (let x = 0; x <= 3; x++) {
@@ -192,12 +193,12 @@ describe('voxelizeSurface', () => {
     // Triangle 0 stays inside cell (0, 0, 0); triangle 1 reaches that cell and its neighbours.
     const soup: TriangleSoup = {
       positions: Float32Array.of(
-        0.1, 0.1, 0.1, 0.4, 0.1, 0.1, 0.1, 0.4, 0.1,
-        0, 0, 0, 0.5, 0, 0, 0, 0.5, 0,
+        0.2, 0.2, 0.2, 0.8, 0.2, 0.2, 0.2, 0.8, 0.2,
+        0, 0, 0, 1, 0, 0, 0, 1, 0,
       ),
       index: Uint32Array.of(0, 1, 2, 3, 4, 5),
     };
-    const { cells } = surfaceCells(voxelizeSurface(soup, 0.5, { budget: 100 }));
+    const { cells } = surfaceCells(voxelizeSurface(soup, { budget: 100 }));
 
     expect(cells.size).toBe(3);
     // Both triangles claim it, so the lower index wins.
@@ -207,7 +208,7 @@ describe('voxelizeSurface', () => {
   });
 
   it('returns budget-exceeded with the measured count', () => {
-    const result = voxelizeSurface(boxSoup(1.9), 0.5, { budget: 10 });
+    const result = voxelizeSurface(boxSoup(3.8), { budget: 10 });
     expect(result).toEqual({
       error: 'budget-exceeded',
       detail: 'cell budget exceeded: 11 cells at the limit of 10',
@@ -221,7 +222,7 @@ describe('voxelizeSurface', () => {
     controller.abort();
     const ratios: number[] = [];
 
-    const result = voxelizeSurface(soup, 1, {
+    const result = voxelizeSurface(soup, {
       budget: DEFAULT_CELL_BUDGET,
       onProgress: (ratio) => {
         ratios.push(ratio);
@@ -481,14 +482,13 @@ describe('resolvePrimitiveColor', () => {
 describe('voxelize', () => {
   it('returns one output per source with the requested representation', async () => {
     const sources: VoxelizeSource[] = [
-      { sourceId: 'node-car', name: 'Car', parts: [partOf(boxSoup(1.9), 0xff0000)] },
-      { sourceId: 'node-wheel', name: 'Wheel', parts: [partOf(translated(boxSoup(0.75), 4, 0, 0), 0x00ff00)] },
+      { sourceId: 'node-car', name: 'Car', parts: [partOf(boxSoup(3.8), 0xff0000)] },
+      { sourceId: 'node-wheel', name: 'Wheel', parts: [partOf(translated(boxSoup(1.5), 8, 0, 0), 0x00ff00)] },
     ];
     const ratios: number[] = [];
     const result = await okResult(
       voxelize({
         sources,
-        target: { kind: 'uniform', voxelSize: 0.5 },
         budget: DEFAULT_CELL_BUDGET,
         onProgress: (ratio) => {
           ratios.push(ratio);
@@ -507,10 +507,9 @@ describe('voxelize', () => {
     for (const output of result.outputs) {
       const { payload } = output;
       expect(payload.kind).toBe('uniform');
-      summed += payload.kind === 'uniform' ? payload.grid.size : payload.octree.occupiedLeafCount;
-      if (payload.kind === 'uniform') expect(payload.grid.voxelSize).toBe(0.5);
+      summed += payload.grid.size;
     }
-    expect(summed).toBe(64); // the 1.9 m cube's 56-cell shell plus the 0.75 m cube's 8
+    expect(summed).toBe(64); // the 3.8-unit cube's 56-cell shell plus the 1.5-unit cube's 8
     expect(result.stats.cells).toBe(summed);
 
     const car = result.outputs[0]?.payload;
@@ -525,7 +524,7 @@ describe('voxelize', () => {
     // Two identical cubes in one source: the second part reaches every cell of the first, so the payload
     // holds the 56 cells of a single cube — no cell is written twice — and each of them keeps the colour
     // of the part that claimed it first, whichever way round the parts are ordered.
-    const soup = boxSoup(1.9);
+    const soup = boxSoup(3.8);
     const orders = [
       [0xff0000, 0x00ff00],
       [0x00ff00, 0xff0000],
@@ -535,7 +534,6 @@ describe('voxelize', () => {
       const result = await okResult(
         voxelize({
           sources: [{ sourceId: 'scene-two', name: 'Two', parts: [partOf(soup, first), partOf(soup, second)] }],
-          target: { kind: 'uniform', voxelSize: 0.5 },
           budget: DEFAULT_CELL_BUDGET,
         }),
       );
@@ -551,7 +549,7 @@ describe('voxelize', () => {
   });
 
   it('colours a cell only a later part claims from that part', async () => {
-    // The second part sits four metres away, so its cells are free: they take its own colour, while the
+    // The second part sits eight units away, so its cells are free: they take its own colour, while the
     // cells the first part claimed keep theirs.
     const output = onlyOutput(
       await okResult(
@@ -560,10 +558,9 @@ describe('voxelize', () => {
             {
               sourceId: 'scene-two',
               name: 'Two',
-              parts: [partOf(boxSoup(1.9), 0xff0000), partOf(translated(boxSoup(0.75), 4, 0, 0), 0x00ff00)],
+              parts: [partOf(boxSoup(3.8), 0xff0000), partOf(translated(boxSoup(1.5), 8, 0, 0), 0x00ff00)],
             },
           ],
-          target: { kind: 'uniform', voxelSize: 0.5 },
           budget: DEFAULT_CELL_BUDGET,
         }),
       ),
@@ -571,7 +568,7 @@ describe('voxelize', () => {
     if (output.payload.kind !== 'uniform') throw new Error('expected a uniform payload');
     const grid = output.payload.grid;
 
-    expect(grid.size).toBe(64); // the 1.9 m shell's 56 cells plus the 0.75 m cube's 8
+    expect(grid.size).toBe(64); // the 3.8-unit shell's 56 cells plus the 1.5-unit cube's 8
     let claimed = 0;
     let later = 0;
     grid.forEach((x, _y, _z, color) => {
@@ -589,21 +586,20 @@ describe('voxelize', () => {
   });
 
   it('places the payload at the union AABB of every part', async () => {
-    // Two one-metre cubes at x = 2 and x = 0.3: the first part alone would put the payload at 2, the union
-    // minimum is 0.3. One payload holds both, so the origin is the union's.
+    // Two two-unit cubes at x = 4 and x = 0.6: the first part alone would put the payload at 4, the union
+    // minimum is 0.6. One payload holds both, so the origin is the union's.
     const source: VoxelizeSource = {
       sourceId: 'scene-union',
       name: 'Union',
-      parts: [partOf(translated(boxSoup(1), 2, 0, 0)), partOf(translated(boxSoup(1), 0.3, 0, 0))],
+      parts: [partOf(translated(boxSoup(2), 4, 0, 0)), partOf(translated(boxSoup(2), 0.6, 0, 0))],
     };
 
-    // Uniform: the origin is the union minimum floored to the cell size — 0, not 2 — and both parts are
+    // The origin is the union minimum floored to the unit lattice — 0, not 4 — and both parts are
     // measured from it, so the far part covers cells 4..6 while the near one covers 0..2.
     const uniform = onlyOutput(
       await okResult(
         voxelize({
           sources: [source],
-          target: { kind: 'uniform', voxelSize: 0.5 },
           budget: DEFAULT_CELL_BUDGET,
         }),
       ),
@@ -611,30 +607,13 @@ describe('voxelize', () => {
     expect(uniform.origin.equals(new Vector3(0, 0, 0))).toBe(true);
     if (uniform.payload.kind !== 'uniform') throw new Error('expected a uniform payload');
     expect(uniform.payload.grid.bounds()).toEqual({ min: [0, 0, 0], max: [6, 2, 2] });
-
-    // Octree: the origin is the union minimum itself, so it is the near part's 0.3 and not the 2 the
-    // first part alone would have given the payload; the positions are float32, so the coordinate is
-    // compared with a tolerance like every other soup coordinate in this file.
-    const octree = onlyOutput(
-      await okResult(
-        voxelize({
-          sources: [source],
-          target: { kind: 'octree', rootSize: 8, maxDepth: 10, targetCellSize: 1 },
-          budget: DEFAULT_CELL_BUDGET,
-        }),
-      ),
-    );
-    expect(octree.origin.x).toBeCloseTo(0.3, 5);
-    expect(octree.origin.y).toBe(0);
-    expect(octree.origin.z).toBe(0);
   });
 
   it('treats a source with no parts like a soup with no triangles', async () => {
-    const target = { kind: 'uniform', voxelSize: 0.5 } as const;
     const partless: VoxelizeSource = { sourceId: 'scene-none', name: 'None', parts: [] };
 
     // Nothing to voxelize anywhere: the same `empty` result a zero-triangle soup gives.
-    const alone = await voxelize({ sources: [partless], target, budget: 1000 });
+    const alone = await voxelize({ sources: [partless], budget: 1000 });
     expect(alone).toEqual({ ok: false, error: 'empty', detail: expect.any(String) });
     expect('outputs' in alone).toBe(false);
 
@@ -642,8 +621,7 @@ describe('voxelize', () => {
     // origin a source without bounds gets, exactly as a source whose soup has no triangles does.
     const result = await okResult(
       voxelize({
-        sources: [sourceOf('node-box', boxSoup(1.9)), partless],
-        target,
+        sources: [sourceOf('node-box', boxSoup(3.8)), partless],
         budget: DEFAULT_CELL_BUDGET,
       }),
     );
@@ -656,137 +634,29 @@ describe('voxelize', () => {
     expect(result.stats.triangles).toBe(12); // the partless source contributes none
   });
 
-  it('derives the octree depth from targetCellSize and clamps it to maxDepth', async () => {
-    const soup = boxSoup(1.9);
-    const octreeFor = async (maxDepth: number, targetCellSize: number) => {
-      const result = await okResult(
-        voxelize({
-          sources: [sourceOf('node-box', soup)],
-          target: { kind: 'octree', rootSize: 8, maxDepth, targetCellSize },
-          budget: DEFAULT_CELL_BUDGET,
-        }),
-      );
-      const { payload } = onlyOutput(result);
-      if (payload.kind !== 'octree') throw new Error('expected an octree payload');
-      const tree = payload.octree;
-      const sizes = new Set<number>();
-      const depths = new Set<number>();
-      let leaves = 0;
-      tree.forEachOccupiedLeaf((id) => {
-        const box = tree.leafBox(id);
-        sizes.add(box.size);
-        depths.add(box.depth);
-        leaves++;
-      });
-      return { tree, leaves, sizes: [...sizes], depths: [...depths] };
-    };
-
-    // ceil(log2(8 / 1)) = 3, leaf edge 1: the 1.9 m shell fills the whole 2x2x2 leaf block.
-    const deep = await octreeFor(10, 1);
-    expect(deep.tree).toBeInstanceOf(Octree);
-    expect(deep.leaves).toBe(8);
-    expect(deep.sizes).toEqual([1]);
-    expect(deep.depths).toEqual([3]);
-
-    // Clamped to maxDepth 2: leaf edge 2, one leaf.
-    const clamped = await octreeFor(2, 1);
-    expect(clamped.leaves).toBe(1);
-    expect(clamped.sizes).toEqual([2]);
-    expect(clamped.depths).toEqual([2]);
-
-    // ceil(log2(8 / 8)) = 0 clamps up to the minimum depth 1: leaf edge 4, one leaf.
-    const coarse = await octreeFor(10, 8);
-    expect(coarse.leaves).toBe(1);
-    expect(coarse.sizes).toEqual([4]);
-    expect(coarse.depths).toEqual([1]);
-
-    // A target cell size of 8 / 512 gives depth 9, so this rod's aligned leaf columns run past
-    // 512 — further than the uniform container's own storage range, and still keyed by the kernel.
-    const rod: TriangleSoup = {
-      positions: Float32Array.of(0, 0.001, 0.001, 8, 0.001, 0.001, 0, 0.031, 0.001),
-      index: Uint32Array.of(0, 1, 2),
-    };
-    const rodOutput = onlyOutput(
-      await okResult(
-        voxelize({
-          sources: [sourceOf('node-rod', rod)],
-          target: { kind: 'octree', rootSize: 8, maxDepth: 10, targetCellSize: 0.015625 },
-          budget: DEFAULT_CELL_BUDGET,
-        }),
-      ),
-    );
-    if (rodOutput.payload.kind !== 'octree') throw new Error('expected an octree payload');
-    const rodTree = rodOutput.payload.octree;
-    let rodLeaves = 0;
-    let rodSize = 0;
-    let rodDepth = 0;
-    let farColumn = -Infinity;
-    rodTree.forEachOccupiedLeaf((id) => {
-      const box = rodTree.leafBox(id);
-      if (box.center.x > farColumn) farColumn = box.center.x;
-      rodLeaves++;
-      rodSize = box.size;
-      rodDepth = box.depth;
-    });
-    expect(rodSize).toBe(0.015625);
-    expect(rodDepth).toBe(9);
-    expect(rodLeaves).toBeGreaterThan(512);
-    // The far column is clamped into the root box, so every leaf center stays inside `[0, 8]`.
-    expect(farColumn).toBeCloseTo(7.9921875, 10);
-    expect(rodTree.occupiedLeafCount).toBe(rodLeaves);
-  });
-
   it('places each origin at the payload world min corner', async () => {
-    const soup = translated(boxSoup(1.9), 2.7, 2.7, 2.7);
+    const soup = translated(boxSoup(3.8), 2.7, 2.7, 2.7);
     const uniform = onlyOutput(
       await okResult(
         voxelize({
           sources: [sourceOf('node-placed', soup)],
-          target: { kind: 'uniform', voxelSize: 0.5 },
           budget: DEFAULT_CELL_BUDGET,
         }),
       ),
     );
 
-    // The origin is the AABB minimum floored to the voxel size, so no local coordinate is negative.
-    expect(uniform.origin.equals(new Vector3(2.5, 2.5, 2.5))).toBe(true);
+    // The origin is the AABB minimum floored to the unit lattice, so no local coordinate is negative.
+    expect(uniform.origin.equals(new Vector3(2, 2, 2))).toBe(true);
     expect(uniform.origin.x).toBeLessThanOrEqual(2.7);
-    expect(uniform.origin.x).toBeGreaterThan(2.7 - 0.5);
+    expect(uniform.origin.x).toBeGreaterThan(2.7 - 1);
     if (uniform.payload.kind !== 'uniform') throw new Error('expected a uniform payload');
     expect(uniform.payload.grid.bounds()).toEqual({ min: [0, 0, 0], max: [4, 4, 4] });
-
-    const octree = onlyOutput(
-      await okResult(
-        voxelize({
-          sources: [sourceOf('node-placed', soup)],
-          target: { kind: 'octree', rootSize: 8, maxDepth: 10, targetCellSize: 1 },
-          budget: DEFAULT_CELL_BUDGET,
-        }),
-      ),
-    );
-
-    // An octree keeps the AABB minimum itself as the origin of the root box [0, rootSize]^3.
-    expect(octree.origin.x).toBeCloseTo(2.7, 5);
-    expect(octree.origin.y).toBeCloseTo(2.7, 5);
-    expect(octree.origin.z).toBeCloseTo(2.7, 5);
-    if (octree.payload.kind !== 'octree') throw new Error('expected an octree payload');
-    const tree = octree.payload.octree;
-    let leaves = 0;
-    tree.forEachOccupiedLeaf((id) => {
-      const center = tree.leafBox(id).center;
-      expect(center.x).toBeGreaterThanOrEqual(0);
-      expect(center.x).toBeLessThanOrEqual(8);
-      leaves++;
-    });
-    expect(leaves).toBeGreaterThan(0);
-    expect(leaves).toBe(tree.occupiedLeafCount);
   });
 
   it('returns empty for soups with no triangles', async () => {
     const empty: TriangleSoup = { positions: new Float32Array(0), index: new Uint32Array(0) };
     const result = await voxelize({
       sources: [sourceOf('node-empty', empty)],
-      target: { kind: 'uniform', voxelSize: 0.5 },
       budget: 1000,
     });
 
@@ -809,7 +679,6 @@ describe('voxelize', () => {
     for (const soup of malformed) {
       const result = await voxelize({
         sources: [sourceOf('node-bad', soup)],
-        target: { kind: 'uniform', voxelSize: 0.5 },
         budget: 1000,
       });
       expect(result).toMatchObject({ ok: false, error: 'unsupported-geometry' });
@@ -817,16 +686,16 @@ describe('voxelize', () => {
     }
   });
 
-  it('returns exceeds-grid for a uniform extent past the key range and for an octree root box smaller than the source AABB, with detail naming the sourceId and the offending axis', async () => {
-    // A 300 m triangle: 601 cells on X at voxelSize 0.5, past the 512 cells a payload may hold.
+  it('returns exceeds-grid for a uniform extent past the key range, with detail naming the sourceId and the offending axis', async () => {
+    // A 600-unit triangle: unit cells floor its 600-unit X leg into 601 cells on that axis, past the
+    // 512 cells a payload may hold.
     const wide: TriangleSoup = {
-      positions: Float32Array.of(0, 0, 0, 300, 0, 0, 0, 300, 0),
+      positions: Float32Array.of(0, 0, 0, 600, 0, 0, 0, 600, 0),
       index: Uint32Array.of(0, 1, 2),
     };
 
     const uniform = await voxelize({
       sources: [sourceOf('node-wide', wide)],
-      target: { kind: 'uniform', voxelSize: 0.5 },
       budget: DEFAULT_CELL_BUDGET,
     });
     expect(uniform).toMatchObject({ ok: false, error: 'exceeds-grid' });
@@ -834,17 +703,6 @@ describe('voxelize', () => {
     expect(uniform.detail).toContain('node-wide');
     expect(uniform.detail).toContain('X axis');
     expect(uniform.detail).toContain('601');
-
-    const octree = await voxelize({
-      sources: [sourceOf('node-deep', wide)],
-      target: { kind: 'octree', rootSize: 1, maxDepth: 10, targetCellSize: 0.5 },
-      budget: DEFAULT_CELL_BUDGET,
-    });
-    expect(octree).toMatchObject({ ok: false, error: 'exceeds-grid' });
-    if (octree.ok) throw new Error('expected the request to fail');
-    expect(octree.detail).toContain('node-deep');
-    expect(octree.detail).toContain('X axis');
-    expect(octree.detail).toContain('300');
   });
 
   it('exports DEFAULT_CELL_BUDGET as 4_000_000', () => {
@@ -852,14 +710,12 @@ describe('voxelize', () => {
   });
 
   it('reports cancel and budget failures with no outputs', async () => {
-    const source = sourceOf('node-cube', boxSoup(1.9));
-    const target = { kind: 'uniform', voxelSize: 0.5 } as const;
+    const source = sourceOf('node-cube', boxSoup(3.8));
 
     const controller = new AbortController();
     controller.abort();
     const cancelledResult = await voxelize({
       sources: [source],
-      target,
       budget: DEFAULT_CELL_BUDGET,
       signal: controller.signal,
     });
@@ -870,18 +726,15 @@ describe('voxelize', () => {
     });
     expect('outputs' in cancelledResult).toBe(false);
 
-    // The 1.9 m shell holds 56 cells, so this limit is passed on the 11th cell of one slice.
-    const starved = await voxelize({ sources: [source], target, budget: 10 });
+    // The 3.8-unit shell holds 56 cells, so a limit of 10 is passed on the 11th cell of one slice.
+    const starved = await voxelize({ sources: [source], budget: 10 });
     expect(starved).toMatchObject({ ok: false, error: 'budget-exceeded' });
     expect('outputs' in starved).toBe(false);
     if (starved.ok) throw new Error('expected the request to fail');
     expect(starved.detail).toContain('11 cells');
     expect(starved.detail).toContain('limit of 10');
 
-    await expect(voxelize({ sources: [source], target: { kind: 'uniform', voxelSize: 0 }, budget: 10 })).rejects.toThrow(
-      RangeError,
-    );
-    await expect(voxelize({ sources: [source], target, budget: 1.5 })).rejects.toThrow(RangeError);
+    await expect(voxelize({ sources: [source], budget: 1.5 })).rejects.toThrow(RangeError);
   });
 
   it('colors each cell from the three vertices of the triangle that claimed it', async () => {
@@ -896,7 +749,6 @@ describe('voxelize', () => {
       await okResult(
         voxelize({
           sources: [{ sourceId: 'node-tri', name: 'Tri', parts: [{ soup, color }] }],
-          target: { kind: 'uniform', voxelSize: 0.5 },
           budget: DEFAULT_CELL_BUDGET,
         }),
       ),
@@ -923,19 +775,17 @@ describe('voxelize', () => {
     };
     const texture = maskedTexture();
     const uv = flatUv(0.25, 0.75);
-    const target = { kind: 'uniform', voxelSize: 0.5 } as const;
 
     const masked = onlyOutput(
       await okResult(
         voxelize({
           sources: [
             {
-              sourceId: 'node-leaf',
-              name: 'Leaf',
+              sourceId: 'node-foliage',
+              name: 'Foliage',
               parts: [{ soup, color: { baseColor: 0xffffff, texture, uv, alphaTest: 0.5 } }],
             },
           ],
-          target,
           budget: DEFAULT_CELL_BUDGET,
         }),
       ),
@@ -943,8 +793,7 @@ describe('voxelize', () => {
     const unmasked = onlyOutput(
       await okResult(
         voxelize({
-          sources: [{ sourceId: 'node-leaf', name: 'Leaf', parts: [{ soup, color: { baseColor: 0xffffff, texture, uv } }] }],
-          target,
+          sources: [{ sourceId: 'node-foliage', name: 'Foliage', parts: [{ soup, color: { baseColor: 0xffffff, texture, uv } }] }],
           budget: DEFAULT_CELL_BUDGET,
         }),
       ),

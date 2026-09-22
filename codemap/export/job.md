@@ -3,7 +3,7 @@
 Ring: 3 · Layer: export · Depends on: document/project.ts, animation/playback.ts, three-runtime/scene.ts, three-runtime/capture.ts, export/encode.ts, three
 
 ## Responsibility
-The export frame loop: walk the requested timeline range at frame rate, sample it frame-exactly, render each frame at export resolution, and feed the encoder. It reports progress, honours cancellation, and never mutates the project — an export cannot corrupt authored data. It is not the encoder (`export/encode.ts`) and not a UI job wrapper.
+The export frame loop: walk the requested timeline range at frame rate, sample it frame-exactly, render each frame at export resolution, and feed the encoder. It honours cancellation and never mutates the project — an export cannot corrupt authored data. It is not the encoder (`export/encode.ts`) and not a UI job wrapper.
 
 ## Public interface
 ```ts
@@ -17,12 +17,11 @@ type ExportRequest = {
   project: Project; scene: THREE.Scene; capture: Capture; playback: Playback;
   output: { width: number; height: number; fps: number; from: number; to: number; mode: 'beauty' | 'mask' };
 };
-type ExportProgress = { frame: number; total: number };
 type ExportResult = { ok: true; blob: Blob; codec: string; frames: number } |
   { ok: false; error: 'cancelled' | 'no-codec' | 'encoder-failed' | 'not-finalized' | 'no-frames'; detail: string };
 class ExportJob {
   constructor(opts: { mirror: SceneMirror });
-  run(request: ExportRequest, onProgress: (p: ExportProgress) => void, signal?: AbortSignal): Promise<ExportResult>;
+  run(request: ExportRequest, signal?: AbortSignal): Promise<ExportResult>;
 }
 ```
 
@@ -35,8 +34,8 @@ class ExportJob {
    - `playback.setTime(t)` for frame-exact sampling — it clamps to `[0, timeline.duration]`, zeroes the mixer clock, updates once, and refreshes the camera projection itself, so the same `t` always produces the same frame and nothing is inherited from the viewport;
    - `capture.render(request.scene, mirror.camera)`: the render camera is the document camera, the same `PerspectiveCamera` instance `playback` drives with the camera track (README D17), never the viewport navigation camera — which is why exported framing equals authored framing;
    - `const frame = await capture.readFrame()`; a `{ ok: false }` result cancels the writer and returns `{ ok: false, error: 'encoder-failed', detail: 'capture: ' + detail }`;
-   - `writer.push(frame.bitmap, i)` and then `onProgress({ frame: i + 1, total })`;
-   - yield to the host once per frame with `await new Promise<void>(resolve => { setTimeout(resolve, 0) })`, a macrotask so the browser can paint the progress bar and deliver the cancel click between frames. The loop yields per frame rather than per `CHUNK` items (brief section 3) because the frame is the unit of observable progress and a cancel must land within one frame.
+   - `writer.push(frame.bitmap, i)`;
+   - yield to the host once per frame with `await new Promise<void>(resolve => { setTimeout(resolve, 0) })`, a macrotask so the browser stays responsive and a cancel click lands between frames. The loop yields per frame rather than per `CHUNK` items (brief section 3) because a frame is the unit of work and a cancel must land within one.
 5. Finish: `const written = await writer.finish()`; failure is returned as `{ ok: false, error: written.error, detail: written.detail }` with the writer's literal unchanged; success returns `{ ok: true, blob: written.blob, codec: written.codec, frames: total }`.
 6. Cleanup in a `finally` on every path: `writer.cancel()` when `finish()` was never reached (idempotent, closes any bitmap the sink still holds), `mirror.setMaskMode(false)` unconditionally — the job does not try to read what mask mode was before, because `SceneMirror` exposes no getter, so it always leaves the mirror unmasked — and `playback.setTime(restoreTime)` with the time found on entry. The job never calls `play`/`pause`/`stop`, so the transport state the user sees is untouched.
 7. The loop never mutates the project: it reads `mirror.camera`, writes only mixer-driven `Object3D` transforms (derived render state), and calls `capture.render`, `capture.readFrame`, and `writer.push`. It calls no `editor/ops.ts` function, no `Project` mutator, and no container mutator, so `Project.objects`, the voxel containers, the timeline, and the camera settings are byte-identical after a successful, cancelled, or failed export.
@@ -45,7 +44,6 @@ class ExportJob {
 ## Invariants
 - The project is unchanged by `run` on every exit path; only derived `Object3D` transforms and the mirror are touched.
 - Exactly one `capture.readFrame()` and one `writer.push` per index, so the encoded frame count is `total` and the success result's `frames` is that clamped count; success carries a finalized blob plus the chosen codec string and failure carries no blob.
-- `onProgress` is called once per frame with `frame = i + 1` and a constant `total`, in increasing order.
 - `signal` is re-read before every frame, so cancellation is honoured within one frame.
 - Frame times are exactly `from + i / fps` for `i` in `0..total-1` with `end = min(to, playback.duration)`, so the exported range covers the clamped span and never samples past the timeline.
 - Mask mode is turned off unconditionally in the `finally` block on every path, including cancel and encoder failure, and `playback.time` is restored to its entry value.
