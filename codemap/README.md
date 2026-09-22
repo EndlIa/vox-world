@@ -849,7 +849,7 @@ timeline and `#viewport { min-height: 0 }`), and this file's §9.
 - **Ids, not indices.** A module counter mints `keyframe-<n>`, unique for the session. `addKeyframe` mints one for a new keyframe and keeps the existing id when it replaces a value at an occupied millisecond; `moveKeyframe` and `removeKeyframe` take an id. A rebuild that reorders, retimes, or empties the list can therefore not make a press land on a neighbour, which index-addressed rows could: a stale index addressed whatever had moved into that slot.
 - **A refused move, not a dropped keyframe.** A move onto a millisecond another keyframe holds returns `false` and changes nothing; it no longer deletes the keyframe that was there. Moving a keyframe onto the time it already has is a `true` that changes nothing. The widget reads `false` as "the value was not taken": it refreshes, and the refused row's field shows the clip's time again.
 - **An emptied track stays.** `removeKeyframe` splices the keyframe and nothing else, so the track keeps its `(target, channel)` slot and its interpolation, and a keyframe added later joins that same track. `compile.ts` skips a track with no keyframes, so an empty track contributes nothing to the clip, and the invariant that such a track existed only between `ensureTrack` and its first insertion is gone.
-- **One Play/Pause toggle.** The widget's transport is a single button whose click pauses when `playback.playing` and plays otherwise, and whose label is re-derived inside `setTime` from `playback.playing` — the render loop calls `setTime` every frame, so the label follows playback started anywhere, not only by that button. `stop` is gone: returning to the start is what the scrub bar and the new exact-time field are for. The scrub bar is `step = 1` with `max = durationMs`, and each keyframe is one row of `key` (seek), `time (ms)` (retime in place), `delete` (remove by id), and a dim value label, which replaces the panel-level `move`/`delete` buttons and the row selection they acted on.
+- **One Play/Pause toggle.** The widget's transport is a single button whose label is re-derived inside `setTime` from `playback.playing` — the render loop calls `setTime` every frame, so the label follows playback started anywhere, not only by that button — and whose click reports the press through `onTransport`: the app performs it, because a run of the clip changes the viewport too (D48). `stop` is gone: returning to the start is what the scrub bar and the new exact-time field are for. The scrub bar is `step = 1` with `max = durationMs`, and each keyframe is one row of `key` (seek), `time (ms)` (retime in place), `delete` (remove by id), and a dim value label, which replaces the panel-level `move`/`delete` buttons and the row selection they acted on.
 
 Accepted costs: the clip's seconds and the document's milliseconds meet in `compile.ts` and in the app rather than in one unit, so a reader has to know which side of `onScrub` or `buildClip` they are on; a time the author types is silently rounded to the millisecond and clamped instead of being reported; a refused move is a no-op the row's rebuild has to communicate; a keyframe carries an id nothing else uses, which serialization must keep (D9); and an empty track is a state `findTrack`, the widget's interpolation select, and every track walker must tolerate.
 
@@ -911,6 +911,98 @@ Affected contracts: `three-runtime/cameraControl.md` (new), `three-runtime/contr
 the frame loop, the teardown), `tests/cameraControl.md` (new), and this file's §9.
 
 
+### D47. The camera path is a runtime-only drawing of the authored camera track
+
+**Decided.** `three-runtime/cameraPath.ts` draws the authored camera's trajectory in the viewport as a white polyline through the sampled curve plus
+one hollow ring per authored position keyframe, and `animation/trajectory.ts` produces the two point lists it is handed — the sampled path and the
+marker points. The drawing is presentation only: it is never serialized, never a keyframe target, never pickable, and no export frame contains it. It
+is shown only from two camera position keyframes up, and it is hidden with the carrier while the viewport already is the output camera (D46).
+
+- **Three does the interpolation; the sampler only picks the times (D2).** `sampleCameraTrajectory` compiles the timeline with `buildClip` and runs
+  the camera's one position track through a scratch `AnimationMixer`, sampling `segments + 1` evenly spaced times from the clip's start to its length
+  inclusive. The curve between keyframes is therefore the compiled track's own — discrete, linear, or the smooth spline — and no easing or keyframe
+  arithmetic is reimplemented.
+- **One track in the sampling clip, and the D22 binding shape.** The sampling clip carries only the camera position track, so the mixer never looks
+  for a node named after an `ObjectId`; the track's target is a scratch child named `camera` under an unnamed root, which is exactly the binding
+  `compile.ts` writes and `playback.ts` resolves (D22). The action is `LoopOnce` with `clampWhenFinished`, because a repeating action folds the sample
+  taken at the clip's length back onto the first keyframe, and the drawn path has to reach the last one.
+- **One ring per keyframe, drawn in world space.** `cameraKeyframePositions` reads the authored track directly, so a ring marks a keyframe rather than
+  a sample of the curve between two of them. The rings are billboards — three has no billboard mode on a mesh — so `faceCamera` copies the drawing
+  camera's quaternion onto each one per frame, and `setScreenScale` sizes each **mesh** from the viewing distance, the same floored distance the
+  carrier uses. Scaling the marker group instead would scale the markers' world positions with their size, and the rings would drift off the path they
+  belong to.
+- **Layer 1 and unnamed (D24, D22).** The whole subtree — the root included, so a child added later cannot escape — is on the decoration layer, and
+  nothing in it is named, so the picker, the export camera, and the mixer's binding walk all miss it.
+- **Two keyframes or nothing.** Fewer than two camera position keyframes is not a path, so the `Camera` group's `Show camera path` checkbox is
+  disabled and unchecked then, and `refreshCameraPath` clears the app's `cameraPathVisible` flag; the drawing appears only from two up. The box is a
+  view of that flag, seeded as `pathAvailable && pathVisible`, and ticking it writes nothing but the flag.
+- **The bar cannot eat the viewport.** The timeline's keyframe list is capped at `100px` and scrolls, so a track of many keyframes leaves the bar a
+  fixed height instead of pushing the viewport off screen; going from a few keyframes to many changes nothing above the list.
+
+Accepted costs: one quaternion copy per visible marker per frame — the price of a billboard without a built-in mode — and the app makes that call
+every frame rather than only on change; a scratch `AnimationMixer` and a fresh sampler clip are built on every redraw, at 128 segments by default, so
+an edit that changes the trajectory pays for a compile plus a mixer that is discarded immediately; and the capped keyframe list scrolls, so a long
+track shows only the rows its height holds.
+
+Rejected: **a second interpolation implementation** (sampling the keyframes in the sampler would duplicate the compiled track's step/linear/smooth
+semantics and could disagree with playback and export, which is what D2 forbids); **sizing the markers through their group** (a scale on the group
+scales the markers' positions with their size, so the rings would move off the path); **an uncapped keyframe list** (it grows the bar with every
+keyframe and eats the viewport the bar sits under); **drawing the path for a single keyframe** (one point is not a trajectory, and the box's disabled
+state is also where the app says how a path comes to exist).
+
+Affected contracts: `animation/trajectory.md` (new), `three-runtime/cameraPath.md` (new), `tests/trajectory.md` and `tests/cameraPath.md` (new),
+`ui/timeline.md` (the capped, scrolling keyframe list), `ui/panels.md` (the two view fields, the action, the `Show camera path` box, its seeding and
+gating), `app/main.md` (the drawing, `AppContext.cameraPath`, `cameraPathVisible`, `refreshCameraPath` and its callers, the toggle, the frame-loop
+scale and billboard calls, the teardown), and this file's §9.
+
+
+### D48. A run of the clip follows the output camera, and a pause hands the frame back
+
+**Decided.** The transport is the app's, not the widget's: the timeline's toggle reports the press through `onTransport` and `app/main.ts` decides what
+a run does to the view. Follow is on by default, the way the reference product has it, and a run then borrows the camera lock so the viewport renders
+through the output camera and the clip takes the view along. A pause hands the frame over — the editor camera takes the pose the clip stopped at and the
+lock is given back — and a non-looping run that reaches its last frame stops the transport and restores the run's start view and playhead exactly. With
+follow off a run leaves the editor camera alone, and the carrier is drawn for the length of the run so the motion is still visible. The option is read
+when a run starts and never changes a run in flight.
+
+- **The app owns the transport because a run changes the viewport too.** `animation/playback.ts` gained a read-only `get loop()` beside `playing` (the
+  private flag is now `looping`), and the widget's toggle calls `onTransport` instead of `play`/`pause`, reading `playback.playing` back only for its
+  label. The frame loop's end check reads `loop`: a run of a non-looping clip is over at the final frame, which is where `finishPlayback` stops the
+  transport and hands the view back — a looping clip wraps and never reaches that edge.
+- **A run is captured before it moves anything.** `startPlayback` stores `playbackView` — the viewport camera's pose, the orbit target, whether the
+  camera lock was already the user's, and `playback.time` — engages the lock when follow is on and the viewport is not already locked, and plays.
+- **The pause's order is the whole point.** `pausePlayback` releases the lock *first* and only then calls `controls.setViewFrom` with the output
+  camera's pose: while the lock is on the orbit belongs to the output camera, so moving it first would write the handoff into
+  `project.camera.transform`, which is authored data (D17). `setViewFrom` gained an optional `target`, so the handoff and the end-of-run restore put
+  the pivot exactly where the view was aimed rather than at a point straight ahead of it.
+- **An end restores exactly; a pause does not have to.** `finishPlayback` clears `playbackView`, pauses, sets the playhead back with `setTime`, and then
+  either re-asserts the user's lock or releases it and restores the captured pose *and* target. Restoring the playhead is also what restores the view
+  while the output camera draws, because that camera's pose comes from the clip.
+- **The carrier is the observe view.** The frame loop draws it while it is selected and, with follow off, for the length of a run — `observing` is
+  `playback.playing && !followCamera` — so a run that leaves the editor camera alone still shows the camera moving along the clip. That display selects
+  nothing and is dropped when the run ends, and the follow case hides the carrier exactly as the locked case does, because a camera cannot see itself.
+- **The option applies to the next run.** The `Camera` group's `Follow camera` box sits directly after the lock's hint and ahead of the group's `hr`, and
+  `refresh()` seeds it from the app's flag and disables it while a run is in flight, because what it sets is read when a run starts.
+
+Accepted costs: the lock is borrowed for the duration of a run, so the `Camera` group's carrier controls are gated and `View -> Camera` is not available
+while the clip plays; the pause handoff resets the viewport's bank, because an orbit camera cannot represent one and `setViewFrom` derives the pivot
+from the pose; and a run that starts while the lock is already on restores only the playhead, since the viewport then draws through the output camera
+and the playhead is what puts its pose back. The carrier's temporary display during an unfollowed run is one more thing the frame loop decides, and it
+is state no panel shows.
+
+Rejected: **a separate preview camera** (D17 fixes exactly two, and a third would need its own pose, projection, and export path); **following without
+the lock** (the viewport could not render the clip, so following would mean copying the sampled pose onto the editor camera every frame — an orbit
+camera's pose rewritten under the user's own navigation, which is what the lock exists to arbitrate); **restoring the view on every pause** (a pause is
+where the user wants to judge and fly the frame, so snapping the view back would take the shot away again — the run's start view belongs to the end of
+a run); **a stop button** (D44's row already declined it, and returning to the start is what the scrub bar and the exact-time field are for); **changing
+the option mid-run** (a run that part-way stopped following the viewport, or started to, would leave `playbackView` meaning something different from
+what it captured, so the box waits for the next run).
+
+Affected contracts: `animation/playback.md` (the `looping` field, the `loop` reader and its invariant), `three-runtime/controls.md` (`setViewFrom`'s
+optional target and its restore invariant), `ui/timeline.md` (`onTransport`, the transport's description and the corrected invariant), `ui/panels.md`
+(the two view fields, the action, the `Follow camera` box, its seeding and gating), `app/main.md` (the two flags, the four functions, the frame loop's
+end check and the carrier's observe case, the wiring, the new invariants), D45's transport paragraph, and this file's §9.
+
 ## 9. Demo slice
 
 The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
@@ -931,7 +1023,11 @@ deferred is deferred deliberately, not forgotten.
 - Timeline: a whole-millisecond duration and frame rate, keyframes on object transforms and on the output camera
   addressed by session id, step/linear/smooth interpolation, one Play/Pause toggle, loop, and scrub (D45). The bar
   starts collapsed and is summoned from the rail's `Animation` button (D44), and the output camera these keyframes record is
-  aimed from third person through its carrier in the `Camera` group (D46).
+  aimed from third person through its carrier in the `Camera` group (D46), and the camera's authored trajectory is drawn back into the
+  viewport as a white polyline with one hollow ring per keyframe, shown from two keyframes up (D47). A run of the clip takes the viewport with it by
+  default — the transport is the app's, so play engages the camera lock and follows the clip, a pause hands the frame over and gives the lock back,
+  and a non-looping run's end stops the transport and puts the run's start view and playhead back exactly — while unticking `Follow camera` leaves the
+  editor camera alone for a run and shows the carrier moving along the clip instead (D48).
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range,
   with cancel; a failure reaches the console (D38).
 

@@ -35,6 +35,11 @@ export type TimelineContext = {
   /** Seeks the playhead to an absolute time in milliseconds; the app clamps it onto the clip. */
   onScrub(timeMs: number): void;
   onEdited(): void;
+  /**
+   * Starts or pauses playback. The app owns the transport because a run of the clip changes the viewport too
+   * (README D48), so the widget reports the press and reads `playback.playing` back for its label.
+   */
+  onTransport(): void;
 };
 
 const OBJECT_CHANNELS: readonly TrackChannel[] = ['position', 'quaternion', 'scale'];
@@ -70,12 +75,7 @@ export class TimelinePanel {
     this.playToggle = el('button', {
       text: 'play',
       title: 'play or pause the clip',
-      on: {
-        click: () => {
-          if (context.playback.playing) context.playback.pause();
-          else context.playback.play();
-        },
-      },
+      on: { click: () => context.onTransport() },
     });
     const loopInput = el('input', {
       type: 'checkbox',
@@ -149,6 +149,10 @@ export class TimelinePanel {
     scrubWrap.append(this.scrub, this.markerLayer);
 
     this.keyframeList = el('div');
+    // The list is capped and scrolls, the way the reference product's is: a bar of rows that grew with every
+    // keyframe would otherwise eat the viewport it sits under (README D47).
+    this.keyframeList.style.maxHeight = '100px';
+    this.keyframeList.style.overflowY = 'auto';
     this.message = el('div');
     this.message.style.color = '#ff8a8a';
 

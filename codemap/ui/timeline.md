@@ -4,7 +4,7 @@ Ring: 4 · Layer: ui · Depends on: ./dom.js, ../document/timeline.js, ../docume
 
 ## Responsibility
 The timeline widget: one transport toggle, a scrub bar with its keyframe markers, the exact time, duration and frame-rate inputs, and a retime-in-place keyframe list with its add, seek, and delete actions against the active object and the output camera. It edits authoring data through the pure mutators of `document/timeline.ts` and never touches the mixer:
-seeking is delegated to `onScrub` and clip rebuilds to `onEdited` (README D2). It renders nothing about voxels. Every time it reads, displays, or hands over is the authoring unit, whole milliseconds, so the widget never converts: `onScrub` takes milliseconds and the app divides by 1000 for the clip, whose times are seconds (README D45). Its host is the bar along
+seeking is delegated to `onScrub` and clip rebuilds to `onEdited` (README D2), and the transport press to `onTransport`, because a run of the clip changes the viewport too (README D48). It renders nothing about voxels. Every time it reads, displays, or hands over is the authoring unit, whole milliseconds, so the widget never converts: `onScrub` takes milliseconds and the app divides by 1000 for the clip, whose times are seconds (README D45). Its host is the bar along
 the bottom of the page, and that bar starts collapsed: whether it is on screen is the app's flag, and `setVisible` is the view of it, the way
 `setTime` is the view of the playhead (README D44).
 
@@ -14,6 +14,7 @@ type TimelineContext = {
   project: Project; playback: Playback; session: EditorSession;
   onScrub(timeMs: number): void;   // seeks to an absolute millisecond time; the app converts it to the clip's seconds
   onEdited(): void;          // keyframes changed: rebuild the clip
+  onTransport(): void;       // starts or pauses the run; the app owns the transport because a run moves the viewport (D48)
 };
 class TimelinePanel {
   constructor(root: HTMLElement, context: TimelineContext);
@@ -29,7 +30,9 @@ class TimelinePanel {
    the box, toggles it; the pair is `flex: 0 0 auto` so the readout keeps the rest of the row — then a scrub row: an `<input type="range">` with `min =
    0`, `step = 1` and `max` written from `timeline.durationMs` on every `refresh()`, the marker layer over it, and the exact-time number field
    (`time (ms)`, `step = 1`, `change` → `onScrub`); then the fields `duration (ms)` (`step = 100`), `fps`, `target`, `channel`, and
-   `interpolation` beside the `add` button; then the keyframe list and the panel's own message line; it finishes with `refresh()`.
+   `interpolation` beside the `add` button; then the keyframe list — capped at `maxHeight = '100px'` with
+   `overflowY = 'auto'`, so a bar of rows that grew with every keyframe cannot eat the viewport it sits under
+   (README D47) — and the panel's own message line; it finishes with `refresh()`.
 2. Target resolution: `{ kind: 'camera' }` when the switch is on the camera, otherwise `{ kind: 'object', objectId: session.activeObjectId }`;
    the channel select is rebuilt for the target kind (`position` | `quaternion` | `scale`, plus `fov` for the camera) and the object option's
    text names the active object, or says `(none)`.
@@ -60,8 +63,10 @@ class TimelinePanel {
    `onEdited()`; its own `min` is `maxKeyframeTime(timeline)`, the floor that keeps the field from offering a length that would cut the clip
    short, and a non-finite entry only refreshes. The fps field writes `project.timeline.fps` for a finite positive number and refreshes
    otherwise; `fps` is the frame grid the HUD readout and the export defaults use, and it no longer positions anything on the scrub bar.
-10. Transport: the toggle pauses when `playback.playing` and plays otherwise; the `loop` checkbox calls `playback.setLoop(checked)`. There is no
-    `stop`, because returning to the start is what the scrub bar and the exact-time field are for.
+10. Transport: the toggle's click calls `context.onTransport()` and nothing else — the app owns the transport, because a run of the clip changes the
+    viewport too, so the widget reports the press rather than performing it (README D48) — and the `loop` checkbox calls `playback.setLoop(checked)`.
+    The widget reads `playback.playing` back only for the label (step 12). There is no `stop`, because returning to the start is what the scrub bar
+    and the exact-time field are for.
 11. The scrub bar's `input` event and the exact-time field's `change` event both call `context.onScrub(Number(value))` in milliseconds; the panel
     neither seeks nor starts playback itself.
 12. `setTime(timeMs)` moves the playhead display only: no `onScrub`, no playback state. It rounds and clamps the value into
@@ -76,8 +81,9 @@ class TimelinePanel {
     re-reads the playhead instead of moving it.
 
 ## Invariants
-- The panel never calls `playback.setTime`, `playback.rebuild`, or `playback.advance` and never holds an `AnimationMixer`; its `playback` uses
-  are the transport calls (`play`, `pause`, `setLoop`) and the read-only `time` and `playing` reads.
+- The panel never calls `playback.setTime`, `playback.rebuild`, or `playback.advance`, never calls `play` or `pause`, and never holds an
+  `AnimationMixer`: its `playback` uses are `setLoop` plus the read-only `time` and `playing` reads. The transport press is reported to the app through
+  `onTransport`, because a run of the clip changes the viewport too (README D48).
 - Its only project writes are through `document/timeline.ts` mutators plus `timeline.fps`; object, voxel, and camera data are untouched.
 - Every keyframe mutation that returned `true` is followed by exactly one `onEdited()` call, so the app rebuilds the clip once per user action;
   a refused one — add's `bad-value-length`, a `false` from move or remove, interpolation with no track — reports or refreshes and never calls it.
@@ -91,6 +97,9 @@ class TimelinePanel {
   touches visibility, so the bar can only change state through the app's `setTimelineVisible`, which is the one writer of that flag (README D44).
 - A keyframe authored here stores whole cells for the `position` channel of an aligned object, and the mixer's interpolation between those cells is
   untouched: the value is snapped once, as it is read from project truth, and no other channel this file writes is rounded.
+- The keyframe list is capped and scrolls: its height never follows the number of rows, so the bar keeps a fixed height whatever the track holds and
+  everything above the list stays where it was as keyframes are added — a track of any length scrolls inside the 100 px cap instead of pushing the
+  viewport off screen (README D47). The cap is on the list alone; the message line below it is not part of it.
 
 ## Errors
 `addKeyframe`'s `{ ok: false, error: 'bad-value-length' }` is shown verbatim in the panel's own message line, since `TimelineContext` carries no
@@ -108,7 +117,8 @@ silently dropped.
   and the clamp, so the panel owns none of that logic.
 - `../document/project.js` — `Project` for `timeline`, `camera`, object transforms, and `keyframePosition`, the one rule a `position` keyframe is
   read through (ring 1).
-- `../animation/playback.js` — `Playback` for transport, the `playing` flag the toggle's label follows, and the playhead read (ring 1).
+- `../animation/playback.js` — `Playback` for the loop setting, the playhead read, and the `playing` flag the toggle's label follows (ring 1); the
+  transport itself is the app's, through `onTransport` (README D48).
 - `../editor/session.js` — `EditorSession` for the active object that keys the object tracks (ring 3).
 - No outer-ring import and no `three` import of its own: keyframe values are read as plain numbers from the `Vector3`/`Quaternion` components the
   project already holds.
@@ -117,4 +127,4 @@ silently dropped.
 None. The widget needs a DOM, and the mutators it calls are pinned by `tests/timeline.test.ts` (insertion order, id-addressed moves and removals,
 the clamp on authored times, `setDuration`'s collapse, `maxKeyframeTime`, and the emptied track that stays). Panel behavior is verified by running
 the app: add, retime, seek to, and delete keyframes while watching the preview, and confirm a retime onto an occupied millisecond is refused and
-the field comes back.
+the field comes back; a track with enough keyframes must scroll inside the capped list rather than growing the bar (README D47). The transport walk is on the same run (README D48): pressing play must start a run that takes the viewport with it and pressing it again must pause and hand the frame over, with the toggle's label following `playback.playing` in both cases.

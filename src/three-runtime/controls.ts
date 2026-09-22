@@ -210,13 +210,18 @@ export class ViewportControls {
    * looks along, at the distance navigation already orbits from, so the first orbit after the jump behaves like any
    * other. A viewport is an orbit camera, so a bank the pose carries is not representable and `lookAt` drops it.
    */
-  setViewFrom(position: THREE.Vector3, quaternion: THREE.Quaternion): void {
+  setViewFrom(position: THREE.Vector3, quaternion: THREE.Quaternion, target?: THREE.Vector3): void {
     const orbit = this.orbit;
     const radius = Math.max(orbit.object.position.distanceTo(orbit.target), MIN_ORBIT_RADIUS);
     orbit.object.position.copy(position);
     orbit.object.quaternion.copy(quaternion);
-    _viewDirection.set(0, 0, -1).applyQuaternion(quaternion);
-    orbit.target.copy(position).addScaledVector(_viewDirection, radius);
+    if (target !== undefined) {
+      // Restoring a view means restoring exactly where it was aimed, not a point straight ahead of it.
+      orbit.target.copy(target);
+    } else {
+      _viewDirection.set(0, 0, -1).applyQuaternion(quaternion);
+      orbit.target.copy(position).addScaledVector(_viewDirection, radius);
+    }
     orbit.object.lookAt(orbit.target);
     orbit.update();
   }

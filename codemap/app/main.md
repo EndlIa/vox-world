@@ -15,6 +15,7 @@ type AppContext = {
   project: Project; mirror: SceneMirror; picker: Picker; session: EditorSession; playback: Playback;
   controls: ViewportControls; pointer: PointerTool; capture: Capture; overlay: Overlay; worldGrid: WorldGrid;
   cameraControl: CameraControl;
+  cameraPath: CameraPath;
 };
 function main(): void;
 ```
@@ -36,7 +37,9 @@ function main(): void;
    viewport decoration on layer 1 like the overlay, so it is never picked and never exported (D35); `new CameraControl(mirror.scene)`, the
    runtime-only camera carrier the edit gizmo aims the output camera with (README D46) — a hidden node on the same layer 1, so it is never picked
    and no export frame contains it, and it reports the authored camera rather than owning any data — with `CAMERA_CONTROL_PIVOT`, `new Vector3(0, 0, 0)`,
-   as the pivot the gizmo attaches it at; then
+   as the pivot the gizmo attaches it at; `new CameraPath(mirror.scene)`, the runtime-only drawing of the authored camera's trajectory (README D47) —
+   hidden, unnamed, and on the same layer 1, so it is never picked and no export frame contains it, and it holds points the app hands it rather than
+   any camera data; then
    `new Capture({ width, height })` at the initial export size, which every export resizes to the resolution the panel asked for;
    then `mirror.frameAll(viewportCamera)`.
 3. **Editor objects.** `new EditorSession(project)`, `new Picker(mirror)`, and `new PointerTool({ dom: viewport, project, session, picker, overlay,
@@ -49,7 +52,12 @@ function main(): void;
    rebuild, then commits, so exactly those objects are marked dirty for the mirror and rebuilt (README D4) — which is what leaves neither half of a
    detach, whose two objects both changed, drawing stale geometry. Two app flags sit beside `cameraLocked`: `cameraControlSelected` (`false`), which
    is whether the gizmo drives the carrier instead of the active object, and `gizmoMode` (`'translate'`), the one gizmo mode the carrier and an object
-   share (README D46).
+   share (README D46). `cameraPathVisible` (`false`) sits beside them: whether the camera path is drawn, which `refreshCameraPath` clears whenever
+   the camera track holds fewer than two keyframes (README D47). `followCamera` (`true`) sits beside that: whether a run of the clip takes the
+   viewport with it, on by default the way the reference product has it, read when a run starts and never in flight (README D48). `playbackView` holds
+   the viewport state a run started from — the camera's `position` and `quaternion`, the orbit `target`, whether the camera lock was already the
+   user's (`locked`), and the playhead (`time`) it started at — or `undefined` when no run has captured one; it is what lets a pause hand the frame
+   over and a run's end undo the whole thing (README D48).
 4. **Animation.** `new Playback({ camera: mirror.camera })` — the output camera whose `fov` a track animates — then `playback.bind(new Map(...))`
    mapping every `ObjectId` to `mirror.objectOf(id)`; `Playback` names the bound objects itself.
 5. **UI.** `new Panels(panelsRoot, panelContext)`, `new TimelinePanel(timelineRoot, timelineContext)`, `new Hud(hudRoot)`,
@@ -58,8 +66,11 @@ function main(): void;
    callbacks and no state — over the actions of
    step 6, over `gridSettings`, the `WorldGrid` view the `Grid` group reads, over `timelineVisible`, the app's own timeline-bar flag, and over
    `cameraControl`, the view the `Camera` group's carrier controls read: `{ selected: cameraControlSelected, mode: gizmoMode, locked: cameraLocked,
-   pose }`, whose pose comes from `project.camera.transform` and `project.camera.fov` — not from the carrier node — because what the fields show is
-   what a keyframe would record (README D46);
+   follow: followCamera, playing: playback.playing,
+   pose, pathVisible: cameraPathVisible, pathAvailable: cameraKeyframePositions(project).length >= 2 }`, whose pose comes from
+   `project.camera.transform` and `project.camera.fov` — not from the carrier node — because what the fields show is what a keyframe would record,
+   and whose two path fields say whether the drawing is on and whether the track holds two keyframes for one to exist at all, while `follow` and
+   `playing` are what the `Follow camera` box shows and what disables it for the length of a run (README D46, D47, D48);
    `pickImportFile` is implemented here as `void pickGlbFile().then(file => { if (file) void importFile(file); })`, so the file dialog stays in
    `app/`. That timeline flag is declared beside the other app flags and is `false`, so the bar opens collapsed; the context hands it over as
    `timelineVisible: () => timelineVisible`, and the matching action, `setTimelineVisible`, is its only writer. Right after the panel is built,
@@ -157,6 +168,13 @@ function main(): void;
      `controls.setViewFrom(project.camera.transform.position, project.camera.transform.quaternion)` and writes nothing at all, which is what
      makes it a safe way to look at what a render would frame. The first three end with `panels.refresh()`, because each changes what the `Camera`
      group shows; `viewToCamera` refreshes nothing, because it changes nothing the group displays.
+   - Camera path — `refreshCameraPath()` is the one writer of the drawing and of `cameraPathVisible` (README D47): it clears the flag when the
+     keyframe list holds fewer than two points, hands `sampleCameraTrajectory(project)` and `cameraKeyframePositions(project)` to
+     `cameraPath.setTrajectory`/`setMarkers`, writes `setVisible(cameraPathVisible && !cameraLocked)` — the path is hidden with the carrier while the
+     viewport already is the output camera — and refreshes the panel, which is what keeps the `Show camera path` box a view of both flags. It is
+     called from the timeline's `onEdited` (a keyframe edit is what changes the trajectory), from `setCameraLock`, from its own toggle, and once at
+     boot, and `setCameraPathVisible(visible)` only writes the flag and calls it. The path is a view of the authored camera track: nothing on this
+     path writes a keyframe, a pose, or a transform, and the drawing owns no document data.
    - Authored-camera writes — the two write helpers end in the same two places: the document's `project.camera.transform` and the mirror's output
      camera, because `SceneMirror.sync` never touches that camera and the locked view and the export both render through it (README D17, D46).
      `applyCameraMatrix(matrix)` is what a carrier drag commits: it decomposes the world matrix into `project.camera.transform`, normalizes the
@@ -196,16 +214,18 @@ function main(): void;
      from them would stretch the printed dimensions for content they do not cover (README D27). A scene of
      nothing but outlines has no outline-free bounds, so it falls back to `scene.bounds`, which is what framing uses either way
      because every node is displayed.
-   - Animate: `onEdited` → `playback.rebuild(project)`; `onScrub(timeMs)` → `playback.pause()` then `playback.setTime(timeMs / 1000)`, the one place the widget's milliseconds become the clip's seconds — the scrub bar, the exact-time field, and a keyframe row's `key` all seek through it (README D45).
-   - Camera lock — `setCameraLock(enabled)`, the one entry point the panel has for it: it sets `cameraLocked`, hands navigation over with
+   - Animate: `onEdited` → `playback.rebuild(project)` (the app's `refreshCameraPath` rides the same callback, README D47); `onTransport: togglePlayback`, so the widget's toggle reports the press and the app is what starts or pauses the run (README D48); `onScrub(timeMs)` → `playback.pause()` then `playback.setTime(timeMs / 1000)`, the one place the widget's milliseconds become the clip's seconds — the scrub bar, the exact-time field, and a keyframe row's `key` all seek through it (README D45).
+   - Follow camera — the transport itself is the app's, not the widget's, because a run of the clip changes the viewport too (README D48). `startPlayback()` is the play press: it returns while a run is already going, captures `playbackView` from `viewportCamera.position`/`quaternion`, `controls.orbit.target`, `cameraLocked`, and `playback.time` (cloned, so nothing later writes through it), engages the lock with `setCameraLock(true)` when follow is on and the viewport is not already locked, calls `playback.play()`, and refreshes the panel. `pausePlayback(handOver)` is the pause: it returns while nothing runs, works out `handedOver = handOver && followCamera && playbackView?.locked === false` — only a lock the follow itself engaged is given back, so a lock the user asked for stays — pauses, and when handing over releases the lock first and then calls `controls.setViewFrom(mirror.camera.position, mirror.camera.quaternion)`, so the editor camera takes the pose the clip stopped at. That order is what keeps the handoff out of authored data: while the lock is on the orbit belongs to the output camera, so the move would otherwise be written into `project.camera.transform` (D17). `finishPlayback()` is the end of a non-looping run: it clears `playbackView`, pauses, and, when there was a run, sets the playhead back with `playback.setTime(restore.time)` — which is also what restores the view when the output camera is the one drawing, since its pose comes from the clip — then either `setCameraLock(true)` (the user's lock) or `setCameraLock(false)` plus `controls.setViewFrom(restore.position, restore.quaternion, restore.target)`. `togglePlayback()` is the only transport entry point: `pausePlayback(true)` while running, `startPlayback()` otherwise. `setFollowCamera(enabled)` writes the flag and refreshes the panel, because the option applies to the next run rather than to a run in flight.
+   - Camera lock — `setCameraLock(enabled)`, the one entry point the panel has for it, and the one the transport's follow borrows (README D48): it sets `cameraLocked`, hands navigation over with
      and `controls.setOrbitTarget(enabled ? mirror.camera : viewportCamera)`.
      The flag is set before retargeting, so the retarget's own `change` event cannot author anything on the way out of the lock.
      `controls.onOrbitChange(...)` then copies the output camera's `position` and `quaternion` into `project.camera.transform` while
      `cameraLocked && !playback.playing`, which is what makes a timeline `add` on the camera record the pose the user actually aimed. The
      `playing` guard is mandatory: a running clip owns the mirror's camera, and writing its samples back would drift the authored pose frame by
-     frame. `controls.dispose()` drops the registration, so no separate teardown call exists. The lock also calls `panels.refresh()`, because the
-     carrier's controls are gated on it: while the lock is on the viewport already *is* the output camera, so there is nothing left for the carrier
-     to aim and the panel disables its controls (README D46).
+     frame. `controls.dispose()` drops the registration, so no separate teardown call exists. The lock also calls `refreshCameraPath()`, because the
+     carrier's controls and the path are gated on it — the path is hidden with the carrier while the viewport already is the output camera — and that
+     call refreshes the panel: while the lock is on the viewport already *is* the output camera, so there is nothing left for the carrier
+     to aim and the panel disables its controls (README D46, D47).
    - FOV — `setCameraFov(fov)`, the panel's one entry point for the output camera's projection: it ignores non-finite input, clamps to `[1, 179]`,
      writes `project.camera.fov`, and copies the clamped value onto `mirror.camera` with `updateProjectionMatrix()`, because assigning `fov` alone
      leaves the projection stale. The locked viewport and the next export therefore both show the authored value, and a camera `fov` keyframe records
@@ -224,7 +244,7 @@ function main(): void;
      keyframe row, its message line — changes how much of the column the canvas has, and three's `setSize(w, h, false)` never touches the canvas'
      style, so without that refit the drawing buffer and the box would disagree and the view would be stretched (README D44).
 7. **Render loop**, one `requestAnimationFrame` callback: `dt = Math.min((now - last) / 1000, 0.1)`; `playback.advance(dt)` for preview (a paused
-   action does not advance, so the transport flag never has to be mirrored here); `mirror.sync()` for dirty objects, then
+   action does not advance, so the transport flag never has to be mirrored here); then the end check — `if (playback.playing && !playback.loop && playback.duration > 0 && playback.time >= playback.duration - 1e-6) finishPlayback()` — because a non-looping run is over at the last frame, and that is where the transport stops and the view goes back (README D48); `mirror.sync()` for dirty objects, then
    `syncGizmo()` whenever `gizmoNodeNow()` is no longer the node the gizmo is attached to — a rebuild replaced that node,
    and this is what puts the handles back on the object; `controls.update()` and
    then `const renderCamera = cameraLocked ? mirror.camera : viewportCamera` and
@@ -232,11 +252,15 @@ function main(): void;
    loop also holds that camera's aspect equal to the canvas': an export sets the aspect for its own frames, and a resize would otherwise leave
    the locked view stretched. The output camera stays on layer 0, so the locked view shows exactly what an export shows — no overlay, no gizmo,
    no viewport decoration. Just before the render the loop also drives the carrier (README D46): it reports the output camera as it stands right
-   now — the authored pose, or the sampled one while a clip runs — through `setSelected(cameraControlSelected)` and
-   `setVisible(cameraControlSelected && !cameraLocked)` (a camera cannot see itself, so the carrier is drawn only while the viewport is a different
-   camera), and `setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport))` — except while the carrier
+   now — the authored pose, or the sampled one while a clip runs — through `setSelected(cameraControlSelected)` — which follows only the user's
+   selection — and `setVisible((cameraControlSelected || observing) && !cameraLocked)`, where `const observing = playback.playing && !followCamera`: the
+   carrier is drawn while it is selected, and — with the follow option off — for the length of a run as well, so a run that leaves the editor camera
+   alone still shows the camera moving along the clip. That display selects nothing and is dropped when the run ends, and a camera cannot see itself,
+   so the follow case hides the carrier exactly as the locked case does (README D46, D48), and `setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport))` — except while the carrier
    is selected and `controls.gizmoBusy()`, because a drag owns the pose until it commits and the per-frame update stands back for it. It then sets
-   `setScreenScale(max(renderCamera.position.distanceTo(cameraControl.node.position), controls.orbit.object.position.distanceTo(controls.orbit.target)))`:
+   `const viewingDistance = max(renderCamera.position.distanceTo(cameraControl.node.position), controls.orbit.object.position.distanceTo(controls.orbit.target))`,
+   which then goes to both drawings — `cameraControl.setScreenScale(viewingDistance)` and `cameraPath.setScreenScale(viewingDistance)` — and is
+   followed by `cameraPath.faceCamera(renderCamera.quaternion)`, which turns the path's rings to the drawing camera (README D47):
    the size comes from how far the drawing camera is, floored at the distance navigation orbits from, because a viewport that sits *on* the carrier —
    which is exactly what `View -> Camera` produces — would otherwise scale the drawing and the gizmo down to a dot, and the orbit radius is the
    scene's own scale. That floor is the drawing's floor alone: `TransformControls` sizes its own handles by the distance to the drawing camera, so
@@ -255,7 +279,8 @@ function main(): void;
     `voxelizeDialog.dispose()` — which settles a prompt still on screen as a cancel, so no `promptVoxelize` call is left waiting — disconnects the
     bar's resize observer, and disposes
     everything in `AppContext` plus the renderer, controls, capture, overlay, and the world grid; `app.cameraControl.dispose()` releases the carrier's
-    geometries, materials, and node, so no decoration is left in the scene the mirror releases; the orbit-change registration lives in the controls, so disposing them
+    geometries, materials, and node and `app.cameraPath.dispose()` the path's two geometries, two materials, and root (README D47), so no decoration is
+    left in the scene the mirror releases; the orbit-change registration lives in the controls, so disposing them
     unregisters it.
 
 ## Invariants
@@ -295,6 +320,17 @@ function main(): void;
   on and `playback.playing` is false; `applyCameraMatrix`, on a carrier drag's commit; `setCameraPose`, the numeric grid's whole-pose write; and
   `cameraToView`. `project.camera.fov` is written only by `setCameraFov`, which `setCameraPose` routes its FOV through. Nothing else reads a mirror
   transform back into the document while the mixer is running.
+- A run of the clip is the app's transport and it is reversible: `togglePlayback` is the only entry point, `startPlayback` captures `playbackView` before
+  anything moves, and the frame loop ends a non-looping run at its last frame through `finishPlayback` — so every run either pauses on the frame it
+  stopped at or ends with the playhead and the view back at the values it started from (README D48).
+- A playback end writes no authored data: the pause handoff runs with the lock already released and the restore of an end goes through
+  `controls.setViewFrom`, which touches no document, while the orbit-change copy into `project.camera.transform` stays guarded by
+  `cameraLocked && !playback.playing`, so neither a running clip nor a handoff can drift the authored camera pose (README D17, D48).
+- Only a lock the follow engaged is released: `pausePlayback` hands the view over only when `playbackView.locked` was false and the follow option is on,
+  and `finishPlayback` puts the lock back exactly as it was, so a lock the user asked for is never dropped by the transport — and a run that starts
+  while the lock is already on restores only the playhead, since the output camera's own pose is what draws the view then (README D48).
+- `followCamera` is read when a run starts and never in flight: `startPlayback` decides the lock from it and the frame loop's `observing` derives from
+  it, so the panel disables its box while `playback.playing` rather than changing a run, and the option applies to the next run (README D48).
 - `viewportCamera` (app-owned) drives rendering, navigation, picking, and fitting while the lock is off; with the lock on, navigation, rendering,
   and picking move to `mirror.camera` (output) — the stated exception to D17 — and the viewport camera is left exactly where it was until the lock
   is released. Picking follows the render camera through `getCamera()` and fitting always uses the viewport camera, and the output camera never gains
@@ -335,6 +371,11 @@ function main(): void;
   and the carrier is drawn only while it is selected and the lock is off. Its size is floored at the orbit radius, so a viewport sitting on the carrier
   cannot scale the drawing down to a dot, while the gizmo's own handles, which `TransformControls` sizes by the distance to the drawing camera, still
   degenerate there: the remedy is to orbit away, which moves the viewport off the carrier and leaves the carrier where it was.
+- The camera path is a runtime-only view of the authored camera track and writes nothing: `refreshCameraPath` is its only writer, the drawing holds
+  no document data, and `cameraPathVisible` is the app's flag with the panel's `Show camera path` box as its view. Fewer than two camera position
+  keyframes is not a path, so the flag is cleared then and the box is disabled and unchecked; while the lock is on, the path is hidden with the
+  carrier, because the viewport already is the output camera and the drawing would sit on it. The drawing is on layer 1 and unnamed, so it is never
+  picked, never in an export frame, and never bound by the mixer (README D22, D24, D47).
 - The pointer tool receives both live lookups it needs as closures — `getCamera()` for the render camera, `getGizmoBusy()` → `controls.gizmoBusy()` for
   the gizmo's claim — so neither is cached across frames. A left press therefore reaches `Picker.pick` whenever the gizmo is not dragging and no handle
   is hovered, which is what keeps cell selection reachable while the gizmo is attached to the active object.
@@ -366,7 +407,8 @@ nothing to refuse (README D46).
   and the selection text.
 - `../three-runtime/{scene,picking,controls,capture,overlay}.js` — `SceneMirror`, `Picker`, `ViewportControls`, `Capture`,
   `Overlay`, `WorldGrid`, and `../three-runtime/cameraControl.js` — `CameraControl`, the runtime-only carrier the gizmo aims the output camera with
-  (README D46); `../animation/playback.js` and `../export/job.js` — `Playback`, `ExportJob`.
+  (README D46); `../three-runtime/cameraPath.js` — `CameraPath`, the runtime-only drawing of the authored camera's trajectory, and
+  `../animation/trajectory.js` — `sampleCameraTrajectory` and `cameraKeyframePositions`, the points it is handed (README D47); `../animation/playback.js` and `../export/job.js` — `Playback`, `ExportJob`.
 - `../ui/{panels,timeline,hud,dom}.js` — `Panels`, `TimelinePanel`, `Hud`, `el`, and the `CameraPose` type its `setCameraPose` action takes;
   `../ui/voxelizeDialog.js` — `VoxelizeDialog`,
   `DEFAULT_VOXELS_ACROSS` (the count an arriving import is scaled to) and its `VoxelizeDialogDefaults` seed type; `./files.js` — `pickGlbFile`, `wireDropTarget`, `saveMp4`;
@@ -413,6 +455,21 @@ Two facts to check explicitly: the carrier is drawing the output camera rather t
 sampled pose while a clip runs, and appears in no exported frame and in no pick — and the size floor is what `View -> Camera` needs: after the jump
 the carrier is still visible while the gizmo's handles have degenerated to a dot on it, and a middle-drag away restores grabbable handles without the
 carrier moving.
+
+The path is walked on the same run (README D47): with two camera keyframes in the track, ticking `Show camera path` in the `Camera` group must draw the
+white polyline through the sampled trajectory with one hollow ring per keyframe, following the camera as it is aimed and resizing as the viewport
+orbits, and unticking it must take the drawing away; with fewer than two camera keyframes the box must be disabled and unchecked and nothing must be
+drawn, and deleting a keyframe from a two-keyframe track must clear both again. Ticking `Camera lock (output)` must hide the path with the carrier,
+since the viewport then *is* the output camera, and an exported frame must contain no part of the drawing — it is on layer 1 and unreachable by a pick.
+
+The follow flow is walked on the same run (README D48): with follow on — its default — pressing play must engage the lock, take the viewport with the
+clip, and disable the `Follow camera` box for the length of the run; pausing must stop the transport (the toggle reads `play`), release the lock, and
+leave the editor camera on the frame the clip stopped at, and letting a non-looping run reach its end must stop the transport, return the playhead to
+the run's start value, and put the view back where the run started from — with follow's own captured target, so the return is exact rather than
+re-aimed. With follow off, a run must leave the editor camera exactly where it was — the only change is the transport's own overlay — while the
+carrier is drawn for the length of the run so the camera can be seen moving along the clip, and the box must be enabled again once the run ends. Two
+orders are worth checking explicitly: the pause's handoff must leave `project.camera.transform` untouched, and a run that starts while the lock is
+already on must restore only the playhead.
 
 ## Open questions
 - Brief section 4 has animation "mark mirrored objects dirty"; rebuilding from project truth while the mixer's transforms are animated would clobber

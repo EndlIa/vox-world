@@ -5,7 +5,7 @@
  */
 
 import { Mesh, PerspectiveCamera, Vector3, WebGLRenderer } from 'three';
-import type { Box3, Matrix4, Object3D } from 'three';
+import type { Box3, Matrix4, Object3D, Quaternion } from 'three';
 import { Project } from '../document/project.js';
 import type { ObjectId } from '../document/project.js';
 import { EditorSession } from '../editor/session.js';
@@ -37,6 +37,8 @@ import { Capture } from '../three-runtime/capture.js';
 import { Overlay } from '../three-runtime/overlay.js';
 import { WorldGrid } from '../three-runtime/grid.js';
 import { CameraControl } from '../three-runtime/cameraControl.js';
+import { CameraPath } from '../three-runtime/cameraPath.js';
+import { cameraKeyframePositions, sampleCameraTrajectory } from '../animation/trajectory.js';
 import { Playback } from '../animation/playback.js';
 import { ExportJob } from '../export/job.js';
 import { Panels } from '../ui/panels.js';
@@ -63,6 +65,7 @@ export type AppContext = {
   overlay: Overlay;
   worldGrid: WorldGrid;
   cameraControl: CameraControl;
+  cameraPath: CameraPath;
 };
 
 type ImportedAssets = {
@@ -190,6 +193,8 @@ export function main(): void {
   // aimed from third person instead of by flying the viewport (README D46). It is decoration like the grid, so it
   // lives on layer 1 and no export frame contains it.
   const cameraControl = new CameraControl(mirror.scene);
+  // The camera path: the trajectory of the authored camera, drawn as a polyline with one ring per keyframe (D47).
+  const cameraPath = new CameraPath(mirror.scene);
   const capture = new Capture({ width: DEFAULT_EXPORT_WIDTH, height: DEFAULT_EXPORT_HEIGHT });
   mirror.sync();
   mirror.frameAll(viewportCamera);
@@ -215,6 +220,14 @@ export function main(): void {
   let cameraControlSelected = false;
   /** The gizmo's mode for whatever it is attached to; the carrier and an object share the one toggle (README D46). */
   let gizmoMode: 'translate' | 'rotate' = 'translate';
+  /** Whether the camera path is drawn. A track with fewer than two keyframes has no path, so this is cleared then. */
+  let cameraPathVisible = false;
+  /** Whether a run of the clip takes the viewport with it. On by default, the way the reference product has it. */
+  let followCamera = true;
+  /** The viewport state a run started from, so a pause can hand the view on and the end of a run can undo it. */
+  let playbackView:
+    | { position: Vector3; quaternion: Quaternion; target: Vector3; locked: boolean; time: number }
+    | undefined;
   let lastImport: ImportedAssets | undefined;
   let jobController: AbortController | undefined;
   /** The raw meshes on layer 2, one per imported node: app-owned, kept for teardown (README D24). */
@@ -243,6 +256,10 @@ export function main(): void {
       selected: cameraControlSelected,
       mode: gizmoMode,
       locked: cameraLocked,
+      follow: followCamera,
+      playing: playback.playing,
+      pathVisible: cameraPathVisible,
+      pathAvailable: cameraKeyframePositions(project).length >= 2,
       pose: {
         position: [
           project.camera.transform.position.x,
@@ -282,6 +299,8 @@ export function main(): void {
       toggleGizmoMode,
       cameraToView,
       viewToCamera,
+      setCameraPathVisible,
+      setFollowCamera,
     },
   };
   const timelineContext: TimelineContext = {
@@ -289,12 +308,15 @@ export function main(): void {
     playback,
     session,
     // The widget seeks in milliseconds, the authoring unit; the mixer's clip is seconds (README D45).
+    onTransport: togglePlayback,
     onScrub: (timeMs) => {
       playback.pause();
       playback.setTime(timeMs / 1000);
     },
     onEdited: () => {
       playback.rebuild(project);
+      // A keyframe edit is what changes the camera's trajectory, so the path is redrawn here (README D47).
+      refreshCameraPath();
     },
   };
 
@@ -322,7 +344,20 @@ export function main(): void {
     callbacks: pointerCallbacks,
   });
 
-  const app: AppContext = { project, mirror, picker, session, playback, controls, pointer, capture, overlay, worldGrid, cameraControl };
+  const app: AppContext = {
+    project,
+    mirror,
+    picker,
+    session,
+    playback,
+    controls,
+    pointer,
+    capture,
+    overlay,
+    worldGrid,
+    cameraControl,
+    cameraPath,
+  };
 
   // 5. Flow wiring: the only place the modules meet.
   /**
@@ -527,9 +562,9 @@ export function main(): void {
   function setCameraLock(enabled: boolean): void {
     cameraLocked = enabled;
     controls.setOrbitTarget(enabled ? mirror.camera : viewportCamera);
-    // The carrier's controls are meaningless while the viewport already is the output camera, so the panel re-reads
-    // the flag to gate them (README D46).
-    panels.refresh();
+    // The carrier's controls are meaningless while the viewport already is the output camera, and the path is hidden
+    // with the carrier then too, so both re-read the flag (README D46, D47).
+    refreshCameraPath();
   }
 
   /**
@@ -599,6 +634,97 @@ export function main(): void {
    * Selects or deselects the carrier. Selecting it takes the gizmo from the active object; deselecting it gives the
    * gizmo back, which `syncGizmo` resolves from the session alone (README D46).
    */
+  /**
+   * Redraws the camera path from the authored camera track, and clears the toggle when there is no path to draw.
+   * Fewer than two position keyframes is not a path, so the panel disables the box and this clears the flag, which
+   * is what a shorter track leaves behind (README D47).
+   */
+  function refreshCameraPath(): void {
+    const markers = cameraKeyframePositions(project);
+    if (markers.length < 2) cameraPathVisible = false;
+    cameraPath.setTrajectory(sampleCameraTrajectory(project));
+    cameraPath.setMarkers(markers);
+    cameraPath.setVisible(cameraPathVisible && !cameraLocked);
+    panels.refresh();
+  }
+
+  /** The `Show camera path` toggle: a view switch, so it redraws the path and writes nothing else. */
+  function setCameraPathVisible(visible: boolean): void {
+    cameraPathVisible = visible;
+    refreshCameraPath();
+  }
+
+  /**
+   * Starts a run: the viewport state is captured first, so whatever the run does to the view can be undone, and the
+   * camera lock is engaged to make the viewport follow the clip (README D48).
+   */
+  function startPlayback(): void {
+    if (playback.playing) return;
+    playbackView = {
+      position: viewportCamera.position.clone(),
+      quaternion: viewportCamera.quaternion.clone(),
+      target: controls.orbit.target.clone(),
+      locked: cameraLocked,
+      time: playback.time,
+    };
+    if (followCamera && !cameraLocked) setCameraLock(true);
+    playback.play();
+    panels.refresh();
+  }
+
+  /**
+   * Pauses a run. Handing the view over is what makes a paused frame editable: the editor camera takes the pose the
+   * clip stopped at and the lock is released, so the shot can be judged from there and flown on without the clip
+   * pulling it back — the authored data is untouched either way (README D48).
+   */
+  function pausePlayback(handOver: boolean): void {
+    if (!playback.playing) return;
+    // The lock the follow engaged is the one this pause gives back; a lock the user asked for stays.
+    const handedOver = handOver && followCamera && playbackView?.locked === false;
+    playback.pause();
+    if (handedOver) {
+      // The orbit has to belong to the viewport camera before anything moves it: while the lock is on, the pose
+      // this hands over would otherwise be written into the output camera, which is authored data (D17).
+      setCameraLock(false);
+      controls.setViewFrom(mirror.camera.position, mirror.camera.quaternion);
+    }
+    panels.refresh();
+  }
+
+  /**
+   * Ends a run: a non-looping clip that reached its last frame stops the transport, and the viewport goes back to
+   * the state the run started from (README D48).
+   */
+  function finishPlayback(): void {
+    const restore = playbackView;
+    playbackView = undefined;
+    playback.pause();
+    if (restore !== undefined) {
+      // The playhead goes back as well, so the frame on screen is the one the run started from — which is also what
+      // restores the view when the output camera is the one drawing, since its pose comes from the clip.
+      playback.setTime(restore.time);
+      if (restore.locked) {
+        setCameraLock(true);
+      } else {
+        setCameraLock(false);
+        controls.setViewFrom(restore.position, restore.quaternion, restore.target);
+      }
+    }
+    panels.refresh();
+  }
+
+  /** The transport toggle: the only entry point, so every run is saved and every pause can hand the view over. */
+  function togglePlayback(): void {
+    if (playback.playing) pausePlayback(true);
+    else startPlayback();
+  }
+
+  /** The `Follow camera` option. It applies to the next run, which is why the panel disables it while one runs. */
+  function setFollowCamera(enabled: boolean): void {
+    followCamera = enabled;
+    panels.refresh();
+  }
+
   function toggleCameraControl(): void {
     cameraControlSelected = !cameraControlSelected;
     syncGizmo();
@@ -980,6 +1106,15 @@ export function main(): void {
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
     playback.advance(dt);
+    // A non-looping run is over at the last frame, which is where the transport stops and the view goes back (D48).
+    if (
+      playback.playing &&
+      !playback.loop &&
+      playback.duration > 0 &&
+      playback.time >= playback.duration - 1e-6
+    ) {
+      finishPlayback();
+    }
     mirror.sync();
     // A dirty object is rebuilt as a new node, which releases the one an attached gizmo drives; comparing
     // identities is what re-attaches it, and it has to happen after `sync()` because that is what replaces
@@ -1005,19 +1140,24 @@ export function main(): void {
     // clip runs — and it is drawn only while the viewport is a different camera, since a camera cannot see itself
     // (README D46). A drag owns the pose until it commits, so the per-frame update stands back for it.
     cameraControl.setSelected(cameraControlSelected);
-    cameraControl.setVisible(cameraControlSelected && !cameraLocked);
+    // Drawn while it is selected, and — with the follow option off — for the length of a run as well, so a run that
+    // leaves the editor camera alone still shows the camera moving along the clip. That display is temporary and
+    // selects nothing: a camera cannot see itself, so the follow case hides it like the locked case does (D46, D48).
+    const observing = playback.playing && !followCamera;
+    cameraControl.setVisible((cameraControlSelected || observing) && !cameraLocked);
     if (!(cameraControlSelected && controls.gizmoBusy())) {
       cameraControl.setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport));
     }
     // The size comes from how far the drawing camera is, floored at the distance navigation orbits from: a viewport
     // that sits *on* the carrier — which is exactly what `View -> Camera` produces — would otherwise scale the
     // drawing and the gizmo down to a dot, and the orbit radius is the scene's own scale (README D46).
-    cameraControl.setScreenScale(
-      Math.max(
-        renderCamera.position.distanceTo(cameraControl.node.position),
-        controls.orbit.object.position.distanceTo(controls.orbit.target),
-      ),
+    const viewingDistance = Math.max(
+      renderCamera.position.distanceTo(cameraControl.node.position),
+      controls.orbit.object.position.distanceTo(controls.orbit.target),
     );
+    cameraControl.setScreenScale(viewingDistance);
+    cameraPath.setScreenScale(viewingDistance);
+    cameraPath.faceCamera(renderCamera.quaternion);
     renderer.render(mirror.scene, renderCamera);
     timelinePanel.setTime(playback.time * 1000);
     hud.update(hudState());
@@ -1043,6 +1183,7 @@ export function main(): void {
     app.overlay.dispose();
     app.worldGrid.dispose();
     app.cameraControl.dispose();
+    app.cameraPath.dispose();
     // Also drops the orbit-change registration: the callbacks live in the controls.
     app.controls.dispose();
     app.playback.dispose();
@@ -1055,6 +1196,7 @@ export function main(): void {
 
   window.addEventListener('pagehide', dispose);
   rebuildBindings();
+  refreshCameraPath();
   frameHandle = requestAnimationFrame(frame);
 }
 

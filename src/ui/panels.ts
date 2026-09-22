@@ -37,6 +37,12 @@ export type CameraControlView = {
   mode: 'translate' | 'rotate';
   locked: boolean;
   pose: CameraPose;
+  /** Whether a run of the clip takes the viewport with it, and whether one is running (the option then waits). */
+  follow: boolean;
+  playing: boolean;
+  /** Whether the camera path is drawn, and whether the track holds a path at all (two keyframes or more). */
+  pathVisible: boolean;
+  pathAvailable: boolean;
 };
 
 export type PanelContext = {
@@ -96,6 +102,8 @@ export type PanelContext = {
     toggleGizmoMode(): void;
     cameraToView(): void;
     viewToCamera(): void;
+    setCameraPathVisible(visible: boolean): void;
+    setFollowCamera(enabled: boolean): void;
   };
 };
 
@@ -196,6 +204,8 @@ export class Panels {
   private readonly cameraModeButton: HTMLButtonElement;
   private readonly cameraToViewButton: HTMLButtonElement;
   private readonly viewToCameraButton: HTMLButtonElement;
+  private readonly cameraPathInput: HTMLInputElement;
+  private readonly followCameraInput: HTMLInputElement;
   private readonly exportResolutionSelect: HTMLSelectElement;
   private readonly exportFpsInput: HTMLInputElement;
   private readonly exportFromInput: HTMLInputElement;
@@ -468,6 +478,14 @@ export class Panels {
       title: 'move the viewport to the output camera',
       on: { click: () => context.actions.viewToCamera() },
     });
+    this.followCameraInput = el('input', {
+      type: 'checkbox',
+      on: { change: () => context.actions.setFollowCamera(this.followCameraInput.checked) },
+    });
+    this.cameraPathInput = el('input', {
+      type: 'checkbox',
+      on: { change: () => context.actions.setCameraPathVisible(this.cameraPathInput.checked) },
+    });
     this.cameraPoseInputs = ['X', 'Y', 'Z', 'QX', 'QY', 'QZ', 'QW'].map((label) =>
       el('input', {
         type: 'number',
@@ -479,9 +497,11 @@ export class Panels {
     group('Camera', [
       this.field('Camera lock (output)', this.cameraLockInput),
       el('div', { class: 'dim', text: 'navigation then drives the output camera' }),
+      this.field('Follow camera', this.followCameraInput),
       el('hr'),
       el('div', { class: 'row' }, [this.cameraSelectButton, this.cameraModeButton]),
       el('div', { class: 'row' }, [this.cameraToViewButton, this.viewToCameraButton]),
+      this.field('Show camera path', this.cameraPathInput),
       el('div', { class: 'row' }, [
         this.field('X', this.cameraPoseInputs[0]!),
         this.field('Y', this.cameraPoseInputs[1]!),
@@ -573,6 +593,12 @@ export class Panels {
       this.cameraLockInput.checked = cameraControl.locked;
       this.cameraSelectButton.textContent = cameraControl.selected ? 'Deselect' : 'Select';
       this.cameraModeButton.textContent = cameraControl.mode === 'rotate' ? '-> Move' : '-> Rotate';
+      // A path needs two keyframes to exist at all, so below that the box is unchecked as well as disabled.
+      // The follow option is read when a run starts, so it waits while one is running rather than changing a run.
+      this.followCameraInput.checked = cameraControl.follow;
+      this.followCameraInput.disabled = cameraControl.playing;
+      this.cameraPathInput.disabled = !cameraControl.pathAvailable;
+      this.cameraPathInput.checked = cameraControl.pathAvailable && cameraControl.pathVisible;
       const authored = [...cameraControl.pose.position, ...cameraControl.pose.quaternion, cameraControl.pose.fov];
       this.cameraPoseInputs.forEach((input, index) => {
         // Seeded like the other view fields, except while it is the field being typed into.
