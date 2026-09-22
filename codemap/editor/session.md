@@ -16,7 +16,7 @@ type Selection =
 type ActiveTool = 'select' | 'paint' | 'add' | 'remove';
 type EditorMode = 'object' | 'edit';   // what a viewport press is for (README D39)
 type SelectionShape = 'box';   // what a press selects; the only variant `Selection` has
-type EditResolution = { representation: 'empty' | 'uniform'; cells?: [number, number, number] };
+type EditResolution = { representation: 'empty' | 'uniform'; subdivision?: number; cells?: [number, number, number] };
 
 class EditorSession {
   constructor(project: Project);
@@ -50,7 +50,7 @@ class EditorSession {
 6. `setTool` only assigns and notifies. It does not clear the selection, because the box tools — `select`, `add`, `paint` and `remove` — all share the same region; a detach is a command on the selected region rather than a tool, so it is not in the union at all (README D19).
 7. `setSelectionShape(shape)` only assigns and notifies, like `setTool`: the shapes are a closed union, so there is nothing to validate. The shape is what `pointer.ts` builds a selection as when a press hits an object, which is why `box` is the only value and the only variant `Selection` has (README D19).
 8. `setEditColor(color)` assigns and notifies. The color is the *appearance* channel the add and paint operations write (`HexColor`, `0xRRGGBB`, README D14) and has nothing to do with `SceneObject.maskColor`, which is the identity channel (README D11). The session stores it so the paint tool has no hidden constant: `pointer.ts` reads `session.editColor` at commit time.
-9. `resolutionOf` reads the project on every call, so the reported resolution cannot go stale: `undefined` for an unknown id; `{ representation: 'empty' }` for a node whose representation carries no payload — a transform-only node, or a uniform object whose grid has not been attached yet; and for a uniform object that has a grid, `{ representation: 'uniform' }`, plus `cells` derived from `grid.bounds()` as `bounds.max[i] - bounds.min[i] + 1` per axis while the grid holds at least one occupied cell, and no `cells` while it holds none. Under D41 a cell is the world unit, so `cells` is a per-axis voxel count of the active object's content and that count is also its size in world units. This value is what the HUD shows.
+9. `resolutionOf` reads the project on every call, so the reported resolution cannot go stale: `undefined` for an unknown id; `{ representation: 'empty' }` for a node whose representation carries no payload — a transform-only node, or a uniform object whose grid has not been attached yet; and for a uniform object that has a grid, `{ representation: 'uniform', subdivision: grid.subdivision }`, because the subdivision is a property of the grid and is reported whenever one is attached, occupied or not (README D43). `cells` is added on top of that, derived from `grid.bounds()` as `bounds.max[i] - bounds.min[i] + 1` per axis, while the grid holds at least one occupied cell, and there is no `cells` while it holds none — the counts need an occupied cell to have a size at all. A cell is `1 / subdivision` of the world unit (README D41, D43), so `cells` is a per-axis count of the active object's own cells and the subdivision is what says how much world each of them spans. This value is what the HUD shows.
 10. `subscribe` adds to the set and returns an unsubscribe closure; calling that closure twice is a no-op.
 
 ## Invariants
@@ -61,7 +61,7 @@ class EditorSession {
 - A selection never survives a change of active object.
 - Every public mutator calls `notify()` exactly once, synchronously, after the state change.
 - `editColor` is always a valid `0xRRGGBB` value and is the appearance channel only; it is never written to `SceneObject.maskColor`.
-- `resolutionOf` is pure, and the session holds no mesh, matrix, or derived render state: the resolution is recomputed on every read from `representation`, the payload's presence, and `grid.bounds()`, and `cells` carries three numbers only while the grid actually holds an occupied cell.
+- `resolutionOf` is pure, and the session holds no mesh, matrix, or derived render state: the resolution is recomputed on every read from `representation`, the payload's presence, `grid.subdivision`, and `grid.bounds()`, and `cells` carries three numbers only while the grid actually holds an occupied cell.
 
 - The session leaves `edit` mode when its active object is cleared: `setActiveObject(null)` assigns `mode = 'object'` as well as dropping the selection, so no UI path — both of whose entries are disabled while nothing is active — reaches a mode there is nothing to edit in (README D39). `setMode` itself validates nothing, like `setTool`, so a caller that bypasses the UI can still select `edit` with no active object; the session does not refuse it.
 

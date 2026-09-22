@@ -1,4 +1,5 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
+import { CELL_SIZE } from '../voxels/uniform/grid.js';
 import type { HexColor, UniformGrid } from '../voxels/uniform/grid.js';
 import { removeTracksFor, type Timeline, type TrackTarget } from './timeline.js';
 
@@ -19,9 +20,10 @@ export type SceneObject = {
   maskColor: HexColor;
   visible: boolean;
   /**
-   * While set, the object's own placement holds whole cells, so its voxels sit on the world grid the lattice
-   * is (README D42, on D41's unit). Switched off, the object may sit between cells. A voxel object is created
-   * with the flag already set when the placement it was given is whole, and unset when it is not.
+   * While set, the object's own placement holds whole cells of its own grid, so its voxels sit on the world grid
+   * the lattice is (README D42, on D41's unit and D43's subdivision). Switched off, the object may sit between
+   * cells. A voxel object is created with the flag already set when the placement it was given is whole, and
+   * unset when it is not.
    */
   alignToGrid: boolean;
 };
@@ -52,12 +54,16 @@ const DEFAULT_FPS = 30;
 const DEFAULT_BACKGROUND: HexColor = 0x3d4250;
 
 /**
- * Whether a placement is already whole cells, which is what an aligned object holds (README D42). An object
- * whose placement an operation derived — detach, under a parent that is turned or off the lattice — is created
- * unaligned rather than snapped: snapping it would move content that operation promised to leave in place.
+ * Whether a placement is already whole `cell`-sized cells, which is what an aligned object holds (README D42, D43).
+ * An object whose placement an operation derived — detach, under a parent that is turned or off the lattice — is
+ * created unaligned rather than snapped: snapping it would move content that operation promised to leave in place.
  */
-function isOnLattice(position: Vector3): boolean {
-  return Number.isInteger(position.x) && Number.isInteger(position.y) && Number.isInteger(position.z);
+function isOnLattice(position: Vector3, cell: number): boolean {
+  return (
+    Number.isInteger(position.x / cell) &&
+    Number.isInteger(position.y / cell) &&
+    Number.isInteger(position.z / cell)
+  );
 }
 
 function identityTransform(): Transform {
@@ -132,7 +138,7 @@ export class Project {
       representation: init.payload.kind,
       maskColor: init.maskColor,
       visible: true,
-      alignToGrid: isOnLattice(transform.position),
+      alignToGrid: isOnLattice(transform.position, init.payload.grid.cellSize),
     };
     object.uniform = init.payload.grid;
     this.objects.set(object.id, object);
@@ -238,8 +244,9 @@ export class Project {
   }
 
   /**
-   * The placement an aligned object may take (README D42): the nearest lattice cell, per axis. A cell is the
-   * world unit (README D41), so rounding a placement is what puts the object's voxels on the world grid.
+   * The placement an aligned object may take (README D42, D43): the nearest whole cell of its own grid, per axis.
+   * A cell is `CELL_SIZE / subdivision` world units and the world unit is the base (README D41), so rounding to the
+   * object's own cell is what puts its voxels on the world grid, whatever level of subdivision it carries.
    *
    * An object that does not align, and an unknown id, get a copy of `position`, so a caller can route every
    * placement write through here without testing the flag itself.
@@ -247,13 +254,18 @@ export class Project {
   alignedPosition(id: ObjectId, position: Vector3): Vector3 {
     const object = this.get(id);
     if (object === undefined || !object.alignToGrid) return position.clone();
-    return new Vector3(Math.round(position.x), Math.round(position.y), Math.round(position.z));
+    const cell = object.uniform?.cellSize ?? CELL_SIZE;
+    return new Vector3(
+      Math.round(position.x / cell) * cell,
+      Math.round(position.y / cell) * cell,
+      Math.round(position.z / cell) * cell,
+    );
   }
 
   /**
-   * The placement a keyframe may store for a target (README D42). An object that aligns gets whole cells, exactly
-   * as a direct transform write does, so everything a track holds is on the lattice; every other target keeps the
-   * placement it was given.
+   * The placement a keyframe may store for a target (README D42, D43). An object that aligns gets its own whole
+   * cells, exactly as a direct transform write does, so everything a track holds is on its lattice; every other
+   * target keeps the placement it was given.
    *
    * The camera is one of those: it is not a scene object, its placement is a viewpoint rather than voxel content,
    * and a camera confined to whole cells could not frame anything. Nothing here constrains what the mixer

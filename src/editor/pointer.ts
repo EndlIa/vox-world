@@ -2,12 +2,11 @@ import type { ObjectId, Project } from '../document/project.js';
 import type { ActiveTool, EditorSession } from './session.js';
 import { addBox, detachSelection, paintBox, removeBox } from './ops.js';
 import type { OpResult } from './ops.js';
-import type { Picker } from '../three-runtime/picking.js';
+import type { PickHit, Picker } from '../three-runtime/picking.js';
 import type { Overlay } from '../three-runtime/overlay.js';
-import type { IntBox3 } from '../voxels/uniform/grid.js';
-import { normalizeBox } from '../voxels/uniform/grid.js';
-import { Vector2 } from 'three';
-import type { PerspectiveCamera, Vector3 } from 'three';
+import { KEY_MAX, KEY_MIN, normalizeBox } from '../voxels/uniform/grid.js';
+import { Matrix3, Matrix4, Plane, Raycaster, Vector2, Vector3 } from 'three';
+import type { PerspectiveCamera } from 'three';
 
 export type PointerCallbacks = {
   onSessionChange(): void;
@@ -34,34 +33,37 @@ const BOX_TOOLS: Record<ActiveTool, boolean> = {
 /** What a commit acts with: one of the session's tools, or the detach the panel commands directly. */
 type CommitVerb = ActiveTool | 'detach';
 
-/** The one drag in flight: one object, its occupied cells, one anchor cell, one moving corner cell. */
+/**
+ * The one drag in flight: one object, its cell size, one anchor cell, one moving corner cell, and the plane the
+ * gesture runs in — the face the press landed on, so a pointer that leaves the model still names a cell.
+ */
 type DragState = {
   pointerId: number;
   objectId: ObjectId;
-  bounds: IntBox3;
+  cell: number;
   anchorCell: [number, number, number];
   cornerCell: [number, number, number];
+  plane: Plane;
+  /** The pressed face's normal in the object's own frame, or none when the raycast reported no face. */
+  normal: Vector3 | undefined;
+  /** The object's world matrix inverted: a world point on that plane turns into a cell with it. */
+  toLocal: Matrix4;
 };
 
-/**
- * Min-corner convention (README D20): the cell a local point falls in, held inside the object's own occupancy.
- *
- * A cell is the world unit (README D41), so a point's cell is its floor and nothing is scaled. The holding is
- * what makes a face hit mean one thing rather than two: a ray that hits a face reports a point exactly on that
- * face's plane, so on the far side of the box the floor lands one cell past the payload — a drag across that
- * face would address cells the object does not have, and every tool would then read an empty region there while
- * the same gesture on the near side addressed real cells. Clamping puts both on the outermost cell it does have.
- */
-function cellAt(pointLocal: Vector3, bounds: IntBox3): [number, number, number] {
-  const inside = (value: number, min: number, max: number): number =>
-    value < min ? min : value > max ? max : value;
-  return [
-    inside(Math.floor(pointLocal.x), bounds.min[0], bounds.max[0]),
-    inside(Math.floor(pointLocal.y), bounds.min[1], bounds.max[1]),
-    inside(Math.floor(pointLocal.z), bounds.min[2], bounds.max[2]),
-  ];
+/** The cell a local point addresses: min-corner convention (README D20), floored after dividing by the cell size,
+ *  and held inside the packed key space, the only range a cell may come from at all (README D41, D43). */
+function cellOfLocal(pointLocal: Vector3, cell: number): [number, number, number] {
+  const hold = (value: number): number => Math.min(KEY_MAX, Math.max(KEY_MIN, Math.floor(value / cell)));
+  return [hold(pointLocal.x), hold(pointLocal.y), hold(pointLocal.z)];
 }
 
+/** Scratch, so a pointer move allocates nothing: the drag's ray, its plane hit, that point in cell space, and the
+ *  matrices that turn the pressed face into a world normal. */
+const _ray = new Raycaster();
+const _planeHit = new Vector3();
+const _localHit = new Vector3();
+const _normalMatrix = new Matrix3();
+const _viewNormal = new Vector3();
 
 /**
  * All pointer handling in the viewport: point pick, box drag, and the commit of the active tool.
@@ -159,7 +161,7 @@ export class PointerTool {
       objectId: hit.objectId,
       box: normalizeBox(hit.cell, hit.cell),
     });
-    this.armDrag(event.pointerId, ndc, hit.objectId);
+    this.armDrag(event.pointerId, hit);
     this.paintSelection();
     this.callbacks.onSessionChange();
   };
@@ -199,21 +201,28 @@ export class PointerTool {
   }
 
   /** Arms a box drag only in edit mode, for a box-dragging tool, on a uniform object; otherwise the click stands. */
-  private armDrag(pointerId: number, ndc: Vector2, objectId: ObjectId): void {
+  private armDrag(pointerId: number, hit: Extract<PickHit, { kind: 'cell' }>): void {
     if (this.session.mode !== 'edit' || !BOX_TOOLS[this.session.activeTool]) return;
-    // Only a uniform object has cells to address; a group or a fresh import has nothing to drag over, and an
-    // object with no occupied cell has no cell to address at all.
-    const bounds = this.project.get(objectId)?.uniform?.bounds();
-    if (bounds === undefined || bounds === null) return;
-    const surface = this.picker.pickSurface(ndc, this.getCamera());
-    if (surface === undefined || surface.objectId !== objectId) return;
-    const anchor = cellAt(surface.pointLocal, bounds);
+    // Only a uniform object has cells to address; a group or a fresh import has nothing to drag over.
+    const grid = this.project.get(hit.objectId)?.uniform;
+    if (grid === undefined) return;
+    // The anchor is the cell the instance lookup named, so a press on a face addresses the cell the user sees
+    // rather than its neighbour: a face hit reports a point on that face's own plane, and flooring such a point
+    // names the cell past the face (README D20).
+    const worldMatrix = this.project.worldMatrix(hit.objectId);
+    const worldNormal =
+      hit.normal === undefined
+        ? this.getCamera().getWorldDirection(_viewNormal).negate().clone()
+        : hit.normal.clone().applyMatrix3(_normalMatrix.getNormalMatrix(worldMatrix)).normalize();
     this.drag = {
       pointerId,
-      objectId,
-      bounds,
-      anchorCell: anchor,
-      cornerCell: [anchor[0], anchor[1], anchor[2]],
+      objectId: hit.objectId,
+      cell: grid.cellSize,
+      anchorCell: [hit.cell[0], hit.cell[1], hit.cell[2]],
+      cornerCell: [hit.cell[0], hit.cell[1], hit.cell[2]],
+      plane: new Plane().setFromNormalAndCoplanarPoint(worldNormal, hit.point),
+      normal: hit.normal?.clone(),
+      toLocal: worldMatrix.invert(),
     };
   }
 
@@ -221,13 +230,25 @@ export class PointerTool {
   private trackDrag(ndc: Vector2): void {
     const drag = this.drag;
     if (drag === null) return;
-    const surface = this.picker.pickSurface(ndc, this.getCamera());
-    if (surface !== undefined && surface.objectId === drag.objectId) {
-      drag.cornerCell = cellAt(surface.pointLocal, drag.bounds);
+    const hit = this.picker.pick(ndc, this.getCamera());
+    if (hit !== undefined && hit.kind === 'cell' && hit.objectId === drag.objectId) {
+      drag.cornerCell = [hit.cell[0], hit.cell[1], hit.cell[2]];
+    } else {
+      // Off the model, or over another object: the gesture keeps running in the plane of the face it started on, so a
+      // box can be drawn through empty space — which is how `add` grows an object — and it never jumps to another one.
+      _ray.setFromCamera(ndc, this.getCamera());
+      const world = _ray.ray.intersectPlane(drag.plane, _planeHit);
+      if (world !== null) {
+        _localHit.copy(world).applyMatrix4(drag.toLocal);
+        // That point is on the face's own plane, so flooring it lands in the cell past the face: half a cell back
+        // along the normal is the cell the press addressed, and the two axes the drag travels are untouched.
+        if (drag.normal !== undefined) _localHit.addScaledVector(drag.normal, -drag.cell / 2);
+        drag.cornerCell = cellOfLocal(_localHit, drag.cell);
+      }
     }
     // The box the drag has drawn so far: inclusive on both corners, in the anchor object's cells (D19).
     const box = normalizeBox(drag.anchorCell, drag.cornerCell);
-    this.overlay.showBox(box, this.project.worldMatrix(drag.objectId));
+    this.overlay.showBox(box, this.project.worldMatrix(drag.objectId), drag.cell);
   }
 
   /**
@@ -297,7 +318,7 @@ export class PointerTool {
     }
     const object = this.project.get(selection.objectId);
     if (object?.uniform !== undefined) {
-      this.overlay.showBox(selection.box, this.project.worldMatrix(selection.objectId));
+      this.overlay.showBox(selection.box, this.project.worldMatrix(selection.objectId), object.uniform.cellSize);
       return;
     }
     this.overlay.clear();

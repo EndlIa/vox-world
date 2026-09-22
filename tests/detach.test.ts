@@ -35,9 +35,13 @@ function uniformFixture() {
   return { project, grid, source };
 }
 
-/** The world position of a cell center, in the object's own frame: a cell is the world unit (D41). */
+/**
+ * The world position of a cell center, in the object's own frame: cell `i` spans `[i, i + 1]` cells and a cell is
+ * `CELL_SIZE / subdivision` world units (D41, D43), so its center is half a cell past its index.
+ */
 function cellCenterWorld(project: Project, object: SceneObject, x: number, y: number, z: number) {
-  return new Vector3(x + CELL_SIZE / 2, y + CELL_SIZE / 2, z + CELL_SIZE / 2)
+  const cell = object.uniform?.cellSize ?? CELL_SIZE;
+  return new Vector3((x + 0.5) * cell, (y + 0.5) * cell, (z + 0.5) * cell)
     .applyMatrix4(project.worldMatrix(object.id));
 }
 
@@ -116,6 +120,29 @@ describe('detachUniformBox', () => {
     // lattice — and it was not moved onto it either.
     expect(part.alignToGrid).toBe(false);
     const expected = cellCenterWorld(project, source, -2, -1, 0);
+    const actual = cellCenterWorld(project, part, 0, 0, 0);
+    expect(actual.x).toBeCloseTo(expected.x, 9);
+    expect(actual.y).toBeCloseTo(expected.y, 9);
+    expect(actual.z).toBeCloseTo(expected.z, 9);
+  });
+
+  it("gives the new object the source's subdivision, with the region still in place", () => {
+    const { project, grid, source } = uniformFixture();
+    const fine = project.createVoxelObject({
+      name: 'fine',
+      maskColor: 0x445566,
+      payload: { kind: 'uniform', grid: grid.subdividedBy(1) },
+      position: new Vector3(10, 0, -3),
+    });
+    const box: IntBox3 = { min: [-4, -2, 0], max: [-3, -1, 1] };
+
+    const result = detachUniformBox(project, fine.id, box);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const part = project.get(result.objectId)!;
+    expect(part.uniform?.subdivision).toBe(2);
+    // The same cells of the finer grid sit where they were: cell (-4, -2, 0) is now the part's (0, 0, 0).
+    const expected = cellCenterWorld(project, fine, -4, -2, 0);
     const actual = cellCenterWorld(project, part, 0, 0, 0);
     expect(actual.x).toBeCloseTo(expected.x, 9);
     expect(actual.y).toBeCloseTo(expected.y, 9);

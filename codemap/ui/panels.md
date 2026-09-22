@@ -3,7 +3,7 @@
 Ring: 4 · Layer: ui · Depends on: ./dom.js, ./floatingWindow.js, ../document/project.js, ../editor/session.js, ../voxels/uniform/grid.js
 
 ## Responsibility
-The main control panel: import, edit, camera, and export controls plus the project and session read-out. It renders state and forwards intent through
+The main control panel: import, edit, camera, export, and grid-display controls plus the project and session read-out. It renders state and forwards intent through
 `PanelContext.actions`; it never mutates the project, never calls `editor/ops.ts`, and never imports `app/` — the composition root depends on `ui/`,
 not the reverse. The voxelization settings are not here and neither is any way to reach them: they live in the `ui/voxelizeDialog.ts` modal (README
 D26), which the app opens after a successful import, so no representation, voxel size, cell size, root size, or max depth is reachable from the panel
@@ -11,7 +11,7 @@ at all.
 
 The panel is an overlay on the canvas, not a reserved column: it is anchored to the top-left of the window at
 `width: 112px` and takes no space from the viewport, which keeps the whole window width. It is a rail of group
-buttons — `Import`, `Edit`, `Camera`, `Render`, `Scene`, in that order, full width, and nothing else — and
+buttons — `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`, in that order, full width, and nothing else — and
 behind each button that group's controls in a floating window (`./floatingWindow.ts`): no group is expanded
 until its button is pressed, several windows can be open at once, each is moved by dragging its title bar, and
 each is closed by its `×` or by its button again. A button carries the existing `on` class for exactly as long
@@ -25,6 +25,7 @@ own — a job's progress and an operation's failure are not its business (README
 type PanelContext = {
   project: Project; session: EditorSession;
   sceneVisible?(): boolean;    // the app's raw-mesh override; absent => forward-only checkbox
+  gridSettings?(): { base: boolean; object: boolean; margin: number };  // the viewport's own grid display; absent => forward-only controls
   actions: {
     pickImportFile(): void;      // opens the file dialog from app/files.ts; ui never imports app
     exportMp4(options: { width: number; height: number; fps: number; from: number; to: number;
@@ -34,8 +35,12 @@ type PanelContext = {
     setActiveMaskColor(color: HexColor): void;
     setActiveVisible(visible: boolean): void;   // shows or hides the active object
     setActiveAlignToGrid(alignToGrid: boolean): void;   // turns the active object's grid alignment on or off
+    setActiveSubdivision(subdivision: number): void;    // raises the active object's own grid level; a coarser one is not offered
     detachSelection(): void;   // detaches the region the session selected; the app runs it through the pointer tool
     setSourceVisible(enabled: boolean): void;   // shows or hides every imported raw mesh
+    setBaseGridVisible(visible: boolean): void;     // shows or hides the world grid's base layer
+    setObjectGridVisible(visible: boolean): void;   // shows or hides the active object's lattice
+    setGridMargin(cells: number): void;             // cells of lattice drawn around the active object
     renameActive(name: string): void;           // renames the active object; the app trims and refuses ''
     reparentActive(parentId: ObjectId | null): void;
     setCameraLock(enabled: boolean): void;   // hands viewport navigation to the output camera
@@ -55,12 +60,20 @@ class Panels {
    `Camera lock (output)` checkbox with a dim line saying what it does, and a `FOV (deg)` number input), the export group shown as `Render` (a
    resolution select, fps, `from`, and `to` inputs, a beauty/mask mode select, and its `Render MP4` button), and the objects group
    shown as `Scene`, which is two halves in one window: above a plain `hr`, the `Create group` button and the object list — the
-   part that chooses among every object — and below it the active object's `Mask color`, `Parent`, `Name`, `Visible`, and `Grid align` fields,
+   part that chooses among every object — and below it the active object's `Mask color`, `Parent`, `Name`, `Visible`, `Grid align`, and `Subdivision` fields,
    the part that acts on the one the list selected. The `Grid align` checkbox is built beside `visibleInput`: it is `disabled` while
-   nothing is active and its `change` event forwards `checked` through `setActiveAlignToGrid`. That divider is the group's only use of the
-   stylesheet's `hr` rule. There is no voxelize group: the settings live in `ui/voxelizeDialog.ts` (README D26).
+   nothing is active and its `change` event forwards `checked` through `setActiveAlignToGrid`. The `Subdivision` select is built beside
+   `alignToGridInput` from the module constant `SUBDIVISIONS = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]` — one `option` per level, the
+   number as both its value and its label, powers of two because a cell has to stay an exact binary fraction of the world unit and
+   because the list is the UI's range rather than a rule of the grid (README D43) — and its `change` event forwards
+   `Number(value)` through `setActiveSubdivision`. That divider is the group's only use of the
+   stylesheet's `hr` rule. The `Grid` group is the rail's last one and holds the viewport's own display settings (README D43): a
+   `Base grid` and an `Object grid` checkbox, whose `change` events forward `checked` through `setBaseGridVisible` and
+   `setObjectGridVisible`, and a `Margin (cells)` number input (`min 0`, `step 1`) whose `input` event only sets the
+   `touched.gridMargin` flag while its `change` event forwards `Number(value)` through `setGridMargin` — the commit is the
+   `change` event, so a half-typed margin never reaches the viewport. There is no voxelize group: the settings live in `ui/voxelizeDialog.ts` (README D26).
 2. Each group is one rail button plus one window, built together in the group order `Import`, `Edit`, `Camera`, `Render`,
-   `Scene`: the button carries the group's name and toggles its window (the `Edit` one also calls `session.setMode('edit')` through the
+   `Scene`, `Grid`: the button carries the group's name and toggles its window (the `Edit` one also calls `session.setMode('edit')` through the
    optional press hook `group()` takes, before it toggles), and the window is a `FloatingWindow`
    (`./floatingWindow.ts`) whose `body` is the group's content container — the group's controls are appended to
    `window.body` and are not copied, re-created, or re-parented anywhere else. A window opens at `128 + 28 · index` px left
@@ -79,7 +92,10 @@ class Panels {
 5. `refresh()` re-reads `project` and `session` and rewrites text, `value`, and `disabled` state: object rows from `project.roots()` and
    `childrenOf()` with `session.activeObjectId` marked and its row carrying the trash button that deletes it, representation from `object.representation`, resolution from `session.resolutionOf(id)`,
    pressed state from `session.activeTool`, and `disabled` in the tool area for `detachButton` alone — `disabled` exactly while `session.selection.kind === 'none'`, because the region it commands is the one the `Select` tool already chose, so with no selection there is nothing for it to detach, while the tool buttons are never disabled — as well as for the rail's `Edit` button, which needs an active object for the mode it selects; the `Select` field from `session.selectionShape`, colors from `session.editColor` and `object.maskColor`, the parent
-   select from `object.parentId`. Calling it
+   select from `object.parentId`, and the `Subdivision` select from that same resolution: `refresh()` writes
+   `resolution.subdivision` into it and disables the select whenever the resolution carries none, because an object with no uniform
+   grid has no cell to subdivide, and it disables every option below the level the object holds, so the select can only offer that
+   level or a finer one — that is what says coarsening is not offered. Calling it
    twice produces the same DOM. A row's button text is `name · representation` plus the resolution suffix: for a `uniform` object
    whose `EditResolution` carries `cells`, ` · <x>×<y>×<z>` — the object's occupied size per axis in cells, each rendered with
    `fmt(count, 0)` — and nothing otherwise, so an `'empty'` object and one whose resolution reports no cells both read bare
@@ -95,7 +111,9 @@ class Panels {
    operation and leaves no mode behind. No `project` mutator and no `editor/ops.ts` function is called here.
 8. Project-changing intent leaves as callbacks: `pickImportFile()`, `exportMp4(options)`, `createGroup()`,
    `deleteObject(id)` from a row's trash, `setActiveMaskColor(hex)`, `setActiveVisible(checked)` from the visibility checkbox,
-   `setActiveAlignToGrid(checked)` from the grid-align checkbox, `detachSelection()` from the `detach` button,
+   `setActiveAlignToGrid(checked)` from the grid-align checkbox, `setActiveSubdivision(level)` from the subdivision select,
+   `setBaseGridVisible(checked)` and `setObjectGridVisible(checked)` from the `Grid` group's two checkboxes, `setGridMargin(cells)`
+   from its margin field, `detachSelection()` from the `detach` button,
    `renameActive(value)` from the `Name` field,
    `reparentActive(parentId | null)` from the parent select, and `setCameraLock(checked)` from the camera-lock checkbox — the panel forwards the checkbox's own state and
    never tracks the lock itself, so `refresh()` leaves that checkbox alone and the app stays the only owner of the flag. Unlike the camera lock, the
@@ -103,11 +121,17 @@ class Panels {
    `Grid align` checkbox is document state the same way (`refresh()` writes `active.alignToGrid` back into it). The `Name` field
    forwards on its `change` event only — never per keystroke — so a half-typed name cannot reach the document, and until the user types it displays the
    name the project holds. Each control is enabled
-   only when the app could act on it — mask color, name, visibility, grid alignment, and reparent need an active object, and the `detach`
-   button needs a selection, since it is a command on the selected region. The `FOV (deg)` input
+   only when the app could act on it — mask color, name, visibility, grid alignment, and reparent need an active object, subdivision
+   needs an active object whose grid reports a level, and the `detach`
+   button needs a selection, since it is a command on the selected region. The `Grid` group's three controls are never disabled: they act
+   on the viewport rather than on the document, so they need no active object. The `FOV (deg)` input
    forwards `parseFloat` of its value through `setCameraFov(fov)` on every `input` event, so the authored projection follows the field; the app
    validates and clamps what it receives.
-9. `Show raw meshes` is the raw-versus-voxel toggle (README D24): its `change` event forwards `checked` through `setSourceVisible(enabled)` and nothing else, so the panel never touches the mirror, the scene, or a mesh. It is seeded from `context.sceneVisible()` when the context exposes that function — the app does, with `SceneMirror.sourceVisible` — and left untouched by `refresh()` when it does not, in which case the checkbox is a plain forward-only control and the app remains the only thing that knows whether the raw meshes are shown. `refresh()` therefore never invents a state for it.
+9. `Show raw meshes` is the raw-versus-voxel toggle (README D24): its `change` event forwards `checked` through `setSourceVisible(enabled)` and nothing else, so the panel never touches the mirror, the scene, or a mesh. It is seeded from `context.sceneVisible()` when the context exposes that function — the app does, with `SceneMirror.sourceVisible` — and left untouched by `refresh()` when it does not, in which case the checkbox is a plain forward-only control and the app remains the only thing that knows whether the raw meshes are shown. `refresh()` therefore never invents a state for it. The `Grid` group follows the same rule through `context.gridSettings()`, which is the
+   same kind of view of the viewport's own settings: when the app exposes that function `refresh()` writes `settings.base` and
+   `settings.object` into the two checkboxes and `settings.margin` into the number field — the margin only while `touched.gridMargin` is
+   unset, because its `change` event is what commits it — and with no such function the three controls are plain forward-only controls that
+   `refresh()` leaves alone. Either way the panel holds no grid flag and no margin of its own: `refresh()` only reads them back from the app.
 10. Export: the export button reads the resolution select (`960x540`, `1280x720`, `1920x1080`; the middle one is selected by default), the fps input,
    the `from` and `to` inputs, and the mode select (`beauty | mask`, where `mask` is the per-object identity-color render), and calls
    `actions.exportMp4(options)` with width and height rounded to even numbers, because H.264 and AV1 reject odd dimensions in some players and every
@@ -136,6 +160,11 @@ class Panels {
   it then displays that value on every `refresh()` and holds no copy of its own, so the mirror and the checkbox cannot disagree. With no `sceneVisible()`
   in the context the checkbox is forward-only and `refresh()` leaves it alone — the panel then displays the user's last click, and the app is the only
   thing that knows the real state. Either way no mesh, scene, layer, or mirror is touched here.
+- The `Grid` group's controls are the viewport's own display settings, not document state (README D35): while `context.gridSettings()` exists,
+  `refresh()` writes that view back into all three, so a value the app did not take returns as the checkbox showing what the app holds rather than what
+  was clicked, and the panel invents no state of its own. They are never `disabled`, because they act on the viewport and not on the active object, and
+  only the margin field is left alone while `touched.gridMargin` is set, since its `change` event is what commits it. With no `gridSettings()` in the
+  context the three are plain forward-only controls `refresh()` never rewrites, exactly like `Show raw meshes` without `sceneVisible()`.
 - The `FOV (deg)` input is the panel's only view of the output camera's projection: it displays `project.camera.fov` while untouched, forwards the
   parsed number, and keeps no camera, no lock state, and no clamped copy of its own.
 - The `Visible` checkbox is a view of `object.visible` and the `Name` field a view of `object.name`: neither holds document state, neither writes
@@ -143,7 +172,13 @@ class Panels {
   can reach the app, and a rejected rename simply re-seeds it from the project on the next `refresh()`.
 - The Scene window's active-object fields describe the active object, and the `Grid align` checkbox is one of them (README D42): `refresh()` writes
   `active.alignToGrid` back into it and disables it while nothing is active, so it is not forward-only — it always shows the object the list selected.
-- After `refresh()` the displayed active object, tool, representation, resolution, colors, parent, name, visibility, and object tree match the current
+- `Subdivision` is a view of the active object's own grid level and never a second copy of it: `refresh()` writes
+  `session.resolutionOf(active.id).subdivision` into the select, so what it shows comes from the container and nowhere else, and the
+  panel holds no level of its own. An object with no grid has no level to show, so the select is disabled; the options below the
+  object's own are disabled too, so the select can only offer that level or a finer one — which is where the Scene group says
+  coarsening is not offered. It is not a voxelize setting: it raises the level of a payload that already exists and never rescales a
+  model.
+- After `refresh()` the displayed active object, tool, representation, resolution, subdivision, colors, parent, name, visibility, and object tree match the current
   `project`/`session` values, and an untouched `FOV (deg)` field shows `project.camera.fov`.
 - The panel holds no state beyond its DOM nodes, the per-input touched flags, and the id of the object whose name the `Name` field currently shows.
 - The rail holds one button per group and nothing else — no heading, no control, no status text — and every group's content lives in its window's
@@ -188,15 +223,16 @@ field re-seeds from the project.
   visibility itself.
 - `../document/project.js` — `Project`, `ObjectId` for the object read-out and the reparent target.
 - `../editor/session.js` — `EditorSession`, `ActiveTool`; the non-project state the panel reads and writes through its setters, including the
-  `editColor` shared with the add and paint tools, and `EditResolution` for the cells a row reports (README D41).
+  `editColor` shared with the add and paint tools, and `EditResolution` for the cells a row reports (README D41) and the level the subdivision select shows.
 - `../voxels/uniform/grid.js` — `HexColor` for the color inputs and the mask-color action. The panel no longer names `VoxelizeTarget`, so
   `../voxels/voxelize/voxelize.js` is no longer imported here.
 - Mask color, the name, visibility, reparenting, the camera lock, the FOV, and the raw-mesh override arrive as `PanelContext` callbacks
   that `main` implements with
   `editor/ops.ts`, `three-runtime/controls.ts`, `three-runtime/scene.ts`, and the project camera; this file imports neither `editor/ops.js` nor anything from `app/`. No
   outer-ring import and no Three.js use. `sceneVisible` is a plain callback, so exposing it costs the app one closure and gives
-  the panel no import it did not already have; the settings themselves are the dialog's, not the panel's, which is why neither `defaults` nor a
-  voxelize target crosses this boundary any more, and why the panel holds no voxelize-related member at all.
+  the panel no import it did not already have; the `Grid` group's display settings and their three actions arrive the same way — a `gridSettings`
+  closure and three callbacks over the viewport's grid — so they too cost the panel no import; the settings themselves are the dialog's, not the
+  panel's, which is why neither `defaults` nor a voxelize target crosses this boundary any more, and why the panel holds no voxelize-related member at all.
 
 ## Tests
 None. The panel needs a DOM and vitest runs in the node environment, so it is verified by running the app (README section 10): the panel must show no
@@ -207,11 +243,13 @@ from the list while the HUD stops naming it, reparent an object, tick `Camera lo
 view and the export follow it, tick and untick `Show raw meshes` against the raw meshes of an imported object and confirm they appear over and
 disappear behind the voxels — in the same place — without changing what an export renders.
 
-The rail and window walk is the same run: the overlay must show exactly the five buttons `Import`, `Edit`, `Camera`, `Render`, `Scene` and no
+The rail and window walk is the same run: the overlay must show exactly the six buttons `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid` and no
 group control at all until one is pressed; with nothing selected `Edit` must be disabled and unpressable, and pressing it with an object selected must open one window
 titled `Edit` holding that group's controls, mark the button `on`, and put the session in edit mode — the viewport mode switch must
 follow, and the gizmo must be gone; dragging the window's title bar must move it and leave it under the pointer; `×` must close it and clear the button; opening `Edit` and
-`Scene` together must show two windows at different positions, and pressing one must put it above the other; a drag far past an edge must park
+`Scene` together must show two windows at different positions, and pressing one must put it above the other; pressing `Grid` must open a window holding `Base grid`,
+`Object grid`, and `Margin (cells)`, and unticking `Base grid` must take the world grid's plane out of the viewport while committing a smaller margin must
+draw the active object's lattice tighter around it; a drag far past an edge must park
 the window against it with its title bar still reachable; a press below the rail must reach the viewport rather than the overlay; a second import
-must still open the voxelize modal over every window with its fields and `Voxelize` working; and the overlay must hold the five buttons and the
+must still open the voxelize modal over every window with its fields and `Voxelize` working; and the overlay must hold the six buttons and the
 open windows and nothing else — no progress row, no message row, no error line — however many windows are open (D38).

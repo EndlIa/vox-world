@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { UniformGrid, boxCount, boxEquals, normalizeBox, packKey, unpackKey } from '../src/voxels/uniform/grid.js';
+import {
+  CELL_SIZE,
+  UniformGrid,
+  boxCount,
+  boxEquals,
+  isSubdivision,
+  normalizeBox,
+  packKey,
+  unpackKey,
+} from '../src/voxels/uniform/grid.js';
 import type { IntBox3 } from '../src/voxels/uniform/grid.js';
 
 describe('packKey / unpackKey', () => {
@@ -203,5 +212,57 @@ describe('extractBox', () => {
     expect(grid.has(1, 0, 0)).toBe(false);
     expect(grid.getColor(2, 0, 0)).toBe(0x0000aa);
     expect(grid.bounds()).toEqual({ min: [2, 0, 0], max: [2, 0, 0] });
+  });
+});
+
+describe('subdivision', () => {
+  it('is one cell per world unit by default, and a power of two otherwise', () => {
+    const unit = UniformGrid.create();
+    expect(unit.subdivision).toBe(1);
+    expect(unit.cellSize).toBe(CELL_SIZE);
+
+    const fine = UniformGrid.create(4);
+    expect(fine.subdivision).toBe(4);
+    expect(fine.cellSize).toBe(0.25);
+  });
+
+  it('refuses a level that is not a positive power of two', () => {
+    for (const level of [0, -2, 3, 1.5, Number.NaN]) {
+      expect(() => UniformGrid.create(level)).toThrow(RangeError);
+      expect(isSubdivision(level)).toBe(false);
+    }
+    for (const level of [1, 2, 512]) expect(isSubdivision(level)).toBe(true);
+  });
+
+  it('replaces each cell with a block of itself, colors and all', () => {
+    const grid = UniformGrid.create();
+    grid.set(0, 0, 0, 0xff0000);
+    grid.set(-1, 0, 2, 0x00ff00);
+
+    const fine = grid.subdividedBy(1);
+    expect(fine.subdivision).toBe(2);
+    expect(fine.cellSize).toBe(0.5);
+    expect(fine.size).toBe(16);
+    // The block is the cell: (0, 0, 0) spans (0..1)^3, and the negative cell keeps its own color and frame.
+    expect(fine.bounds()).toEqual({ min: [-2, 0, 0], max: [1, 1, 5] });
+    expect(fine.getColor(1, 1, 1)).toBe(0xff0000);
+    expect(fine.getColor(1, 0, 0)).toBe(0xff0000);
+    expect(fine.getColor(-2, 0, 4)).toBe(0x00ff00);
+    expect(fine.getColor(-1, 1, 5)).toBe(0x00ff00);
+    // Nothing outside the blocks: the red cell's block stops at x = 1, so x = 2 is empty.
+    expect(fine.getColor(2, 0, 0)).toBeUndefined();
+    // The source is untouched: refinement never writes back.
+    expect(grid.subdivision).toBe(1);
+    expect(grid.size).toBe(2);
+  });
+
+  it('can be applied twice for four levels, and refuses a non-positive level count', () => {
+    const grid = UniformGrid.create();
+    grid.set(3, 0, 0, 0x3366ff);
+    const twice = grid.subdividedBy(1).subdividedBy(1);
+    expect(twice.subdivision).toBe(4);
+    expect(twice.size).toBe(64);
+    expect(twice.bounds()).toEqual({ min: [12, 0, 0], max: [15, 3, 3] });
+    expect(() => grid.subdividedBy(0)).toThrow(RangeError);
   });
 });

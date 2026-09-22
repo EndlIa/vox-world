@@ -18,6 +18,7 @@ import {
   reparentObject,
   setObjectMaskColor,
   setObjectAlignToGrid,
+  setObjectSubdivision,
   setObjectVisible,
   setTransformFromWorldMatrix,
 } from '../editor/ops.js';
@@ -197,6 +198,8 @@ export function main(): void {
   let resolutionCache: EditResolution | null = null;
   /** The mirror node the gizmo is attached to, so a rebuilt replacement is noticed (see `syncGizmo`). */
   let gizmoNode: Object3D | undefined;
+  /** What the second grid layer was last pointed at, so a repeat call rebuilds nothing (see `refreshObjectGrid`). */
+  let objectGridKey = '';
   let lastImport: ImportedAssets | undefined;
   let jobController: AbortController | undefined;
   /** The raw meshes on layer 2, one per imported node: app-owned, kept for teardown (README D24). */
@@ -213,6 +216,11 @@ export function main(): void {
     project,
     session,
     sceneVisible: () => mirror.sourceVisible,
+    gridSettings: () => ({
+      base: worldGrid.baseVisible,
+      object: worldGrid.objectVisible,
+      margin: worldGrid.margin,
+    }),
     actions: {
       pickImportFile: openImportDialog,
       exportMp4: runExport,
@@ -222,7 +230,11 @@ export function main(): void {
       setActiveMaskColor: applyMaskColor,
       setActiveVisible: applySetActiveVisible,
       setActiveAlignToGrid: applySetActiveAlignToGrid,
+      setActiveSubdivision: applySetActiveSubdivision,
       setSourceVisible,
+      setBaseGridVisible,
+      setObjectGridVisible,
+      setGridMargin,
       renameActive: applyRenameActive,
       reparentActive: applyReparent,
       setCameraLock,
@@ -543,6 +555,22 @@ export function main(): void {
     commitDirty();
   }
 
+  /**
+   * Raises the active object's subdivision through the op: the payload is replaced by block replication, so the
+   * object moves nowhere and only its cells get smaller (README D43).
+   */
+  function applySetActiveSubdivision(subdivision: number): void {
+    const objectId = session.activeObjectId;
+    if (objectId === null) return;
+    const result = setObjectSubdivision(project, objectId, subdivision);
+    if (!result.ok) {
+      reportFailure(result);
+      return;
+    }
+    dirtyIds.add(objectId);
+    commitDirty();
+  }
+
   /** Turns the active object's grid alignment on or off; the op snaps the placement when it turns on. */
   function applySetActiveAlignToGrid(alignToGrid: boolean): void {
     const objectId = session.activeObjectId;
@@ -594,6 +622,7 @@ export function main(): void {
   function commitDirty(): void {
     for (const id of dirtyIds) if (project.get(id) !== undefined) mirror.markDirty(id);
     dirtyIds.clear();
+    refreshObjectGrid();
     refreshReadouts();
     panels.refresh();
     timelinePanel.refresh();
@@ -603,9 +632,31 @@ export function main(): void {
     if (session.activeObjectId !== null) dirtyIds.add(session.activeObjectId);
     refreshReadouts();
     syncGizmo();
+    refreshObjectGrid();
     modeBar.refresh();
     panels.refresh();
     timelinePanel.refresh();
+  }
+
+  /** Grid group: the base layer's own switch. */
+  function setBaseGridVisible(visible: boolean): void {
+    worldGrid.setBaseVisible(visible);
+    panels.refresh();
+  }
+
+  /** Grid group: the active object's lattice, on or off. */
+  function setObjectGridVisible(visible: boolean): void {
+    worldGrid.setObjectVisible(visible);
+    refreshObjectGrid();
+    panels.refresh();
+  }
+
+  /** Grid group: cells of lattice drawn around the active object. A value that is not a cell count is dropped. */
+  function setGridMargin(cells: number): void {
+    if (!Number.isInteger(cells) || cells < 0) return;
+    worldGrid.setMargin(cells);
+    refreshObjectGrid();
+    panels.refresh();
   }
 
   /** The objects an operation rewrote: they are the ones whose derived geometry is rebuilt (README D4). */
@@ -619,6 +670,24 @@ export function main(): void {
   function refreshReadouts(): void {
     const objectId = session.activeObjectId;
     resolutionCache = objectId === null ? null : session.resolutionOf(objectId) ?? null;
+  }
+
+  /**
+   * Points the viewport's second grid layer at the active object: its own lattice, or none. Guarded by a cheap key
+   * — the id, the level, the cell count, the margin, and whether the layer is on — because the lattice geometry is
+   * rebuilt per call and an edit reaches here on every commit, while `grid.bounds()` scans the occupied cells.
+   */
+  function refreshObjectGrid(): void {
+    const objectId = session.activeObjectId;
+    const grid = objectId === null ? undefined : project.get(objectId)?.uniform;
+    const key = `${objectId}|${grid?.subdivision ?? 0}|${grid?.size ?? 0}|${worldGrid.margin}|${worldGrid.objectVisible}`;
+    if (key === objectGridKey) return;
+    objectGridKey = key;
+    if (grid === undefined || objectId === null) {
+      worldGrid.showObjectLattice(undefined, undefined);
+      return;
+    }
+    worldGrid.showObjectLattice(grid, project.worldMatrix(objectId));
   }
 
   /**

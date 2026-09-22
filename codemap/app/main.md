@@ -48,7 +48,7 @@ function main(): void;
    `new ModeBar(modebarRoot, { session })` — the viewport's two-button mode switch, a view of the session like the panels — and
    `new VoxelizeDialog(panelsRoot, () => defaults())` — the settings modal is mounted into the same element as the panels and, like them, receives only
    callbacks and no state — over the actions of
-   step 6; `pickImportFile` is implemented here as `void pickGlbFile().then(file => { if (file) void importFile(file); })`, so the file dialog stays in
+   step 6 and over `gridSettings`, the `WorldGrid` view the `Grid` group reads; `pickImportFile` is implemented here as `void pickGlbFile().then(file => { if (file) void importFile(file); })`, so the file dialog stays in
    `app/`. The app creates no status line and no message area: the panel overlay holds the rail and the windows only (D38). The dialog is
    created here because it belongs to `app/` in the same way the file dialog does: `ui` never imports `app/`, so the closure that seeds the dialog and
    the handling of its outcome live in this file.
@@ -102,6 +102,12 @@ function main(): void;
    - Ops: `setActiveMaskColor(color)` → `setObjectMaskColor(project, session.activeObjectId, color)`; `setActiveVisible(visible)` →
      `setObjectVisible(project, session.activeObjectId, visible)`; `setActiveAlignToGrid(alignToGrid)` →
      `setObjectAlignToGrid(project, session.activeObjectId, alignToGrid)`, which snaps the placement when it turns alignment on;
+     `setActiveSubdivision(level)` → `setObjectSubdivision(project, session.activeObjectId, level)`, which replaces the payload
+     with a block-replicated grid so the object keeps its placement and only its cells get smaller (README D43); the op throws
+     `RangeError` for a level that is not a power of two, reports `'wrong-representation'` for an object with no grid,
+     `'unsupported-subdivision'` for a level below the one the object holds, `'exceeds-grid'` when the refined cells would leave
+     the key space, and `'budget-exceeded'` over `DEFAULT_CELL_BUDGET`, while the level the object already holds is an `ok` that
+     writes no payload — a refused choice reports and leaves the project untouched;
      `renameActive(name)` → `renameObject(project, session.activeObjectId, name)`, which
      trims and refuses an empty name; `reparentActive(parentId)` →
      `reparentObject(project, session.activeObjectId, parentId)`. Every one of them returns without acting when
@@ -127,6 +133,23 @@ function main(): void;
      nothing else: the mirror owns the flag, applies it to its layer-2 meshes at once and again on the next `sync()`, and the panel reads it back through
      `sceneVisible: () => mirror.sourceVisible` — which is also why `main` implements `PanelContext.sceneVisible`, so the checkbox cannot drift from the
      mirror. No mark-dirty and no refresh are needed, and an export is unaffected either way because it renders layer 0 alone.
+   - Grid display — the `Grid` group's three controls are the viewport's own settings, so the actions and `gridSettings` go through the
+     `worldGrid` instance rather than through `app`: `Panels` refreshes inside its own constructor, and that first refresh runs before `app` is
+     built, so a context built out of `app` would read a variable that is not there yet, while the instance has existed since step 2.
+     `setBaseGridVisible(visible)` is the base layer's switch: it hands the flag to `worldGrid.setBaseVisible` and then calls
+     `panels.refresh()`, which re-seeds the checkbox from `gridSettings()` —
+     that re-seed is what makes the box a view of the app's flag rather than a forward-only control, because a value the grid did not take would
+     come back as the box returning to its old state; it calls no `refreshObjectGrid()`, since the base plane is not the lattice.
+     `setObjectGridVisible(visible)` and `setGridMargin(cells)` write `worldGrid.setObjectVisible` and `worldGrid.setMargin` and then call both
+     `refreshObjectGrid()` and `panels.refresh()`, because each changes the lattice the second layer draws; the margin action returns early
+     unless the value is a non-negative integer (`Number.isInteger(cells) && cells >= 0`), so a cleared or fractional field never reaches the
+     grid. `refreshObjectGrid()` is the one place the second layer is aimed: it takes the active object's own grid and
+     `project.worldMatrix(id)` and hands them to `worldGrid.showObjectLattice(...)`, or clears the layer when there is no active object or that
+     object has no uniform grid. It is guarded by the cheap `objectGridKey` — the active id, the grid's `subdivision` and `size`,
+     `worldGrid.margin`, and `worldGrid.objectVisible` — because the lattice geometry is rebuilt on every call, an edit reaches this on every
+     commit, and `grid.bounds()` scans the occupied cells, so an unchanged key returns before anything is rebuilt. Its two call sites are
+     `commitDirty()` and `sessionChanged()`, which is how every commit and every session change re-aims the lattice at what is now active
+     (README D43).
    - Defaults: `defaults()` seeds the dialog from the retained import's `voxelizeBounds`: `extent` is that box's size per
      axis, which the dialog reads its count against to print the model's dimensions (README D29, D41). With no import, or when
      the box it would measure is empty, every axis falls back to `DEFAULT_EXTENT` — the count the prompt already opens at,
@@ -165,7 +188,8 @@ function main(): void;
    no viewport decoration. Finally `timelinePanel.setTime(playback.time)` and a fresh `HudState` into the HUD.
 8. The loop never reads or writes voxel data: no `UniformGrid` method is called and nothing is rasterized. An object is dirty only
    because an edit or an import changed its data, so `sync()` cannot overwrite a transform the mixer wrote for playback.
-9. `HudState` is assembled here from `project.get(session.activeObjectId)`, `session.resolutionOf(id)`, `session.selection`, `Math.round(playback.time *
+9. `HudState` is assembled here from `project.get(session.activeObjectId)`, `session.resolutionOf(id)` (the `EditResolution`, which
+   now carries the object's `subdivision` beside its `cells`), `session.selection`, `Math.round(playback.time *
    project.timeline.fps)`, and `project.timeline.fps`.
 10. **Ownership.** `main` constructs and disposes every long-lived object and passes each dependency in; no module below it builds another module's
     dependencies (`Panels` never creates a `Project`, `PointerTool` receives its `Picker` and `Overlay`). The imported raw meshes are the same kind of
@@ -177,8 +201,9 @@ function main(): void;
 
 ## Invariants
 - `main()` creates the renderer, the mirror, and every listed object once, and schedules exactly one render loop.
-- Project mutations get `mirror.markDirty` plus `panels.refresh()`, every session change refreshes the mode bar, the panels, and the
-  timeline, timeline edits go through `onEdited` → `playback.rebuild`, one job at a time.
+- Project mutations get `mirror.markDirty` plus `panels.refresh()` and, through `commitDirty()`, a re-aim of the object lattice
+  (`refreshObjectGrid()`); every session change refreshes the mode bar, the panels, and the timeline and re-aims that lattice too, and timeline
+  edits go through `onEdited` → `playback.rebuild`; one job at a time.
 - Every path that can make geometry measurable re-fits the **viewport** camera: the import path fits right after `commitDirty()`, on the raw meshes the
   user is about to answer the dialog about, and a confirmed prompt fits again through `runVoxelizeJob`, whose success path fits after
   `applyVoxelizeResult` and `commitDirty()`, because a payload can only be measured once it is attached. No other path moves the camera, and the output
@@ -222,6 +247,9 @@ function main(): void;
   the payload the object is at the identity, after it at the payload's translation, and `applySources` re-derives each mesh's local matrix from it: the app
   never re-parents a mesh, never computes a placement, and never writes a mesh matrix itself. Whether they are shown is the mirror's flag and the panel's
   checkbox (`setSourceVisible` + `sceneVisible`) — `main` keeps no copy of it and never toggles `visible` on a mesh itself.
+- The `Grid` group's settings live on the viewport's grid and never in the document: `panelContext.gridSettings` reads `WorldGrid`'s `baseVisible`,
+  `objectVisible`, and `margin`, and the three grid actions write that one instance, so the panel and the grid it displays cannot disagree; `objectGridKey`
+  is only what keeps a commit's re-aim cheap, and no grid flag ever reaches `project`, a timeline track, or an export.
 - The gizmo is attached exactly while the select tool is active and an object is active, and it pivots at that object's
   content center (README D37). A gesture moves the object through `previewTransform`, which writes no document, and
   produces exactly one document write on release, from the matrix the gizmo reports and not from the node it was attached
@@ -246,7 +274,8 @@ camera lock has no failure path and reports nothing: it is reversible UI state, 
 
 ## Dependencies
 - `../document/project.js`, `../editor/{session,ops,pointer}.js` — `Project`, `EditorSession`, `EditResolution`, `applyVoxelizeResult`,
-  `createGroup`, `deleteObject`, `renameObject`, `setObjectMaskColor`, `setObjectVisible`, `setObjectAlignToGrid`, `reparentObject`, `PointerTool`.
+  `createGroup`, `deleteObject`, `renameObject`, `setObjectMaskColor`, `setObjectVisible`, `setObjectAlignToGrid`,
+  `setObjectSubdivision`, `reparentObject`, `PointerTool`.
 - `../voxels/voxelize/voxelize.js` — `voxelize`, `DEFAULT_CELL_BUDGET`, `VoxelizeSource`; `../three-runtime/import.js` — `importGlb`,
   `adoptImportedScene`, `scaleImportedScene`, `buildVoxelizeSource`, and `ImportedScene` for the retained import's type. There is no
   `VoxelizeTarget` to import any more: the confirmed count is baked into the scaled scene (README D41).

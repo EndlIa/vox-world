@@ -387,6 +387,38 @@ describe('grid alignment', () => {
     expect(project.keyframePosition(CAMERA, fraction).toArray()).toEqual([2.4, -1.6, 0.6]);
   });
 
+  it("rounds to the object's own cell, so a subdivided object snaps in its own steps", () => {
+    const project = new Project();
+    const fine = project.createVoxelObject({
+      name: 'fine',
+      maskColor: 0x112233,
+      payload: { kind: 'uniform', grid: UniformGrid.create(4) },
+      position: new Vector3(0, 0, 0),
+    });
+    const cells = project.alignedPosition(fine.id, new Vector3(1.4, -2.5, 3.5));
+    expect(cells.toArray()).toEqual([1.5, -2.5, 3.5]);
+    // A keyframe reads the same rule, so a track of a subdivided object holds its own whole cells.
+    expect(project.keyframePosition(objectTarget(fine.id), new Vector3(0.3, 0, 0)).toArray()).toEqual([0.25, 0, 0]);
+  });
+
+  it('creates an object aligned only when the placement is whole in its own grid', () => {
+    const project = new Project();
+    const onTheLattice = project.createVoxelObject({
+      name: 'on',
+      maskColor: 0x112233,
+      payload: { kind: 'uniform', grid: UniformGrid.create(2) },
+      position: new Vector3(0.5, 0, 0),
+    });
+    const betweenCells = project.createVoxelObject({
+      name: 'between',
+      maskColor: 0x445566,
+      payload: { kind: 'uniform', grid: UniformGrid.create(2) },
+      position: new Vector3(0.25, 0, 0),
+    });
+    expect(onTheLattice.alignToGrid).toBe(true);
+    expect(betweenCells.alignToGrid).toBe(false);
+  });
+
   it("snaps a world matrix in the object's own frame, without touching the argument", () => {
     const project = new Project();
     const parent = project.createObject({ name: 'parent', representation: 'empty' });

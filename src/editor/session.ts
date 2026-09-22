@@ -22,12 +22,15 @@ export type EditorMode = 'object' | 'edit';
 export type SelectionShape = 'box';
 
 /**
- * What the active object's voxels look like right now: its representation, and — for a `uniform` object
- * with occupied cells — how large that content is, per axis, in cells. Cells are the world unit
- * (README D41), so this is a size in the unit the whole editor works in, not a length in metres.
+ * What the active object's voxels look like right now: its representation, the subdivision of its own grid,
+ * and — for a `uniform` object with occupied cells — how large that content is, per axis, in cells. A cell is
+ * `1 / subdivision` of the world unit (README D41, D43), so the cell counts are a size in cells and the
+ * subdivision is what says how much world each of them spans.
  */
 export type EditResolution = {
   representation: 'empty' | 'uniform';
+  /** The grid's own level, reported whenever the object has a grid at all (README D43). */
+  subdivision?: number;
   cells?: [number, number, number];
 };
 
@@ -71,9 +74,12 @@ export class EditorSession {
       const grid = object.uniform;
       if (grid === undefined) return { representation: 'empty' };
       const bounds = grid.bounds();
-      if (bounds === null) return { representation: 'uniform' };
+      // The subdivision is a property of the grid, so it is reported whenever one is attached, occupied or not
+      // (README D43); the cell counts need an occupied cell to have a size at all.
+      if (bounds === null) return { representation: 'uniform', subdivision: grid.subdivision };
       return {
         representation: 'uniform',
+        subdivision: grid.subdivision,
         cells: [
           bounds.max[0] - bounds.min[0] + 1,
           bounds.max[1] - bounds.min[1] + 1,

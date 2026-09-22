@@ -1,7 +1,7 @@
 import type { ObjectId, Project, Representation, SceneObject } from '../document/project.js';
 import { detachUniformBox } from '../document/detach.js';
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
-import { boxCount, normalizeBox } from '../voxels/uniform/grid.js';
+import { KEY_MAX, KEY_MIN, boxCount, isSubdivision, normalizeBox } from '../voxels/uniform/grid.js';
 import { DEFAULT_CELL_BUDGET, type VoxelizeResult } from '../voxels/voxelize/voxelize.js';
 import type { Selection } from './session.js';
 import type { Matrix4, Vector3 } from 'three';
@@ -199,6 +199,60 @@ export function setObjectVisible(project: Project, objectId: ObjectId, visible: 
   if (object === undefined) return missingObject(objectId);
   object.visible = visible;
   return { ok: true, detail: `${objectId} is now ${visible ? 'visible' : 'hidden'}` };
+}
+
+/**
+ * Raises one object's subdivision to `subdivision`, a power of two at or above the level its grid already holds
+ * (README D43). The payload is replaced by block replication, so the object's placement and the world extent of its
+ * content are unchanged and it stays exactly as aligned as it was.
+ *
+ * Refused with data when the object has no grid (`'wrong-representation'`), when the level is below the one it
+ * holds — coarsening is not offered — when the finer cells would leave the packed key space, and when the block
+ * count would pass the budget. A level that is not a power of two is a programming error and throws.
+ */
+export function setObjectSubdivision(project: Project, objectId: ObjectId, subdivision: number): OpResult {
+  if (!isSubdivision(subdivision)) {
+    throw new RangeError(`subdivision must be a power of two, got ${subdivision}`);
+  }
+  const found = requireUniform(project, objectId);
+  if (!found.ok) return found.result;
+  const grid = found.grid;
+  if (subdivision === grid.subdivision) {
+    return { ok: true, detail: `${objectId} is already at subdivision ${subdivision}` };
+  }
+  if (subdivision < grid.subdivision) {
+    return {
+      ok: false,
+      error: 'unsupported-subdivision',
+      detail: `${objectId} is at subdivision ${grid.subdivision}; coarsening is not offered`,
+    };
+  }
+  const levels = Math.round(Math.log2(subdivision / grid.subdivision));
+  const factor = 2 ** levels;
+  const bounds = grid.bounds();
+  if (bounds !== null) {
+    // Every cell becomes a `factor` block, so the extremes move to `min * factor` and `(max + 1) * factor - 1`.
+    const lowest = Math.min(...bounds.min) * factor;
+    const highest = (Math.max(...bounds.max) + 1) * factor - 1;
+    if (lowest < KEY_MIN || highest > KEY_MAX) {
+      return {
+        ok: false,
+        error: 'exceeds-grid',
+        detail: `subdivision ${subdivision} would need cells outside [${KEY_MIN}, ${KEY_MAX}]; the model is too large to subdivide`,
+      };
+    }
+  }
+  const refined = grid.size * factor * factor * factor;
+  if (refined > DEFAULT_CELL_BUDGET) {
+    return {
+      ok: false,
+      error: 'budget-exceeded',
+      detail: `${refined} cells would exceed the budget of ${DEFAULT_CELL_BUDGET}`,
+    };
+  }
+  const payload = grid.subdividedBy(levels);
+  project.setPayload(objectId, { kind: 'uniform', grid: payload });
+  return { ok: true, detail: `subdivided ${objectId} to ${subdivision} (${payload.size} cells)` };
 }
 
 /**

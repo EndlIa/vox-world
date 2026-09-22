@@ -16,7 +16,6 @@
  */
 
 import type { ObjectId, Project, SceneObject } from '../document/project.js';
-import { CELL_SIZE } from '../voxels/uniform/grid.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
 
@@ -211,8 +210,9 @@ export class SceneMirror {
   /**
    * The local-space center of one object's own content: the mid-point of the occupied cells' bounding box
    * for a `uniform` object, and the origin for anything else — an `'empty'` placeholder, or a payload with
-   * no occupied cell, neither of which has content of its own to sit in the middle of. Cells are the world
-   * unit (README D41), so the center is the mid-point of the box's two outer faces.
+   * no occupied cell, neither of which has content of its own to sit in the middle of. A cell is
+   * `CELL_SIZE / subdivision` world units (README D41, D43), so the center is the mid-point of the box's two
+   * outer faces.
    *
    * Derived, never a document value: the document's transform keeps meaning "the world position of the
    * object's local (0, 0, 0)", which after a voxelization is the payload's min corner (README D25). This is
@@ -226,8 +226,9 @@ export class SceneMirror {
     if (grid === undefined) return center;
     const bounds = grid.bounds();
     if (bounds === null) return center;
-    // Cell `i` spans `[i, i + 1]`, so the box's center is half a cell past the average of its min and max.
-    const half = CELL_SIZE / 2;
+    // Cell `i` spans `[i, i + 1]` cells and one cell is `cellSize` world units, so the center is half a cell
+    // past the average of the box's min and max.
+    const half = grid.cellSize / 2;
     return center.set(
       (bounds.min[0] + bounds.max[0] + 1) * half,
       (bounds.min[1] + bounds.max[1] + 1) * half,
@@ -423,7 +424,10 @@ export class SceneMirror {
 
   /** One `InstancedMesh` over one cube per occupied cell, in `forEach` order. */
   private buildUniform(id: ObjectId, grid: UniformPayload): MirrorEntry {
-    const geometry = new THREE.BoxGeometry(CELL_SIZE, CELL_SIZE, CELL_SIZE);
+    // One cube the size of this object's own cell: the subdivision is the grid's, so the geometry is built per
+    // rebuild rather than shared across objects of different levels (README D43).
+    const cell = grid.cellSize;
+    const geometry = new THREE.BoxGeometry(cell, cell, cell);
     const mesh = new THREE.InstancedMesh(geometry, this.shadingMaterial, grid.size);
     mesh.name = id;
     mesh.userData['objectId'] = id;
@@ -435,8 +439,9 @@ export class SceneMirror {
     const color = new THREE.Color();
     let instance = 0;
     grid.forEach((x, y, z, cellColor) => {
-      // Cell `(x, y, z)` spans `[x, x + 1]` on each axis, so its center is half a cell past its min corner.
-      matrix.makeTranslation(x + CELL_SIZE / 2, y + CELL_SIZE / 2, z + CELL_SIZE / 2);
+      // Cell `(x, y, z)` starts `x` cells from the object's origin, so its center is half a cell past
+      // `x * cell` — the coordinate is in cells, the offset is in world units.
+      matrix.makeTranslation((x + 0.5) * cell, (y + 0.5) * cell, (z + 0.5) * cell);
       mesh.setMatrixAt(instance, matrix);
       color.setHex(cellColor);
       mesh.setColorAt(instance, color);

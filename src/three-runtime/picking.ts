@@ -23,19 +23,16 @@ export type PickHit =
       cell: [number, number, number];
       color: HexColor;
       point: THREE.Vector3;
+      /** The face that was hit, in the object's own frame, when the raycast reported one. */
+      normal: THREE.Vector3 | undefined;
     }
   | {
       /** An imported raw mesh: the hit names its object and nothing finer (README D24). */
       kind: 'object';
       objectId: ObjectId;
       point: THREE.Vector3;
+      normal: THREE.Vector3 | undefined;
     };
-
-export type SurfaceHit = {
-  objectId: ObjectId;
-  pointWorld: THREE.Vector3;
-  pointLocal: THREE.Vector3;
-};
 
 type Payload = { kind: 'cell'; cell: [number, number, number]; color: HexColor } | { kind: 'object' };
 
@@ -44,6 +41,7 @@ type Candidate = {
   objectId: ObjectId;
   distance: number;
   point: THREE.Vector3;
+  normal: THREE.Vector3 | undefined;
   payload: Payload;
 };
 
@@ -70,7 +68,12 @@ export class Picker {
     if (winner === undefined) return undefined;
 
     if (winner.payload.kind === 'object') {
-      return { kind: 'object', objectId: winner.objectId, point: winner.point.clone() };
+      return {
+        kind: 'object',
+        objectId: winner.objectId,
+        point: winner.point.clone(),
+        normal: winner.normal?.clone(),
+      };
     }
 
     return {
@@ -79,21 +82,7 @@ export class Picker {
       cell: winner.payload.cell,
       color: winner.payload.color,
       point: winner.point.clone(),
-    };
-  }
-
-  /** The best hit's surface point in world space and in the owning object's local space. */
-  pickSurface(ndc: THREE.Vector2, camera: THREE.PerspectiveCamera): SurfaceHit | undefined {
-    const winner = this.resolve(ndc, camera);
-    if (winner === undefined) return undefined;
-
-    const owner = this.mirror.objectOf(winner.objectId);
-    if (owner === undefined) return undefined;
-
-    return {
-      objectId: winner.objectId,
-      pointWorld: winner.point.clone(),
-      pointLocal: owner.worldToLocal(winner.point.clone()),
+      normal: winner.normal?.clone(),
     };
   }
 
@@ -133,7 +122,13 @@ export class Picker {
       // does not test, so an off-screen mesh would otherwise steal every click on the voxels it
       // produced: the visibility of the whole chain is part of being pickable.
       if (!isVisible(hit.object)) return undefined;
-      return { objectId: ownerId, distance: hit.distance, point: hit.point, payload: { kind: 'object' } };
+      return {
+        objectId: ownerId,
+        distance: hit.distance,
+        point: hit.point,
+        normal: faceNormalOf(hit),
+        payload: { kind: 'object' },
+      };
     }
 
     const lookup = this.mirror.lookupOf(ownerId);
@@ -141,7 +136,7 @@ export class Picker {
 
     const instanceBase: unknown = hit.object.userData['instanceBase'];
     const index = instanceId + (typeof instanceBase === 'number' ? instanceBase : 0);
-    const base = { objectId: ownerId, distance: hit.distance, point: hit.point };
+    const base = { objectId: ownerId, distance: hit.distance, point: hit.point, normal: faceNormalOf(hit) };
 
     const cell = lookup.cells[index];
     const color = lookup.colors[index];
@@ -155,6 +150,13 @@ export class Picker {
  * mirror hid — or one under an object the user hid — would otherwise keep claiming picks on the voxels
  * it produced.
  */
+/** The hit face's normal, copied, or `undefined` when the raycast reported no face for this hit. */
+function faceNormalOf(hit: THREE.Intersection): THREE.Vector3 | undefined {
+  const face: THREE.Face | null | undefined = hit.face;
+  if (face === null || face === undefined) return undefined;
+  return face.normal.clone();
+}
+
 function isVisible(object: THREE.Object3D): boolean {
   let node: THREE.Object3D | null = object;
   while (node !== null) {

@@ -8,8 +8,8 @@ Ring: 1 · Layer: tests (node, no GPU) · Depends on: `../src/document/project.j
 Pins the project's identity, hierarchy, and representation rules: id allocation and non-reuse,
 `reparent` refusal, `remove` child reparenting plus track cleanup, `setPayload` as the only
 representation transition, `worldMatrix` composition, the grid-alignment rule — the placement a new
-object inherits, the nearest-cell rounding, the placement a keyframe may store, and the local-frame
-world-matrix snap — and the deterministic mask-color walk.
+object inherits and the cell it is measured in, the nearest-own-cell rounding, the placement a keyframe
+may store, and the local-frame world-matrix snap — and the deterministic mask-color walk.
 
 ## Public interface
 `describe` / `it` names are this file's observable surface:
@@ -24,7 +24,9 @@ world-matrix snap — and the deterministic mask-color walk.
   root object`
 - `grid alignment` — `starts every object it creates aligned`, `rounds a placement to the nearest cell
   while the object aligns`, `gives a keyframe whole cells for an aligned object, and the placement itself
-  to every other target`, `snaps a world matrix in the object's own frame, without touching the argument`
+  to every other target`, `rounds to the object's own cell, so a subdivided object snaps in its own steps`,
+  `creates an object aligned only when the placement is whole in its own grid`, `snaps a world matrix in
+  the object's own frame, without touching the argument`
 - `nextMaskColor` — `walks the palette deterministically and repeats after a full cycle`, `gives two
   fresh projects the same sequence`
 
@@ -36,14 +38,15 @@ world-matrix snap — and the deterministic mask-color walk.
    scale on both parent and child, so a missing `compose` or a wrong multiply order fails.
 3. Id and palette checks compare collected sequences against a second fresh project, never guessed
    literals; object tracks are installed with `ensureTrack`/`addKeyframe` before `remove` drops them.
-4. The `setPayload` fixture is one `UniformGrid.create()` — no size argument, because a grid is unit
-   cells and stores no spacing (README D41) — holding a single occupied cell; the consistency test
-   sets a second, freshly created grid over the same object and checks that `size` reports the one
-   cell it holds.
+4. The `setPayload` fixture is one `UniformGrid.create()` — the unit lattice, since `create` takes only
+   a subdivision and stores no spacing of its own (README D41) — holding a single occupied cell; the
+   consistency test sets a second, freshly created grid over the same object and checks that `size`
+   reports the one cell it holds.
 5. The alignment cases use literal fractions, not a value a matrix round trip produced, and give the
    child a parent that is both moved and turned, so a snap taken in world coordinates instead of the
    object's own frame cannot pass. The one place a copy is asserted rather than a value is
    `not.toBe(fraction)` on the returned vector; pass-through elsewhere is checked as values.
+6. The subdivision cases create the grid they align against (`UniformGrid.create(4)` and `create(2)`) and read the cell from that payload, so a rounding that still assumed `CELL_SIZE` would land on the wrong fractions; the create-time case uses `0.5`, one whole cell of a `create(2)` grid, against `0.25`, which is half of one.
 
 ## Invariants
 - Ids match `obj-<n>`, are unique across the project's lifetime, and a removed id is never handed out again.
@@ -54,19 +57,23 @@ world-matrix snap — and the deterministic mask-color walk.
 - `setPayload` is the only representation transition — `'empty'` to `'uniform'` and back —
   setting `uniform` exactly when the representation says so and leaving `id`, `name`,
   `parentId`, `maskColor`, `transform`, and `visible` unchanged.
-- The payload is a `UniformGrid` of unit cells: `setPayload` stores the caller's own grid object, and
-  `size` is its occupied-cell count — one for the fixture's single cell — never a per-axis length.
+- The payload is a `UniformGrid` of the level it was created at: `setPayload` stores the caller's own grid
+  object, and `size` is its occupied-cell count — one for the fixture's single cell — never a per-axis length.
 - `worldMatrix(id)` equals `M_root · … · M_local` along the parent chain, and the object's own composed
   matrix when it has no parent.
 - `alignToGrid` follows the placement rather than a constant: `createObject` returns objects with it set,
   the `createVoxelObject` at `(1, 2, 3)` comes back with it set, and the one at `(0.5, 2, -3)` comes back
   with it clear, so a placement that already sits between cells is never claimed to be on the lattice.
-- `alignedPosition` gives the nearest cell per axis for an aligned object — pinned on literal fractions,
-  `(1.4, -2.5, 3.5)` becoming `(1, -2, 4)`, rather than on a matrix round trip — and a fresh copy of its
+  The cell is the payload grid's own (README D42, D43): against a `create(2)` grid, `0.5` is whole and comes back aligned
+  while `0.25` is not and comes back unaligned.
+- `alignedPosition` gives the nearest whole cell of the object's own grid per axis — pinned on literal
+  fractions, `(1.4, -2.5, 3.5)` becoming `(1, -2, 4)` for an aligned object with no payload grid and
+  `(1.5, -2.5, 3.5)` for one whose grid is `create(4)`, rather than on a matrix round trip — and a fresh copy of its
   argument for an unaligned object and for an unknown id, so the caller's vector is neither aliased nor
   mutated.
 - `keyframePosition` gives an `'object'` target the same whole cells a transform write would give it while
-  it aligns, the fraction itself once the flag is off, and hands the camera the fraction it was given: one
+  it aligns — for a `create(4)` object the fraction `0.3` becomes `0.25`, so a track holds the object's own
+  cells — the fraction itself once the flag is off, and hands the camera the fraction it was given: one
   rule for authoring and for transform writes, with the camera outside it.
 - `alignWorldMatrix` snaps in the object's own frame: with the parent both moved and turned, dividing the
   parent's world matrix back out of what it returns leaves whole cells, and the matrix that was passed in
@@ -92,7 +99,3 @@ world-matrix snap — and the deterministic mask-color walk.
 ## Tests
 This file *is* the test, run by `npm test` in the node environment. It is the only direct unit coverage
 for `src/document/project.ts`; `tests/detach.test.ts` reaches its hierarchy behavior only indirectly.
-
-## Open questions
-- `document/project.md` predates the brief's `setPayload` addition and lists no `tests/project.test.ts`;
-  that contract needs the matching patch, and it is owned by another contract.
