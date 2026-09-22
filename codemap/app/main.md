@@ -21,7 +21,9 @@ function main(): void;
 ## Internal logic
 1. **Entry and project.** `index.html` pins `<canvas id="viewport">`, `<div id="panels">`, `<div id="timeline">`, and `<div id="hud">` and loads
    `/src/app/main.ts` as a module. `main()` resolves those four elements once, builds everything below, schedules the render loop, and returns;
-   the long-lived objects live in one `AppContext`, everything else stays `main`-local. It creates `new Project()` and one demo voxel object
+   the long-lived objects live in one `AppContext`, everything else stays `main`-local. It creates `new Project()` and sets the clip it opens with —
+   `project.timeline.durationMs = DEFAULT_DURATION_MS` (10 000, the authoring unit, i.e. ten seconds once the clip is compiled) and
+   `project.timeline.fps = DEFAULT_FPS` — and one demo voxel object
    through `project.createVoxelObject(...)` — `buildDemoGrid()`, a `DEMO_CELLS`³ cube (4×4×4) of unit cells built by
    `UniformGrid.create()`, placed at `(-2, 0, -2)` — so the viewport is not empty before the first import. A cell coordinate is a world
    coordinate (README D41), so the demo content occupies the cells it names.
@@ -48,8 +50,13 @@ function main(): void;
    `new ModeBar(modebarRoot, { session })` — the viewport's two-button mode switch, a view of the session like the panels — and
    `new VoxelizeDialog(panelsRoot, () => defaults())` — the settings modal is mounted into the same element as the panels and, like them, receives only
    callbacks and no state — over the actions of
-   step 6 and over `gridSettings`, the `WorldGrid` view the `Grid` group reads; `pickImportFile` is implemented here as `void pickGlbFile().then(file => { if (file) void importFile(file); })`, so the file dialog stays in
-   `app/`. The app creates no status line and no message area: the panel overlay holds the rail and the windows only (D38). The dialog is
+   step 6, over `gridSettings`, the `WorldGrid` view the `Grid` group reads, and over `timelineVisible`, the app's own timeline-bar flag;
+   `pickImportFile` is implemented here as `void pickGlbFile().then(file => { if (file) void importFile(file); })`, so the file dialog stays in
+   `app/`. The flag is declared beside the other app flags and is `false`, so the bar opens collapsed; the context hands it over as
+   `timelineVisible: () => timelineVisible`, and the matching action, `setTimelineVisible`, is its only writer. Right after the panel is built,
+   `timelinePanel.setVisible(timelineVisible)` makes the flag and the markup agree from the first frame: `index.html` carries
+   `<div id="timeline" hidden>` rather than leaving the attribute to the module, because a bar laid out by the first paint and hidden only when the
+   bundle runs would flash (README D44). The app creates no status line and no message area: the panel overlay holds the rail and the windows only (D38). The dialog is
    created here because it belongs to `app/` in the same way the file dialog does: `ui` never imports `app/`, so the closure that seeds the dialog and
    the handling of its outcome live in this file.
 6. **Flow wiring**, the only place the modules meet:
@@ -159,7 +166,7 @@ function main(): void;
      from them would stretch the printed dimensions for content they do not cover (README D27). A scene of
      nothing but outlines has no outline-free bounds, so it falls back to `scene.bounds`, which is what framing uses either way
      because every node is displayed.
-   - Animate: `onEdited` → `playback.rebuild(project)`; `onScrub(t)` → `playback.pause()` then `playback.setTime(t)`.
+   - Animate: `onEdited` → `playback.rebuild(project)`; `onScrub(timeMs)` → `playback.pause()` then `playback.setTime(timeMs / 1000)`, the one place the widget's milliseconds become the clip's seconds — the scrub bar, the exact-time field, and a keyframe row's `key` all seek through it (README D45).
    - Camera lock — `setCameraLock(enabled)`, the one entry point the panel has for it: it sets `cameraLocked`, hands navigation over with
      and `controls.setOrbitTarget(enabled ? mirror.camera : viewportCamera)`.
      The flag is set before retargeting, so the retarget's own `change` event cannot author anything on the way out of the lock.
@@ -177,6 +184,13 @@ function main(): void;
      `saveMp4(blob, 'vox-world.mp4')`; failure → `reportFailure(result)`.
      only the capture that must render at them.
    - Drop: `wireDropTarget(viewport, file => { void importFile(file); })`.
+   - Timeline bar — `setTimelineVisible(visible)`, the rail's `Animation` toggle, is a view-only write: it sets `timelineVisible` and calls
+     `timelinePanel.setVisible(visible)`, so the app's flag stays the only state and the panel is told what to show rather than asked; the bar keeps
+     its contents while hidden, because the render loop goes on writing the playhead into it. Beside the window-resize wiring — the `resize`
+     listener whose body is `handleResize() → resizeViewport(renderer, viewport, viewportCamera)` — `barObserver` is a `ResizeObserver` on
+     `timelineRoot` that calls the same `handleResize`: anything that moves the boundary between the canvas and the bar — the bar's visibility, a
+     keyframe row, its message line — changes how much of the column the canvas has, and three's `setSize(w, h, false)` never touches the canvas'
+     style, so without that refit the drawing buffer and the box would disagree and the view would be stretched (README D44).
 7. **Render loop**, one `requestAnimationFrame` callback: `dt = Math.min((now - last) / 1000, 0.1)`; `playback.advance(dt)` for preview (a paused
    action does not advance, so the transport flag never has to be mirrored here); `mirror.sync()` for dirty objects, then
    `syncGizmo()` whenever `gizmoNodeNow()` is no longer the node the gizmo is attached to — a rebuild replaced that node,
@@ -185,7 +199,7 @@ function main(): void;
    `renderer.render(mirror.scene, renderCamera)` — drawing through the output camera is what makes the lock visible. While the lock is on the
    loop also holds that camera's aspect equal to the canvas': an export sets the aspect for its own frames, and a resize would otherwise leave
    the locked view stretched. The output camera stays on layer 0, so the locked view shows exactly what an export shows — no overlay, no gizmo,
-   no viewport decoration. Finally `timelinePanel.setTime(playback.time)` and a fresh `HudState` into the HUD.
+   no viewport decoration. Finally `timelinePanel.setTime(playback.time * 1000)` — the clip's seconds into the widget's milliseconds, the mirror image of `onScrub`'s division (README D45) — and a fresh `HudState` into the HUD.
 8. The loop never reads or writes voxel data: no `UniformGrid` method is called and nothing is rasterized. An object is dirty only
    because an edit or an import changed its data, so `sync()` cannot overwrite a transform the mixer wrote for playback.
 9. `HudState` is assembled here from `project.get(session.activeObjectId)`, `session.resolutionOf(id)` (the `EditResolution`, which
@@ -195,7 +209,8 @@ function main(): void;
     dependencies (`Panels` never creates a `Project`, `PointerTool` receives its `Picker` and `Overlay`). The imported raw meshes are the same kind of
     app-owned object: they live in a `main`-local array, and teardown detaches them from the scene graph the mirror just released without disposing the
     geometry or materials they share with the imported scene. Disposal cancels the frame and the in-flight job, detaches the drop target, calls
-    `voxelizeDialog.dispose()` — which settles a prompt still on screen as a cancel, so no `promptVoxelize` call is left waiting — and disposes
+    `voxelizeDialog.dispose()` — which settles a prompt still on screen as a cancel, so no `promptVoxelize` call is left waiting — disconnects the
+    bar's resize observer, and disposes
     everything in `AppContext` plus the renderer, controls, capture, overlay, and the world grid; the orbit-change registration lives in the controls, so disposing them
     unregisters it.
 
@@ -250,6 +265,15 @@ function main(): void;
 - The `Grid` group's settings live on the viewport's grid and never in the document: `panelContext.gridSettings` reads `WorldGrid`'s `baseVisible`,
   `objectVisible`, and `margin`, and the three grid actions write that one instance, so the panel and the grid it displays cannot disagree; `objectGridKey`
   is only what keeps a commit's re-aim cheap, and no grid flag ever reaches `project`, a timeline track, or an export.
+- The timeline bar's visibility is the app's `timelineVisible` flag alone, and the bar is never shown or hidden without the canvas following:
+  `index.html` carries the `hidden` attribute so the first paint is already collapsed, `setVisible` is the panel's only view of the flag and the
+  rail's `Animation` button its only writer through `setTimelineVisible`, and the observer on `timelineRoot` refits the drawing buffer to the
+  canvas' box whenever the boundary between the two moves (README D44). The bar's own contents are untouched by hiding it: the loop keeps writing
+  the playhead through `setTime`.
+- The authoring clock is whole milliseconds and the clip is seconds, and this file owns both conversions between them: `onScrub` divides the
+  widget's milliseconds by 1000 on the way to `playback.setTime`, and the render loop multiplies `playback.time` by 1000 on the way into
+  `setTime`. Every other time the app touches is already on its own side of that boundary — the export range and the HUD's frame count are the
+  clip's seconds, and `project.timeline.durationMs` and every keyframe are the document's milliseconds (README D45).
 - The gizmo is attached exactly while the select tool is active and an object is active, and it pivots at that object's
   content center (README D37). A gesture moves the object through `previewTransform`, which writes no document, and
   produces exactly one document write on release, from the matrix the gizmo reports and not from the node it was attached

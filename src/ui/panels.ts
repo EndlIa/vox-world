@@ -9,6 +9,9 @@
  * open. Several windows can be open at once. The app's status line and the progress row stay in the column
  * below the rail, always visible.
  *
+ * One rail entry opens no window: `Animation`, which shows and hides the timeline bar along the bottom of the
+ * page. That bar belongs to the app and so does the flag, seeded here like the other view flags (README D44).
+ *
  * The voxelization settings are not here, and neither is any way to reach them: they live in one modal
  * dialog, `ui/voxelizeDialog.ts`, which the app opens when an import arrives (README D26). The panel
  * holds no voxelize-related control at all, so the dialog that follows an import is the only way to
@@ -35,6 +38,12 @@ export type PanelContext = {
    * view of them and `refresh()` seeds them; when absent they are forward-only (README D43).
    */
   gridSettings?: () => { base: boolean; object: boolean; margin: number };
+  /**
+   * Whether the timeline bar is on screen, if the app exposes the flag. When present the rail's `Animation` button
+   * is a toggle over it and `refresh()` seeds its state; when absent that button is disabled. The button opens no
+   * window either way (README D44).
+   */
+  timelineVisible?: () => boolean;
   actions: {
     pickImportFile(): void;
     exportMp4(options: {
@@ -56,6 +65,7 @@ export type PanelContext = {
     setBaseGridVisible(visible: boolean): void;
     setObjectGridVisible(visible: boolean): void;
     setGridMargin(cells: number): void;
+    setTimelineVisible(visible: boolean): void;
     renameActive(name: string): void;
     reparentActive(parentId: ObjectId | null): void;
     setCameraLock(enabled: boolean): void;
@@ -149,6 +159,8 @@ export class Panels {
   private readonly gridMarginInput: HTMLInputElement;
   /** The rail's `Edit` button: it also selects the edit mode, so `refresh()` gates it on the active object. */
   private readonly editGroupButton: HTMLButtonElement;
+  /** The rail's `Animation` button: it opens no window, it toggles the timeline bar (README D44). */
+  private readonly animationButton: HTMLButtonElement;
   private readonly sourceVisibleInput: HTMLInputElement;
   private readonly cameraLockInput: HTMLInputElement;
   private readonly cameraFovInput: HTMLInputElement;
@@ -362,10 +374,11 @@ export class Panels {
     this.objectList = el('div');
     // The rail: one button per group, in the order the groups are built, and nothing else — no heading and
     // no control lives here. A button toggles its own window and carries `on` exactly while that window is
-    // open, so the rail is the only place the column says which groups are on screen. `Edit` is the one
-    // exception, and only in what it does besides opening its window: it also selects the edit mode, whose
+    // open, so the rail is the only place the column says which groups are on screen. Two buttons are
+    // exceptions, each in what it does besides opening a window: `Edit` also selects the edit mode, whose
     // tools it shows (README D39), so `refresh()` disables it while no object is active — that mode edits the
-    // active object's voxels, and there is nothing to edit until one is chosen.
+    // active object's voxels, and there is nothing to edit until one is chosen; and `Animation` opens no
+    // window at all, it shows and hides the timeline bar instead, under the same `on` rule (README D44).
     const rail = el('div', { class: 'rail' });
     let index = 0;
     const group = (title: string, content: (Node | string)[], onPress?: () => void): HTMLButtonElement => {
@@ -439,7 +452,23 @@ export class Panels {
       this.field('Margin (cells)', this.gridMarginInput),
     ]);
 
-    // The rail is the overlay's whole content: six buttons and nothing else.
+    // The one rail entry that opens nothing: the timeline is a bar along the bottom of the page rather than a
+    // floating window, so this button is a plain toggle over the app's flag. It takes no `index`, which is why
+    // adding it left the six group windows at the staggered positions they had.
+    this.animationButton = el('button', {
+      text: 'Animation',
+      title: 'show or hide the timeline bar',
+      on: {
+        click: () => {
+          const visible = this.context.timelineVisible?.() !== true;
+          this.context.actions.setTimelineVisible(visible);
+          this.animationButton.classList.toggle('on', visible);
+        },
+      },
+    });
+    rail.append(this.animationButton);
+
+    // The rail is the overlay's whole content: six buttons that open windows, plus the timeline toggle.
     root.append(rail);
     this.refresh();
   }
@@ -449,7 +478,8 @@ export class Panels {
 
     if (!this.touched.exportFps) this.exportFpsInput.value = String(project.timeline.fps);
     if (!this.touched.exportFrom) this.exportFromInput.value = '0';
-    if (!this.touched.exportTo) this.exportToInput.value = String(project.timeline.duration);
+    // The export range is seconds while the clip is authored in milliseconds (README D45).
+    if (!this.touched.exportTo) this.exportToInput.value = String(project.timeline.durationMs / 1000);
     if (!this.touched.cameraFov) this.cameraFovInput.value = String(project.camera.fov);
 
     // The raw-mesh checkbox is a view of the app's flag only while the context exposes one; a context
@@ -465,6 +495,10 @@ export class Panels {
       this.objectGridInput.checked = settings.object;
       if (!this.touched.gridMargin) this.gridMarginInput.value = String(settings.margin);
     }
+
+    const timelineVisible = this.context.timelineVisible;
+    this.animationButton.disabled = timelineVisible === undefined;
+    if (timelineVisible !== undefined) this.animationButton.classList.toggle('on', timelineVisible());
 
     const active = session.activeObjectId === null ? undefined : project.get(session.activeObjectId);
 

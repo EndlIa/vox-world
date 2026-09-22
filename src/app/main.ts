@@ -78,7 +78,8 @@ const VIEWPORT_FAR = 5000;
 const DEFAULT_EXPORT_WIDTH = 1280;
 const DEFAULT_EXPORT_HEIGHT = 720;
 const EXPORT_FILENAME = 'vox-world.mp4';
-const DEFAULT_DURATION_SECONDS = 10;
+/** Clip length before the author edits it, in the authoring unit: whole milliseconds (README D45). */
+const DEFAULT_DURATION_MS = 10_000;
 const DEFAULT_FPS = 30;
 /** The dialog's extent seed before any import. */
 /**
@@ -147,7 +148,7 @@ export function main(): void {
   const hudRoot = elementById('hud');
 
   const project = new Project();
-  project.timeline.duration = DEFAULT_DURATION_SECONDS;
+  project.timeline.durationMs = DEFAULT_DURATION_MS;
   project.timeline.fps = DEFAULT_FPS;
   project.createVoxelObject({
     name: 'Demo cube',
@@ -200,6 +201,8 @@ export function main(): void {
   let gizmoNode: Object3D | undefined;
   /** What the second grid layer was last pointed at, so a repeat call rebuilds nothing (see `refreshObjectGrid`). */
   let objectGridKey = '';
+  /** Whether the timeline bar is on screen. It starts collapsed; the rail's `Animation` button is how it is shown. */
+  let timelineVisible = false;
   let lastImport: ImportedAssets | undefined;
   let jobController: AbortController | undefined;
   /** The raw meshes on layer 2, one per imported node: app-owned, kept for teardown (README D24). */
@@ -221,6 +224,7 @@ export function main(): void {
       object: worldGrid.objectVisible,
       margin: worldGrid.margin,
     }),
+    timelineVisible: () => timelineVisible,
     actions: {
       pickImportFile: openImportDialog,
       exportMp4: runExport,
@@ -235,6 +239,7 @@ export function main(): void {
       setBaseGridVisible,
       setObjectGridVisible,
       setGridMargin,
+      setTimelineVisible,
       renameActive: applyRenameActive,
       reparentActive: applyReparent,
       setCameraLock,
@@ -245,9 +250,10 @@ export function main(): void {
     project,
     playback,
     session,
-    onScrub: (time) => {
+    // The widget seeks in milliseconds, the authoring unit; the mixer's clip is seconds (README D45).
+    onScrub: (timeMs) => {
       playback.pause();
-      playback.setTime(time);
+      playback.setTime(timeMs / 1000);
     },
     onEdited: () => {
       playback.rebuild(project);
@@ -256,6 +262,9 @@ export function main(): void {
 
   const panels = new Panels(panelsRoot, panelContext);
   const timelinePanel = new TimelinePanel(timelineRoot, timelineContext);
+  // The markup carries `hidden` so the bar cannot flash while the bundle loads; this is what makes the app's flag
+  // and that attribute agree from the first frame (README D44).
+  timelinePanel.setVisible(timelineVisible);
   const hud = new Hud(hudRoot);
   // The mode switch is a view of the session like the panels are, so it takes no state of its own.
   const modeBar = new ModeBar(modebarRoot, { session });
@@ -494,6 +503,18 @@ export function main(): void {
     project.camera.fov = value;
     mirror.camera.fov = value;
     mirror.camera.updateProjectionMatrix();
+  }
+
+  /**
+   * The rail's `Animation` toggle. The flag is the app's, so the panel is told what to show rather than asked, and
+   * the bar keeps whatever it holds while it is hidden: the render loop goes on writing the playhead into it.
+   *
+   * Hiding or showing the bar changes the size of the canvas it sits above; the observer on the bar is what refits
+   * the drawing buffer for that, so this writes the flag and the view and nothing else (README D44).
+   */
+  function setTimelineVisible(visible: boolean): void {
+    timelineVisible = visible;
+    timelinePanel.setVisible(visible);
   }
 
   function applyCreateGroup(): void {
@@ -811,6 +832,12 @@ export function main(): void {
     resizeViewport(renderer, viewport, viewportCamera);
   }
   window.addEventListener('resize', handleResize);
+  // Anything that moves the boundary between the canvas and the timeline bar changes how much of the column the
+  // canvas has — the bar's visibility, a keyframe row, its message line — and three's `setSize` never touches the
+  // canvas' style, so the drawing buffer has to be refitted whenever that happens or the buffer and the box
+  // disagree and the view is stretched. Observing the bar is what makes that automatic (README D44).
+  const barObserver = new ResizeObserver(() => handleResize());
+  barObserver.observe(timelineRoot);
 
   let frameHandle = 0;
   let lastTime = performance.now();
@@ -842,7 +869,7 @@ export function main(): void {
       }
     }
     renderer.render(mirror.scene, renderCamera);
-    timelinePanel.setTime(playback.time);
+    timelinePanel.setTime(playback.time * 1000);
     hud.update(hudState());
   }
 
@@ -858,6 +885,7 @@ export function main(): void {
     // going away with the page.
     voxelizeDialog.dispose();
     window.removeEventListener('resize', handleResize);
+    barObserver.disconnect();
     window.removeEventListener('pagehide', dispose);
     unsubscribeSession();
     app.pointer.dispose();

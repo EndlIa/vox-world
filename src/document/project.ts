@@ -88,7 +88,7 @@ export class Project {
     transform: identityTransform(),
   };
   readonly settings: ProjectSettings = { background: DEFAULT_BACKGROUND, ambientIntensity: 1 };
-  readonly timeline: Timeline = { duration: 0, fps: DEFAULT_FPS, tracks: [] };
+  readonly timeline: Timeline = { durationMs: 0, fps: DEFAULT_FPS, tracks: [] };
 
   private nextId = 0;
   private maskCursor = 0;

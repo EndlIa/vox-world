@@ -21,7 +21,11 @@
         font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow: hidden; }
       #app { position: relative; display: grid; grid-template-columns: 1fr; grid-template-rows: 1fr auto;
         grid-template-areas: "viewport" "timeline"; height: 100vh; }
-      #viewport { grid-area: viewport; width: 100%; height: 100%; display: block; background: var(--scene); }
+      /* A canvas carries an intrinsic size taken from its drawing-buffer attributes, and a grid item's automatic
+         minimum would floor this row with it: the timeline row below would then be pushed past the bottom of the
+         100vh column and clipped away, which is what made the bar impossible to see. `min-height: 0` lets the row
+         shrink to what is left, and the app resizes the drawing buffer to the new box (README D44). */
+      #viewport { grid-area: viewport; width: 100%; height: 100%; min-height: 0; display: block; background: var(--scene); }
       /* The viewport's mode switch: the canvas' own grid area, pinned to its bottom centre and sized to its
          buttons, so it never covers drawing space it does not need. Above the HUD, below the rail and the
          windows, which is the same order the rest of the chrome stacks in. */
@@ -99,7 +103,9 @@
       <div id="panels"></div>
       <canvas id="viewport"></canvas>
       <div id="modebar"></div>
-      <div id="timeline"></div>
+      <!-- The timeline bar starts collapsed and the rail's `Animation` button is what shows it (README D44). The
+           attribute lives here rather than being set by the module so the bar cannot flash while the bundle loads. -->
+      <div id="timeline" hidden></div>
     </div>
     <div id="hud"></div>
     <script type="module" src="/src/app/main.ts"></script>

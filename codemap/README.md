@@ -804,6 +804,59 @@ so they are not mistaken for oversights: coarsening, re-voxelizing from the reta
 coarser neighbour's cell.
 
 
+### D44. The timeline bar starts collapsed, and the rail's `Animation` button is the only way to show it
+
+**Decided.** The timeline is the grid's `auto` row below the canvas rather than a floating window, and it is closed until it is asked for:
+`index.html` carries `<div id="timeline" hidden>` so the bar is collapsed from the first paint, `app/main.ts` holds the one flag
+(`timelineVisible`, `false`), and the rail's `Animation` button — the rail's one entry that opens no window, and `on` while the bar is on
+screen — is the only control that flips it.
+
+- **One flag, one view.** The app owns `timelineVisible`, exposes it as `PanelContext.timelineVisible()`, and writes it only through the
+  `setTimelineVisible` action, which sets the flag and calls `TimelinePanel.setVisible(visible)`. The panel writes its host's `hidden` attribute
+  and nothing else: it never reads the flag, keeps none of its own, and `refresh()` does not touch visibility — the same split `setTime` has with
+  the playhead. The button opens no window and is built without an `index`, which is why adding it to the rail left the six group windows at the
+  staggered positions they had; `refresh()` seeds its `on` class from the provider and disables it when the context exposes none.
+- **The attribute lives in the markup.** Setting `hidden` from the module would leave the bar laid out and visible for the frames the bundle needs
+  to load; with the attribute in `index.html`, `timelinePanel.setVisible(timelineVisible)` at boot only makes the app's flag agree with what the
+  page already shows.
+- **The canvas' box, and the buffer that has to follow it.** A `<canvas>` carries an intrinsic size taken from its drawing-buffer attributes, and
+  a grid item's automatic minimum floors its row with it, so the `auto` timeline row was pushed past the bottom of the `100vh` column and clipped
+  by `body { overflow: hidden }` — the bar existed in the DOM and never appeared on screen, which is the bug the report was about. `#viewport`
+  gained `min-height: 0` so that row shrinks to what is left, and because `renderer.setSize(w, h, false)` never touches the canvas' style, a
+  `ResizeObserver` on the bar calls the same `handleResize` the window's `resize` event does. Showing or hiding the bar, a keyframe row, and the
+  bar's message line all move that boundary, so the refit is automatic rather than wired per action; `dispose()` disconnects the observer.
+
+Accepted costs: the transport controls are not on screen until the bar is summoned, so an empty editor shows no timeline at all; the rail gains a
+seventh button that behaves unlike the other six — it opens no window, and it carries `on` for as long as the bar is shown rather than for a
+window's lifetime; and the toggle is reachable from the rail alone, since nothing else in the app writes the flag.
+
+Rejected: setting `hidden` from the module (the bar would flash while the bundle loads); a floating window for the timeline like the rail's groups
+(it is a full-width bar of rows with a scrub bar, not a movable panel of controls, which is what D31's windows are); and refitting the canvas per
+action instead of observing the bar (every path that changes the bar's height would have to remember to call the resize).
+
+Affected contracts: `ui/timeline.md` (the host and `setVisible`), `ui/panels.md` (the `Animation` button, its seeding, and `#viewport`'s
+minimum), `app/main.md` (the flag, the provider and the action, the boot call, and the observer), `toolchain.md` (`index.html`'s collapsed
+timeline and `#viewport { min-height: 0 }`), and this file's §9.
+
+
+### D45. The authoring clock is whole milliseconds, and a keyframe is addressed by its id
+
+**Decided.** `document/timeline.ts` counts in whole milliseconds — `Keyframe.timeMs` and `Timeline.durationMs` — and clamps every authored time onto the clip, so a keyframe outside the duration is unrepresentable; a keyframe carries a session-unique `id` and that is what the widget's rows address it by; a move onto a millisecond another keyframe already holds is refused rather than dropping the keyframe that sat there; removing the last keyframe leaves its track in place; and the transport is one Play/Pause toggle.
+
+- **Milliseconds, and one hard clamp.** A private `clampTime(timeMs, durationMs)` rounds to a whole millisecond, clamps into `[0, durationMs]`, and throws `RangeError` on a non-finite time, and `addKeyframe`, `moveKeyframe`, and `setDuration` all funnel through it: the author's time is rounded rather than rejected, and a keyframe past the end cannot exist. `setDuration(timeline, durationMs)` writes the length and drags the clip onto it — every keyframe time is clamped, and a collapse that lands two keyframes on one millisecond keeps the later, larger authored time — so a shortened clip never keeps a keyframe outside it and never keeps the older of two keyframes folded onto its new end. `maxKeyframeTime(timeline)` reports the latest time anywhere in the timeline, which the widget reads as the duration field's `min`: the floor that keeps the field from offering a length that would cut the clip short.
+- **The clip is still seconds, and an authored time crosses over in one place.** `animation/compile.ts` is the single boundary between the two units for keyframe and clip times: `times[index] = keyframe.timeMs / 1000`, `new AnimationClip(name, project.timeline.durationMs / 1000, tracks)`, and a comment saying so. Playback, sampling, the export job, and the HUD's frame count therefore keep working in seconds untouched, and the new unit reaches only the document, the widget, and the conversions at the edges of those two — the app's `onScrub`/`setTime` pair for the playhead and `ui/panels.ts`'s `To (s)` seed for the export range.
+- **Ids, not indices.** A module counter mints `keyframe-<n>`, unique for the session. `addKeyframe` mints one for a new keyframe and keeps the existing id when it replaces a value at an occupied millisecond; `moveKeyframe` and `removeKeyframe` take an id. A rebuild that reorders, retimes, or empties the list can therefore not make a press land on a neighbour, which index-addressed rows could: a stale index addressed whatever had moved into that slot.
+- **A refused move, not a dropped keyframe.** A move onto a millisecond another keyframe holds returns `false` and changes nothing; it no longer deletes the keyframe that was there. Moving a keyframe onto the time it already has is a `true` that changes nothing. The widget reads `false` as "the value was not taken": it refreshes, and the refused row's field shows the clip's time again.
+- **An emptied track stays.** `removeKeyframe` splices the keyframe and nothing else, so the track keeps its `(target, channel)` slot and its interpolation, and a keyframe added later joins that same track. `compile.ts` skips a track with no keyframes, so an empty track contributes nothing to the clip, and the invariant that such a track existed only between `ensureTrack` and its first insertion is gone.
+- **One Play/Pause toggle.** The widget's transport is a single button whose click pauses when `playback.playing` and plays otherwise, and whose label is re-derived inside `setTime` from `playback.playing` — the render loop calls `setTime` every frame, so the label follows playback started anywhere, not only by that button. `stop` is gone: returning to the start is what the scrub bar and the new exact-time field are for. The scrub bar is `step = 1` with `max = durationMs`, and each keyframe is one row of `key` (seek), `time (ms)` (retime in place), `delete` (remove by id), and a dim value label, which replaces the panel-level `move`/`delete` buttons and the row selection they acted on.
+
+Accepted costs: the clip's seconds and the document's milliseconds meet in `compile.ts` and in the app rather than in one unit, so a reader has to know which side of `onScrub` or `buildClip` they are on; a time the author types is silently rounded to the millisecond and clamped instead of being reported; a refused move is a no-op the row's rebuild has to communicate; a keyframe carries an id nothing else uses, which serialization must keep (D9); and an empty track is a state `findTrack`, the widget's interpolation select, and every track walker must tolerate.
+
+Rejected: authoring in seconds with an fps grid (a keyframe time would be a float whose value depends on the frame rate, two times could land on one frame without being equal, and no row could address one millisecond — the unit the export's frame times are rounded from anyway); addressing rows by index (retiming or deleting shifts every later index, so a stale row acts on the wrong keyframe, which is the bug the ids exist to prevent); dropping the keyframe that sat at a move's destination (the moved keyframe is not visibly the one the author wants kept, and keeping the older one silently is what a refusal makes visible); dropping an emptied track (it loses the channel's interpolation and grows a fresh track on the next add, changing the compiled clip behind the author's back); and three transport buttons — `play`, `pause`, and `stop` (D44's row) — since play and pause can each only be pressed in one state, which the toggle's own label already says, and `stop` duplicated scrubbing to zero.
+
+Affected contracts: `document/timeline.md` (the fields and units, the clamp, the id, every mutator, `maxKeyframeTime`, `setDuration`, the invariants), `animation/compile.md` (the one conversion and `clip.duration`), `ui/timeline.md` (the control set, the row, `setTime`), `app/main.md` (`DEFAULT_DURATION_MS`, `onScrub`, the loop), `ui/panels.md` (`To (s)`), `document/project.md` (the initial `durationMs: 0`), `tests/timeline.md` (frame times in milliseconds), and this file's §9. The seconds-side contracts — `animation/playback.md`, `export/job.md`, `export/encode.md` — are deliberately unchanged: the clip is still seconds, which is what those files, the HUD, and the export state in.
+
+
 ## 9. Demo slice
 
 The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
@@ -821,8 +874,9 @@ deferred is deferred deliberately, not forgotten.
   detach it as a new object; a click is a 1×1×1 box.
 - Subdivision: raise one object's own grid to a finer level (D43) from the Scene group, and have every
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
-- Timeline: duration and frame rate, keyframes on object transforms and on the output camera,
-  step/linear/smooth interpolation, play, pause, stop, loop, scrub.
+- Timeline: a whole-millisecond duration and frame rate, keyframes on object transforms and on the output camera
+  addressed by session id, step/linear/smooth interpolation, one Play/Pause toggle, loop, and scrub (D45). The bar
+  starts collapsed and is summoned from the rail's `Animation` button (D44).
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range,
   with cancel; a failure reaches the console (D38).
 

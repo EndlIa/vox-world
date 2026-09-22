@@ -98,10 +98,12 @@ export function buildClip(project: Project, only?: readonly ObjectId[]): Animati
     for (const keyframe of track.keyframes) {
       if (keyframe.value.length !== valueSize) {
         throw new RangeError(
-          `keyframe at ${keyframe.time} of ${name} holds ${keyframe.value.length} numbers, expected ${valueSize}`,
+          `keyframe at ${keyframe.timeMs} ms of ${name} holds ${keyframe.value.length} numbers, expected ${valueSize}`,
         );
       }
-      times[index] = keyframe.time;
+      // The clip is seconds and the authoring timeline is milliseconds: this is the one place the two units meet,
+      // so playback, scrubbing, and the export keep working in seconds (README D45).
+      times[index] = keyframe.timeMs / 1000;
       const offset = index * valueSize;
       for (let component = 0; component < valueSize; component += 1) {
         // The length check above established that every component exists.
@@ -114,5 +116,5 @@ export function buildClip(project: Project, only?: readonly ObjectId[]): Animati
     tracks.push(keyframeTrack);
   }
   // The duration is the timeline's, never the last keyframe's: a short track must not shorten an export.
-  return new AnimationClip(CLIP_NAME, project.timeline.duration, tracks);
+  return new AnimationClip(CLIP_NAME, project.timeline.durationMs / 1000, tracks);
 }
