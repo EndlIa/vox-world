@@ -1,67 +1,71 @@
 # tests/grid.test.ts
 
-Ring: 2 · Layer: tests (node, no GPU) · Depends on: `../src/three-runtime/grid.js`,
-`../src/voxels/uniform/grid.js`, `three`, `vitest`
+Ring: 3 · Layer: tests (node, no GPU) · Depends on: `../src/three-runtime/grid.js`, `three`, `vitest`
 
 ## Responsibility
-Pins the viewport grids' drawn geometry: the base plane's line spacing at the world unit and its brighter
-companion every tenth (README D35), the active object's lattice at its own cell size on the plane of its
-lowest occupied cell (README D43), the hole that lattice cuts into the base, and the three settings behind the
-Grid group. It reads only `LineSegments` geometry, `renderOrder`, `visible`, and `lines.matrix`; material
-colours and opacities, layer assignment, picking, framing, export, and the panel and app wiring are not tested
-here.
+Pins the three displays of the viewport grid: which planes each one shows and that they are exclusive, the default
+display, the two fixed displays' planes staying on their own planes and their own offsets whatever the camera does,
+and the moved plane's aim, offset, facing, and refusal (README D49). It reads only the default constant, the root's
+children by name, their `visible` flags, and their `position` and `quaternion` after an `update`. The planes' drawing
+is `gridPlane.ts`'s and is tested there; the panel's three fields, the app's three actions, the frame loop, and the
+colours as they render are not tested here.
 
 ## Public interface
 `describe` / `it` names are this file's observable surface:
-- `world grid` — `draws a base plane at the world unit with a brighter line every tenth`,
-  `draws the active object's lattice at its own cell size, on the plane of its lowest cell`,
-  `cuts the base plane away where the lattice is drawn, and leaves it alone everywhere else`,
-  `follows the two switches and the margin`
+- `world grid` — `shows one display at a time, and opens on the ground`,
+  `shows the work cube as its ground and the two walls that close it`,
+  `aims the moved plane at an axis and keeps it where it was put`
 
 ## Internal logic
-1. `block(subdivision)` is the only fixture grid: every cell of a 4 x 4 x 4 block from the origin set to
-   `0x3366ff`, so the bounds are `0..3` on all three axes whatever subdivision is asked for — the lattice
-   expectation is the block's own cells, not a literal extent.
-2. `layer(grid, name)` finds a group by name under `grid.root` and requires a `Group`; `baseLineSets` filters
-   the base layer's `LineSegments` and sorts them by `renderOrder` to name `faint` (0) and `bright` (1), while
-   `latticeLines` takes the lattice layer's single set. The two layers are therefore addressed by the names the
-   app uses, not through the class's private fields.
-3. `vertices(lines)` returns the `position` attribute as a plain array; `coordinates(lines, axis)` collects the
-   distinct values on one axis, one per line, so a spacing is read off the geometry without restating a
-   constant.
-4. Each case constructs its own `WorldGrid`, asserts, and calls `dispose()`, so no case runs against another's
-   state.
+1. `cameraAt(x, y, z)` builds a fresh `PerspectiveCamera` at that position, which is all a plane reads from a camera.
+2. `visiblePlanes(grid)` is what a frame would draw: it filters `grid.root.children` by `visible` and returns their
+   names, **sorted**, so the assertion is about the set and not about the constructor's insertion order. The mutual
+   exclusivity claim is therefore made against visibility, the thing that decides the picture, rather than against the
+   private map.
+3. `planeAt(grid, name)` finds a plane through `root.getObjectByName` and requires a `Mesh`, throwing its own
+   `TypeError` when the name is absent — a renamed or missing plane fails in the fixture rather than passing
+   vacuously.
+4. Each case constructs its own `WorldGrid` and calls `dispose()` at the end, so no case runs against another's state,
+   and each reads the planes by the names the app and the panel use rather than through the class's private fields.
 
 ## Invariants
-- The base at `step` 1 draws 201 lines per direction (one per world unit across the 200-unit plane) and the
-  every-tenth set draws 21, both at `y = 0` — an extent or a spacing change fails the coordinate list, not just
-  a count.
-- The lattice at subdivision 2 with the default margin has lines at `-4 .. 6` in half units: `(index - 8) * 0.5`
-  over 21 values, on the plane of the lowest occupied cell (`y = 0`), and its placement sits in `lines.matrix`
-  (`makeTranslation(5, 0, 0)`) rather than in the vertices — a moved object moves its grid.
-- `DEFAULT_GRID_MARGIN` is 8, and `setMargin(0)` re-cuts the same lattice to `[0, 1, 2, 3, 4]`: the object's own
-  cells alone, at its own cell size.
-- With a lattice shown, no base vertex is strictly inside its footprint (`-4 .. 6` on both axes): every vertex
-  sits outside it on x, or outside it on z, or on the cut edge. The plane is still whole — the step-1 set keeps
-  all 201 line coordinates, `-100` and `100` included — so the cut takes material out of lines, not lines away.
-- Clearing with `showObjectLattice(undefined, undefined)` hides the lattice layer and restores the plane to
-  `201 * 2 * 2 * 3` floats (201 lines, two segments each, two vertices, three floats).
-- `setObjectVisible(false)` hides the lattice layer and `setBaseVisible(false)` the base layer, and both back
-  to `true` restore; the two switches are read off the groups, not through the getters.
-- The lattice layer is visible once shown.
+- `DEFAULT_GRID_MODE` is `'floor'` and a fresh grid shows exactly `['world-grid-floor']`: the viewport opens with a
+  ground grid and with nothing else.
+- `setMode('volume')` shows exactly `['world-grid-volume-ground', 'world-grid-volume-wall-x',
+  'world-grid-volume-wall-z']`, `setMode('multi')` shows exactly `['world-grid-multi']`, and `setMode('off')` shows
+  nothing at all. Each switch is asserted as the complete visible set, so a display that left a plane from the
+  previous one on screen — the additive behaviour D49 rejected — cannot pass, and the five plane names are pinned by
+  being the ones a visible plane is found under.
+- The work cube, followed from `(3.4, 2.6, -8.1)`, sits at `(3, 0, -8)` for its ground, `(-60, 3, -8)` for the wall on
+  `x`, and `(3, 3, -60)` for the wall on `z`: the ground stays on the world's own ground and each wall on its own
+  plane, while only the two coordinates inside a plane follow the camera. A wall that followed the camera off `-60`,
+  or a ground that took the camera's height, fails here — this is the case that says the work cube is fixed.
+- A fresh grid's moved plane reports `multiAxis === 'x'` and `multiOffset === 0`; after `setMultiPlane('z', -5)` it
+  reports `'z'` and `-5`, and an `update` from `(0.4, 9.6, 2.2)` puts its mesh at `(0, 10, -5)`. So the two discrete
+  settings are readable before any frame, and the plane's placement follows the axis it was aimed at: only the in-plane
+  coordinates take the camera's values, rounding `y` up to `10`.
+- The moved plane's quaternion turns its own normal onto the axis it was aimed at: after `setMultiPlane('z', -5)` the
+  quad's `(0, 1, 0)` normal, read through the quaternion, is `+z` to six places. The facing is therefore the mesh's
+  own geometry, not a flag the test could not see fail.
+- `setMultiPlane('x', 0.5)` throws `RangeError`: a plane between two cells would put its lines between the world's
+  own, and it is refused rather than rounded (README D49).
 
 ## Errors
-- `setMargin(-1)` throws `RangeError`; the non-integer branch of the same guard is not pinned here.
+The half-cell offset is the only error asserted. Not pinned here: `setMode` with a name that is not a display, and
+`setMultiPlane` with an axis that is not `x`, `y`, or `z` — both are `RangeError`s in the class, not on this path.
 
 ## Dependencies
-`../src/three-runtime/grid.js` for `WorldGrid` and `DEFAULT_GRID_MARGIN`; `../src/voxels/uniform/grid.js` for
-the `UniformGrid` fixture; `three` for `Group`, `LineSegments`, `Matrix4`, and `Vector3`; `vitest` for
-`describe`, `it`, `expect`. No DOM and no GPU: the suite runs in the node environment.
+`../src/three-runtime/grid.js` for `WorldGrid` and `DEFAULT_GRID_MODE`; `three` for `Mesh`, `PerspectiveCamera`, and
+`Vector3`; `vitest` for `describe`, `it`, `expect`. No DOM and no GPU: the suite runs in the node environment, and
+the planes' meshes and materials are built there without a renderer.
 
 ## Tests
 This file *is* the test, run by `npm test` in the node environment. It is the only coverage of
-`three-runtime/grid.ts`. Not covered here: the skip of an unchanged `showObjectLattice` call, the axis-aligned
-extent a rotated object's footprint cuts with, the `baseVisible` / `objectVisible` / `margin` getters, the
-render orders, layers, and material values of the three line sets, and the Grid group's panel and app wiring.
-What needs a GPU — the grid visible in the viewport with its palette, under the voxels, unpickable, and absent
-from an exported frame — is verified by running the application (README §10).
+`three-runtime/grid.ts`. Not covered here: the planes' layers, materials, render order, and uniform values (those are
+`tests/gridPlane.test.ts`'s and `codemap/tests/gridPlane.md`'s), the whole-cell snapping and the fade (the same), the
+`root` group's own name and its being added to a scene — the app's step, not the class's — `dispose` being safe
+twice, and the Grid group's panel and app wiring. What needs a GPU — the displays visible with their palette, the
+percentage of the view region each changes,
+the walls and the moved plane moving with the axis and the offset, no grid pixel inside the model's silhouette, the
+fine lines fading before the coarse ones, and no hard edge where a plane ends — is verified by running the
+application (README §10).

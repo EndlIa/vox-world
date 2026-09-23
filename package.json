@@ -2,7 +2,9 @@
   "name": "vox-world",
   "private": true,
   "type": "module",
-  "engines": { "node": "24.21.0" },
+  "engines": {
+    "node": "24.21.0"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -12,8 +14,9 @@
     "check": "npm run typecheck && npm test"
   },
   "dependencies": {
-    "three": "0.186.0",
-    "mp4-muxer": "5.2.2"
+    "@pmndrs/vanilla": "^1.25.0",
+    "mp4-muxer": "5.2.2",
+    "three": "0.186.0"
   },
   "devDependencies": {
     "@types/node": "24.13.6",

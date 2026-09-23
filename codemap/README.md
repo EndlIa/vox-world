@@ -32,14 +32,16 @@ implementation patterns are not carried over.
 
 ## 3. Toolchain
 
-Pinned exactly (no `^`). Three.js ships monthly and its addons churn; a floating range can silently
-change what the demo runs on.
+Pinned exactly (no `^`), with one exception: `@pmndrs/vanilla` carries a caret, because its grid is a component rather
+than the renderer and D49's patches are what pin it in practice. Three.js ships monthly and its addons churn; a floating
+range can silently change what the demo runs on.
 
 | Package | Version | Note |
 | --- | --- | --- |
 | Node | 24.21.0 (Krypton) | Active LTS, EOL 2028-04-30. Satisfies `vite@8` (`^20.19 \|\| >=22.12`) and `vitest@5` (`^22.12 \|\| ^24 \|\| >=26`). |
 | three | 0.186.0 | `three` ships no types; `@types/three` is required. |
 | @types/three | 0.186.0 | Exact-match type package. |
+| @pmndrs/vanilla | ^1.25.0 | pmndrs' framework-free port of the drei components, MIT; the grid imports its `Grid` (`@pmndrs/vanilla/core/Grid`) and nothing else (D49). The one caret range: the two patches that file applies to its shaders are written against its source, and the tests are what catch a change (D49). |
 | vite | 8.3.0 | Dev server and production build. |
 | vitest | 5.0.1 | Unit tests for our own modules; no GPU needed. |
 | typescript | 7.0.2 | Fall back to 6.0.3 if the native compiler rejects `@types/three`. |
@@ -74,7 +76,7 @@ graph BT
 | 1 | `document` | Project truth: scene objects, identity, parent/child hierarchy, transforms, representation binding, timeline data, exported-camera settings, mask colors. | `voxels/*`, `three` (any) |
 | 1 | `document/detach` | Detach: a uniform box region becomes a new scene object. | `voxels/*`, `three` (any) |
 | 1 | `animation` | Keyframe authoring data compiled to a Three.js `AnimationClip`; frame-exact sampling through `AnimationMixer`. | `document`, `three` (any) |
-| 2 | `three-runtime` | Scene and render state: GLB import into document objects, document-to-scene mirror, derived meshes, raycast picking, viewport controls, offscreen frame capture. | `voxels/*`, `document`, `three` |
+| 2 | `three-runtime` | Scene and render state: GLB import into document objects, document-to-scene mirror, derived meshes, raycast picking, viewport controls, offscreen frame capture. | `voxels/*`, `document`, `three`, `@pmndrs/vanilla` (the grid's `Grid`, D49) |
 | 2 | `workers` | Job boundary for off-main-thread work. Payloads must be plain records and transferables. | `voxels/*`, `document` |
 | 3 | `editor` | Editing session: active object, selection, target cell selection, edit operations, output camera versus viewport navigation. | `voxels/*`, `document`, `animation`, `three-runtime` |
 | 3 | `export` | Export job: frame loop over the timeline, capture orchestration, encoder and muxer. | `document`, `animation`, `three-runtime`, encoder library |
@@ -109,6 +111,12 @@ hand-rolling is the thing that has to be justified. What that means in practice:
 | Voxel rendering | `InstancedMesh`, `InstancedBufferAttribute` |
 
 Rejected alternatives are recorded in D1 and D2.
+
+The viewport's grid is the one drawing taken from outside these lists — it still builds on `three`'s `Mesh`,
+`PlaneGeometry`, and `ShaderMaterial` — because `three` has no grid material and a shader grid is not worth
+hand-rolling, so the drawing comes from `@pmndrs/vanilla`'s `Grid` (D49), the import registered in the ring table
+above; the file that uses it patches two things in the library's shaders that this viewport needs and the library does
+not do.
 
 ## 5. Source layout
 
@@ -546,7 +554,9 @@ across this viewport and a grid is no reason to bring them back (minor `0x9aa2ad
 0.5). It is decoration in every direction: layer 1, so never picked and never exported; `depthWrite = false`,
 so it cannot occlude a voxel below the plane; and outside `frameAll`'s measurement, so it can never widen the
 framing of an import. The extent is a fixed 200 m and there is no visibility toggle; the contract records both
-as open.
+as open. **D49 replaced the drawing and closed both open items**: the grid is a shader grid from `@pmndrs/vanilla`
+now, in three mutually exclusive displays that the Grid group's `Display` field switches, and its quad is 512 world
+units wide and follows the camera.
 
 **D36 — The box drag has no height override.** The Edit group used to carry a `Box height` field: a value
 above one forced the dragged box's third axis to `[anchor.y, anchor.y + height - 1]`, turning a surface drag
@@ -777,10 +787,13 @@ Raising `k` subdivides the model; every cell-to-world mapping follows it, and th
   in world units equal to that count (D41); subdivision is chosen afterwards, per object, in the Scene group. An
   import is therefore never re-scaled to gain resolution, and re-voxelizing from the retained source meshes stays
   deferred.
-- **The world grid is two layers, drawn from the session.** The base layer is one world unit everywhere; the
-  second layer is the *active* object's own lattice, drawn around it and extended by a margin of cells, and the
-  base layer is hidden under it. Only the selected object's lattice is shown, so the display never claims a
-  commensurability between models that the editing rules do not enforce.
+- **The world grid's display is D49's, not this one's.** This decision's second layer — the *active* object's own
+  lattice, drawn at that object's subdivision over its occupancy plus a margin of its cells, on the plane of its
+  lowest occupied cell, with the base layer cut away under it — was replaced by D49: the viewport draws three mutually
+  exclusive shader grids (`floor`, `volume`, `multi`) and no per-object lattice at all. What stands from this bullet is
+  the data side it rested on: subdivision is a property of the model, whose cells and whose placement are measured in
+  its own cells, and the display never claimed a commensurability between models that the editing rules do not
+  enforce.
 
 Accepted costs: a model's world extent is capped by the per-axis cell limit divided by its subdivision
 (`512 / k` world units by the importer's container limit, `1024 / k` by the key space), so finer means smaller; the
@@ -798,9 +811,12 @@ Affected contracts: `voxels/uniform/grid.md` (the subdivision, the derived cell 
 `document/{project,detach}.md` (placement in whole own cells; a detached region keeps its source's subdivision),
 `editor/{ops,session,pointer}.md` (`setObjectSubdivision` and its refusals, the resolution readout, the picked cell
 and the box preview in cell units), `three-runtime/{scene,overlay}.md` (per-subdivision cube geometry, the box
-preview's cell size), `ui/panels.md` (the Scene group's subdivision control), `tests/{uniform,project,ops,detach}.md`,
+preview's cell size), `ui/panels.md` (the Scene group's subdivision control; its Grid group's controls are D49's),
+`tests/{uniform,project,ops,detach}.md`,
 this file's §6/§9/§11 and D41's and D42's wording. Landed in two slices: the mapping, the subdivision op, the Scene
-control and their tests first, then the Grid group's display layers with `tests/grid.test.ts`. Deferred, and named here
+control and their tests first, then the Grid group's display layers with `tests/grid.test.ts` — that second slice's
+display layers were replaced by D49, which rewrote `three-runtime/grid.ts` and `tests/grid.test.ts` and deleted the
+lattice, while the mapping, the op, the Scene control, and their tests are untouched. Deferred, and named here
 so they are not mistaken for oversights: coarsening, re-voxelizing from the retained source meshes, and snapping to a
 coarser neighbour's cell.
 
@@ -1003,6 +1019,88 @@ optional target and its restore invariant), `ui/timeline.md` (`onTransport`, the
 (the two view fields, the action, the `Follow camera` box, its seeding and gating), `app/main.md` (the two flags, the four functions, the frame loop's
 end check and the carrier's observe case, the wiring, the new invariants), D45's transport paragraph, and this file's §9.
 
+### D49. The world grid is three mutually exclusive shader displays, and the per-object lattice is gone
+
+**Decided.** The viewport's grid is the reference viewport's, in structure as well as in look: three displays to choose
+between — `floor` (one plane on the world's ground, the reference for building on it), `volume` (that ground plus the
+two walls that close a work cube, so a model can be read in three dimensions while it is built rather than only from
+above), and `multi` (one plane the user aims at an axis and slides along it, for work that does not happen on the
+ground) — plus `off`. They are mutually exclusive rather than additive, and every plane is drawn by a shader: the quad
+carries `@pmndrs/vanilla`'s `Grid`, the vanilla three descendant of Fyrestar's `InfiniteGridHelper` and of the shader
+grid the reference product is built on. D43's second layer is deleted, along with the line geometry it was drawn with,
+its margin, and the base plane's hole cutting under it. The subdivision data D43 decided is untouched.
+
+- **Why a shader, not line geometry.** The lines are computed per fragment from screen-space derivatives instead of
+  being tessellated: they anti-alias, they keep their apparent thickness, and the finer spacing fades with distance
+  instead of collapsing into noise as the camera pulls back — which line geometry cannot do, and why the plane it
+  replaces had to stop at 200 units. Two spacings carry the reading, the world unit and its tenth, each with its own
+  thickness and colour, and the fade is measured from the camera's own point on the plane.
+- **Mutually exclusive, because the reference never shows two grids at once.** The old base layer and the object's
+  lattice were drawn together, which is why the base plane had to be cut away where the lattice was — a hole a rotated
+  object's bounding box approximated, around a lattice that read as a sheet hanging in the air the moment the model
+  left the ground. `WorldGrid` now maps each display to the planes it shows, and no plane belongs to two displays, so
+  one display is on screen at a time and nothing is ever drawn twice.
+- **The camera moves the quad, never the lines.** Both `followCamera` and `infiniteGrid` are off, because both change
+  the grid *inside* the shader — the first shifts it by the camera's projected position, the second rescales the
+  plane's local coordinates — so the lines would slide, or change scale, under a moving camera while the mesh stayed
+  where a raycast finds nothing. `GridPlane.follow` moves the mesh instead — the two in-plane coordinates follow the
+  camera snapped to whole cells, so the lines stay on the world's cell boundaries, and the coordinate along the
+  plane's normal stays the plane's own offset, which is what keeps a wall a wall. The geometry and the picture
+  therefore agree.
+- **Two patches, because this viewport needs two things the library does not do.** Rendering enables log depth (D40)
+  and a `ShaderMaterial` writes an unencoded depth without three's `logdepthbuf` chunks, so the plane would sort
+  wrongly against every voxel; the vertex side also needs `<common>`, because the vertex chunk calls
+  `isPerspectiveMatrix` and only that chunk defines it, which is what made the whole grid invisible until it was
+  added. And the library saturates a line as its spacing shrinks, which stops the flicker but leaves the far field a
+  flat wash that beats against the pixel grid — a dark cross-hatch near the horizon at a one-unit spacing — so the
+  attenuation is multiplied by the reference material's own `maxNumberOfLines` clamp over the screen-space
+  derivative, which removes those lines instead and lets the coarse spacing survive at distance. Both patches are pure
+  functions, and the tests drive them through `material.onBeforeCompile` rather than by rendering.
+- **A plane is an axis and an offset, and the offset is whole cells.** `new GridPlane(axis, offset)` faces `y` at `0`
+  for the ground and `x` or `z` at `-60` for the work cube's walls — the reference's 120-cell cube halved — and
+  `setFacing` refuses an offset that is not a whole world unit, because a plane between two cells would put its lines
+  between the world's own.
+- **The Grid group is a view of the viewport's grid, not document state.** `Display` (Off / Floor / Volume / Multi
+  plane), `Plane axis` (X / Y / Z), and `Plane offset (cells)`; the app's `gridSettings()` seeds all three from the
+  instance, and the axis and the offset are disabled unless the mode is `multi`, because the ground and the work cube
+  are fixed and those two fields would pretend to do something. A non-integer offset is dropped by the app, which
+  refreshes the panel rather than handing the grid a value it would refuse. The panel keeps its own option lists and
+  imports the two unions as types only, so a rename is a compile error rather than a stale option.
+- **Decoration, unchanged.** Layer 1, no depth write, below the decorations that draw at 1000, and outside
+  `frameAll`'s measurement — layers 0 and 2 — so the grid is never picked, never exported, and can never widen an
+  import's framing. The frame loop puts the shown display on `renderCamera`, the camera the frame is drawn through,
+  so a locked output camera gets the same reference as the editor camera.
+
+Accepted costs: a new dependency, and two patches written against its shader source — an upgrade that renames an
+option or a uniform, changes the attenuation line, or restructures the shader around `void main()` would silently
+un-patch the plane, so `tests/gridPlane.test.ts` is the tripwire and the patches are re-checked whenever
+`@pmndrs/vanilla` moves; the quad is 512 world units wide and its owner has to move it every frame, because the
+library's own camera-following is exactly what cannot be used; offsets are whole world units, so a plane between two
+cells is refused rather than rounded; and the work cube's walls sit at `-60`, so a small model has to be zoomed out
+before they are on screen.
+
+Rejected: **keeping the per-object lattice by projecting it onto the ground** (a model's own subdivision is not the
+world's, so the projection would either lie about the cells or need the hole back — and a per-object grid is not what
+the reference viewport shows); **writing our own grid shader instead of patching the library's** (the derivative-based
+anti-aliasing, the two spacings, and the fade are the parts the reference material took several iterations to get
+right, and a hand-written one would be the same shader with a worse chance of being right); **cutting a hole in the
+base plane so two grids can coexist** (the reference never has two grids at once, and with exclusive displays there is
+nothing to cut); **making the planes pickable or offering them as work planes now** (a plane a press could hit would
+join picking and the overlay's claims, and a work plane is an editing feature — both are a later slice).
+
+Verified in the app (README §10), with the panel windows closed so they cannot pollute the pixels: the grid changes
+3.2 % of the view region against the same scene without it and the volume display 10.2 %; the walls and the movable
+plane move with the axis and the offset; no grid pixel lands inside the model's silhouette beyond its anti-aliased
+edge (29 coincident pixels, 0 inside), so the log-depth patches sort; the horizon reads as a faint moiré rather than
+an obvious one, with the fine lines fading before the coarse ones; there is no hard edge where a plane ends; the axis
+and the offset fields are disabled outside the movable plane; and no console or shader error appears.
+
+Affected contracts: `three-runtime/gridPlane.md` (new: the plane, the constants, the two patches, the follow and the
+refusal), `three-runtime/grid.md` (the three displays rewritten), `tests/gridPlane.md` (new), `tests/grid.md` (the
+displays rewritten), `ui/panels.md` (the three fields, the seeding, the disabled rule, the walk), `app/main.md` (the
+provider, the three actions, the frame loop's update, the removed lattice refresh and its key), D43's display clause,
+D35's drawing, and this file's §3, §4, and §9.
+
 ## 9. Demo slice
 
 The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
@@ -1018,6 +1116,11 @@ deferred is deferred deliberately, not forgotten.
 - Select and edit voxel objects: create, name, delete, hide, transform, reparent.
 - Voxels: drag a box (anchor, opposite corner) to select it, or to add, remove, paint, or
   detach it as a new object; a click is a 1×1×1 box.
+- Viewport grid: three mutually exclusive displays drawn as shader grids — one horizontal plane on the world's
+  ground, that ground plus the two walls of a work cube, and one plane the user aims at an axis and slides along it —
+  chosen in the Grid group's `Display` field, plus Off; the plane's axis and offset are live only for the movable one,
+  because the ground and the work cube are fixed (D35, D49). The whole display is decoration: layer 1, never picked,
+  never exported, and outside framing's measurement.
 - Subdivision: raise one object's own grid to a finer level (D43) from the Scene group, and have every
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
 - Timeline: a whole-millisecond duration and frame rate, keyframes on object transforms and on the output camera

@@ -1,129 +1,74 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { Matrix4, Vector3 } from 'three';
-import { DEFAULT_GRID_MARGIN, WorldGrid } from '../src/three-runtime/grid.js';
-import { UniformGrid } from '../src/voxels/uniform/grid.js';
+import { DEFAULT_GRID_MODE, WorldGrid } from '../src/three-runtime/grid.js';
 
-/** A 4 x 4 x 4 block of cells from the origin, at the subdivision asked for. */
-function block(subdivision: number): UniformGrid {
-  const grid = UniformGrid.create(subdivision);
-  for (let x = 0; x < 4; x += 1) {
-    for (let y = 0; y < 4; y += 1) {
-      for (let z = 0; z < 4; z += 1) grid.set(x, y, z, 0x3366ff);
-    }
-  }
-  return grid;
+/** A camera at this position, which is all a plane reads from one. */
+function cameraAt(x: number, y: number, z: number): THREE.PerspectiveCamera {
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(x, y, z);
+  return camera;
 }
 
-function layer(grid: WorldGrid, name: string): THREE.Group {
+/** The planes on screen, by the names the grid gives them: what is visible is what a frame draws. */
+function visiblePlanes(grid: WorldGrid): string[] {
+  return grid.root.children
+    .filter((child) => child.visible)
+    .map((child) => child.name)
+    .sort();
+}
+
+/** The plane of that name, wherever the last `update` put it. */
+function planeAt(grid: WorldGrid, name: string): THREE.Mesh {
   const found = grid.root.getObjectByName(name);
-  if (!(found instanceof THREE.Group)) throw new TypeError(`no ${name} layer`);
+  if (!(found instanceof THREE.Mesh)) throw new TypeError(`no plane named ${name}`);
   return found;
-}
-
-/** The base layer's two line sets, by the render order that decides which is drawn last. */
-function baseLineSets(grid: WorldGrid): { faint: THREE.LineSegments; bright: THREE.LineSegments } {
-  const sets = layer(grid, 'world-grid-base').children.filter(
-    (child): child is THREE.LineSegments => child instanceof THREE.LineSegments,
-  );
-  const sorted = [...sets].sort((a, b) => a.renderOrder - b.renderOrder);
-  if (sorted.length !== 2) throw new TypeError(`expected two base line sets, got ${sorted.length}`);
-  return { faint: sorted[0]!, bright: sorted[1]! };
-}
-
-/** The active object's single lattice line set. */
-function latticeLines(grid: WorldGrid): THREE.LineSegments {
-  const found = layer(grid, 'world-grid-lattice').children.find(
-    (child): child is THREE.LineSegments => child instanceof THREE.LineSegments,
-  );
-  if (found === undefined) throw new TypeError('the lattice layer holds no line set');
-  return found;
-}
-
-function vertices(lines: THREE.LineSegments): number[] {
-  const attribute = lines.geometry.getAttribute('position');
-  return Array.from(attribute.array as ArrayLike<number>);
-}
-
-/** The distinct values a line set draws at, sorted: one per line, so a spacing is readable from it. */
-function coordinates(lines: THREE.LineSegments, axis: 0 | 2): number[] {
-  const values = new Set<number>();
-  const array = vertices(lines);
-  for (let index = 0; index < array.length; index += 3) values.add(array[index + axis]!);
-  return [...values].sort((a, b) => a - b);
 }
 
 describe('world grid', () => {
-  it('draws a base plane at the world unit with a brighter line every tenth', () => {
-    const world = new WorldGrid();
-    const { faint, bright } = baseLineSets(world);
-    // 200 units: one line per unit on the faint set, one every ten on the bright one, both spanning the plane.
-    expect(coordinates(faint, 0)).toEqual([...Array(201).keys()].map((index) => index - 100));
-    expect(coordinates(bright, 0)).toEqual([...Array(21).keys()].map((index) => (index - 10) * 10));
-    expect(vertices(faint)[1]).toBe(0);
-    world.dispose();
+  it('shows one display at a time, and opens on the ground', () => {
+    const grid = new WorldGrid();
+    expect(DEFAULT_GRID_MODE).toBe('floor');
+    expect(visiblePlanes(grid)).toEqual(['world-grid-floor']);
+    grid.setMode('volume');
+    expect(visiblePlanes(grid)).toEqual([
+      'world-grid-volume-ground',
+      'world-grid-volume-wall-x',
+      'world-grid-volume-wall-z',
+    ]);
+    grid.setMode('multi');
+    expect(visiblePlanes(grid)).toEqual(['world-grid-multi']);
+    grid.setMode('off');
+    expect(visiblePlanes(grid)).toEqual([]);
+    grid.dispose();
   });
 
-  it("draws the active object's lattice at its own cell size, on the plane of its lowest cell", () => {
-    const world = new WorldGrid();
-    world.showObjectLattice(block(2), new Matrix4().makeTranslation(5, 0, 0));
-    const lattice = latticeLines(world);
-    // Cells 0..3 at subdivision 2, plus the default margin of cells either side: x from -8 to 12 cells, 0.5 units
-    // each, so the lines sit at -4 .. 6 in half units.
-    expect(coordinates(lattice, 0)).toEqual([...Array(21).keys()].map((index) => (index - 8) * 0.5));
-    expect(vertices(lattice)[1]).toBe(0);
-    // The layer carries the object's placement rather than baking it in, so a moved object moves its grid.
-    expect(new Vector3().setFromMatrixPosition(lattice.matrix).toArray()).toEqual([5, 0, 0]);
-    expect(layer(world, 'world-grid-lattice').visible).toBe(true);
-    world.dispose();
+  it('shows the work cube as its ground and the two walls that close it', () => {
+    const grid = new WorldGrid();
+    grid.setMode('volume');
+    grid.update(cameraAt(3.4, 2.6, -8.1));
+    // The ground stays on the world's own ground and the walls on their own planes, whatever the camera does; only
+    // the two coordinates inside a plane follow it.
+    expect(planeAt(grid, 'world-grid-volume-ground').position.toArray()).toEqual([3, 0, -8]);
+    expect(planeAt(grid, 'world-grid-volume-wall-x').position.toArray()).toEqual([-60, 3, -8]);
+    expect(planeAt(grid, 'world-grid-volume-wall-z').position.toArray()).toEqual([3, 3, -60]);
+    grid.dispose();
   });
 
-  it('cuts the base plane away where the lattice is drawn, and leaves it alone everywhere else', () => {
-    const world = new WorldGrid();
-    const { faint } = baseLineSets(world);
-    const wholePlane = coordinates(faint, 0).length;
-    world.showObjectLattice(block(2), new Matrix4());
-    const after = vertices(faint);
-    // Nothing of the base survives inside the lattice's footprint (-4 .. 6 on both axes): every vertex either
-    // sits outside it on x, or outside it on z, or is the cut edge itself.
-    for (let index = 0; index < after.length; index += 3) {
-      const x = after[index]!;
-      const z = after[index + 2]!;
-      const insideX = x > -4 && x < 6;
-      const insideZ = z > -4 && z < 6;
-      expect(insideX && insideZ).toBe(false);
-    }
-    // The plane is still a plane: the cut takes material out of lines, so the lines it still draws are the same
-    // ones, all the way to the edges.
-    expect(coordinates(faint, 0)).toHaveLength(wholePlane);
-    expect(coordinates(faint, 0)).toContain(-100);
-    expect(coordinates(faint, 0)).toContain(100);
-    world.dispose();
-  });
-
-  it('follows the two switches and the margin', () => {
-    const world = new WorldGrid();
-    const grid = block(1);
-    world.showObjectLattice(grid, new Matrix4());
-
-    world.setMargin(0);
-    expect(coordinates(latticeLines(world), 0)).toEqual([0, 1, 2, 3, 4]);
-    expect(DEFAULT_GRID_MARGIN).toBe(8);
-
-    world.setObjectVisible(false);
-    expect(layer(world, 'world-grid-lattice').visible).toBe(false);
-    world.setBaseVisible(false);
-    expect(layer(world, 'world-grid-base').visible).toBe(false);
-    world.setBaseVisible(true);
-    world.setObjectVisible(true);
-    expect(layer(world, 'world-grid-lattice').visible).toBe(true);
-
-    // Clearing the lattice restores the whole base plane and hides the layer.
-    world.showObjectLattice(undefined, undefined);
-    expect(layer(world, 'world-grid-lattice').visible).toBe(false);
-    // 201 lines per direction, two segments each, two vertices, three floats: the whole plane is back.
-    expect(vertices(baseLineSets(world).faint).length).toBe(201 * 2 * 2 * 3);
-    expect(() => world.setMargin(-1)).toThrow(RangeError);
-    world.dispose();
+  it('aims the moved plane at an axis and keeps it where it was put', () => {
+    const grid = new WorldGrid();
+    grid.setMode('multi');
+    expect(grid.multiAxis).toBe('x');
+    expect(grid.multiOffset).toBe(0);
+    grid.setMultiPlane('z', -5);
+    expect(grid.multiAxis).toBe('z');
+    expect(grid.multiOffset).toBe(-5);
+    grid.update(cameraAt(0.4, 9.6, 2.2));
+    expect(planeAt(grid, 'world-grid-multi').position.toArray()).toEqual([0, 10, -5]);
+    // The facing follows the axis, so the quad's own normal ends up on the axis it was aimed at.
+    const normal = new THREE.Vector3(0, 1, 0).applyQuaternion(planeAt(grid, 'world-grid-multi').quaternion);
+    expect(normal.z).toBeCloseTo(1, 6);
+    // A plane between two cells would put its lines between the world's own, so it is refused.
+    expect(() => grid.setMultiPlane('x', 0.5)).toThrow(RangeError);
+    grid.dispose();
   });
 });

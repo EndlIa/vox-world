@@ -1,6 +1,6 @@
 # src/ui/panels.ts
 
-Ring: 4 · Layer: ui · Depends on: ./dom.js, ./floatingWindow.js, ../document/project.js, ../editor/session.js, ../voxels/uniform/grid.js
+Ring: 4 · Layer: ui · Depends on: ./dom.js, ./floatingWindow.js, ../document/project.js, ../editor/session.js, ../voxels/uniform/grid.js, ../three-runtime/grid.js (type only), ../three-runtime/gridPlane.js (type only)
 
 ## Responsibility
 The main control panel: import, edit, camera, export, and grid-display controls plus the project and session read-out. It renders state and forwards intent through
@@ -45,7 +45,7 @@ type CameraControlView = {          // what the carrier's controls read (README 
 type PanelContext = {
   project: Project; session: EditorSession;
   sceneVisible?(): boolean;    // the app's raw-mesh override; absent => forward-only checkbox
-  gridSettings?(): { base: boolean; object: boolean; margin: number };  // the viewport's own grid display; absent => forward-only controls
+  gridSettings?(): { mode: GridMode; axis: GridAxis; offset: number };  // the viewport's own grid display; absent => forward-only controls
   timelineVisible?(): boolean;   // the app's timeline-bar flag; absent => the rail's `Animation` button is disabled
   cameraControl?(): CameraControlView;   // the carrier's state; absent => the carrier's controls are disabled
   actions: {
@@ -60,9 +60,10 @@ type PanelContext = {
     setActiveSubdivision(subdivision: number): void;    // raises the active object's own grid level; a coarser one is not offered
     detachSelection(): void;   // detaches the region the session selected; the app runs it through the pointer tool
     setSourceVisible(enabled: boolean): void;   // shows or hides every imported raw mesh
-    setBaseGridVisible(visible: boolean): void;     // shows or hides the world grid's base layer
-    setObjectGridVisible(visible: boolean): void;   // shows or hides the active object's lattice
-    setGridMargin(cells: number): void;             // cells of lattice drawn around the active object
+    setGridMode(mode: GridMode): void;    // which of the three displays is on screen (README D49)
+    setGridAxis(axis: GridAxis): void;    // aims the plane the user moves at an axis; the app keeps its offset
+    setGridOffset(offset: number): void;  // slides that plane along its axis, in whole cells;
+                                          // the app drops a value that is not one
     setTimelineVisible(visible: boolean): void;     // shows or hides the timeline bar; the app owns the flag
     renameActive(name: string): void;           // renames the active object; the app trims and refuses ''
     reparentActive(parentId: ObjectId | null): void;
@@ -96,11 +97,15 @@ class Panels {
    number as both its value and its label, powers of two because a cell has to stay an exact binary fraction of the world unit and
    because the list is the UI's range rather than a rule of the grid (README D43) — and its `change` event forwards
    `Number(value)` through `setActiveSubdivision`. That divider is the group's only use of the
-   stylesheet's `hr` rule. The `Grid` group is the rail's last one and holds the viewport's own display settings (README D43): a
-   `Base grid` and an `Object grid` checkbox, whose `change` events forward `checked` through `setBaseGridVisible` and
-   `setObjectGridVisible`, and a `Margin (cells)` number input (`min 0`, `step 1`) whose `input` event only sets the
-   `touched.gridMargin` flag while its `change` event forwards `Number(value)` through `setGridMargin` — the commit is the
-   `change` event, so a half-typed margin never reaches the viewport. There is no voxelize group: the settings live in `ui/voxelizeDialog.ts` (README D26).
+   stylesheet's `hr` rule. The `Grid` group is the rail's last one and holds the viewport's own display settings (README D49): a
+   `Display` select built from the module constant `GRID_MODE_OPTIONS` — `Off`, `Floor`, `Volume`, and `Multi plane`, one per key of the
+   `GridMode` union, in the order the viewport offers them, whose `change` event forwards `value as GridMode` through `setGridMode` — a
+   `Plane axis` select built from `GRID_AXIS_OPTIONS = ['x', 'y', 'z']`, whose option labels are the axes uppercased and whose `change` event
+   forwards `value as GridAxis` through `setGridAxis`, and a `Plane offset (cells)` number input (`step 1`, no minimum, because the offset
+   slides either way from the origin) whose `input` event only sets the `touched.gridOffset` flag while its `change` event forwards
+   `Number(value)` through `setGridOffset` — the commit is the `change` event, so a half-typed offset never reaches the viewport. The two
+   option lists are the panel's own and are the only place the display and axis names are written; the two unions are imported as types, so
+   a renamed display is a compile error rather than a stale option. There is no voxelize group: the settings live in `ui/voxelizeDialog.ts` (README D26).
 2. Each group is one rail button plus one window, built together in the group order `Import`, `Edit`, `Camera`, `Render`,
    `Scene`, `Grid`: the button carries the group's name and toggles its window (the `Edit` one also calls `session.setMode('edit')` through the
    optional press hook `group()` takes, before it toggles), and the window is a `FloatingWindow`
@@ -148,8 +153,8 @@ class Panels {
 8. Project-changing intent leaves as callbacks: `pickImportFile()`, `exportMp4(options)`, `createGroup()`,
    `deleteObject(id)` from a row's trash, `setActiveMaskColor(hex)`, `setActiveVisible(checked)` from the visibility checkbox,
    `setActiveAlignToGrid(checked)` from the grid-align checkbox, `setActiveSubdivision(level)` from the subdivision select,
-   `setBaseGridVisible(checked)` and `setObjectGridVisible(checked)` from the `Grid` group's two checkboxes, `setGridMargin(cells)`
-   from its margin field, `detachSelection()` from the `detach` button,
+   `setGridMode(value)` from the `Display` select, `setGridAxis(value)` from the `Plane axis` select, and `setGridOffset(value)`
+   from the `Plane offset (cells)` field, `detachSelection()` from the `detach` button,
    `renameActive(value)` from the `Name` field,
    `reparentActive(parentId | null)` from the parent select, `setCameraLock(checked)` from the camera-lock checkbox — the panel forwards the checkbox's own state and
    never tracks the lock itself, so the app stays the only owner of the flag — the carrier's four actions and its pose write
@@ -161,15 +166,20 @@ class Panels {
    name the project holds. Each control is enabled
    only when the app could act on it — mask color, name, visibility, grid alignment, and reparent need an active object, subdivision
    needs an active object whose grid reports a level, and the `detach`
-   button needs a selection, since it is a command on the selected region. The `Grid` group's three controls are never disabled: they act
-   on the viewport rather than on the document, so they need no active object. The `FOV (deg)` input
+   button needs a selection, since it is a command on the selected region. The `Grid` group's three controls need no active object — they act
+   on the viewport rather than on the document — and only the `Display` select is never disabled: the axis and the offset are `disabled`
+   unless the display on screen is `multi`, because the ground and the work cube are fixed, so those two fields would pretend to do
+   something (README D49). The `FOV (deg)` input
    forwards `parseFloat` of its value through `setCameraFov(fov)` on every `input` event, so the authored projection follows the field; the app
    validates and clamps what it receives.
 9. `Show raw meshes` is the raw-versus-voxel toggle (README D24): its `change` event forwards `checked` through `setSourceVisible(enabled)` and nothing else, so the panel never touches the mirror, the scene, or a mesh. It is seeded from `context.sceneVisible()` when the context exposes that function — the app does, with `SceneMirror.sourceVisible` — and left untouched by `refresh()` when it does not, in which case the checkbox is a plain forward-only control and the app remains the only thing that knows whether the raw meshes are shown. `refresh()` therefore never invents a state for it. The `Grid` group follows the same rule through `context.gridSettings()`, which is the
-   same kind of view of the viewport's own settings: when the app exposes that function `refresh()` writes `settings.base` and
-   `settings.object` into the two checkboxes and `settings.margin` into the number field — the margin only while `touched.gridMargin` is
-   unset, because its `change` event is what commits it — and with no such function the three controls are plain forward-only controls that
-   `refresh()` leaves alone. Either way the panel holds no grid flag and no margin of its own: `refresh()` only reads them back from the app. The
+   same kind of view of the viewport's own settings: when the app exposes that function `refresh()` writes `settings.mode` into the `Display`
+   select, `settings.axis` into the `Plane axis` select, and `settings.offset` into the number field — the offset only while `touched.gridOffset`
+   is unset, because its `change` event is what commits it — and it then derives the gating from that same answer:
+   `gridAxisSelect.disabled` and `gridOffsetInput.disabled` are both `mode !== 'multi'`, so the two fields wait while the fixed ground or the
+   work cube is on screen. With no such function the three controls are plain forward-only controls that `refresh()` leaves alone, and the two
+   gated fields are disabled, since a settings source is also what tells the panel a movable plane exists. Either way the panel holds no grid
+   display, no axis, and no offset of its own: `refresh()` only reads them back from the app. The
    rail's `Animation` button is seeded the same way through `context.timelineVisible()`: with that function `refresh()` writes the answer into the
    button's `on` class and the click hands the opposite back through `setTimelineVisible(visible)`, so the bar's flag stays the app's; with no such
    function the button is `disabled`, since a toggle with no flag behind it could not show anything (README D44).
@@ -205,11 +215,15 @@ class Panels {
   it then displays that value on every `refresh()` and holds no copy of its own, so the mirror and the checkbox cannot disagree. With no `sceneVisible()`
   in the context the checkbox is forward-only and `refresh()` leaves it alone — the panel then displays the user's last click, and the app is the only
   thing that knows the real state. Either way no mesh, scene, layer, or mirror is touched here.
-- The `Grid` group's controls are the viewport's own display settings, not document state (README D35): while `context.gridSettings()` exists,
-  `refresh()` writes that view back into all three, so a value the app did not take returns as the checkbox showing what the app holds rather than what
-  was clicked, and the panel invents no state of its own. They are never `disabled`, because they act on the viewport and not on the active object, and
-  only the margin field is left alone while `touched.gridMargin` is set, since its `change` event is what commits it. With no `gridSettings()` in the
-  context the three are plain forward-only controls `refresh()` never rewrites, exactly like `Show raw meshes` without `sceneVisible()`.
+- The `Grid` group's controls are the viewport's own display settings, not document state (README D35, D49): while `context.gridSettings()` exists,
+  `refresh()` writes that view back into all three — the `Display` select, the `Plane axis` select, and the offset field — so a display or an axis the
+  app did not take returns as the field showing what the grid holds rather than what was picked, and the panel invents no state of its own. None of
+  them needs an active object, and the axis and the offset are `disabled` exactly while the display on screen is not `multi`, because the ground and
+  the work cube are fixed and those two fields would otherwise pretend to do something. Only the offset field is left alone while
+  `touched.gridOffset` is set, since its `change` event is what commits it — which is also why a fraction the app refused can still sit in that field
+  until the user types another one. With no `gridSettings()` in the context the three are plain forward-only controls `refresh()` never rewrites,
+  exactly like `Show raw meshes` without `sceneVisible()` — and the two gated fields are then disabled, because nothing told the panel that a movable
+  plane exists.
 - The `FOV (deg)` input is the panel's view of the output camera's projection — the seven carrier fields are the pose half of the same view (README D46): it displays `project.camera.fov` while untouched, forwards the parsed number, and keeps no camera, no lock state, and no clamped copy of its own.
 - The `Visible` checkbox is a view of `object.visible` and the `Name` field a view of `object.name`: neither holds document state, neither writes
   anything itself, and both are `disabled` while nothing is active. The `Name` field forwards only on `change`, so no keystroke of a name half-typed
@@ -264,7 +278,9 @@ field parses to `NaN` and is forwarded as-is: refusing non-finite input is the a
 field is forwarded the same way — trimming it and refusing an empty name belong to the op, so a blank name comes back as a reported failure and the
 field re-seeds from the project. The carrier's pose is the one place the panel refuses before forwarding: `writeCameraPose` sends the seven fields
 plus the FOV as one pose, and a cleared or non-finite component makes it refresh instead — the fields come back showing what the camera holds — rather
-than handing over a partial pose; the app checks what it receives again and refuses a zero-length quaternion (README D46).
+than handing over a partial pose; the app checks what it receives again and refuses a zero-length quaternion (README D46). The `Plane offset (cells)` field is
+forwarded as it reads, a fraction included, and the app drops what is not a whole number and refreshes the panel, so the panel validates nothing and the grid
+never sees a value it would refuse (README D49).
 
 ## Dependencies
 - `./dom.js` — `el`, `fmt` for construction and the row's cell counts.
@@ -281,7 +297,9 @@ than handing over a partial pose; the app checks what it receives again and refu
   `editor/ops.ts`, `three-runtime/controls.ts`, `three-runtime/scene.ts`, and the project camera; this file imports neither `editor/ops.js` nor anything from `app/`. No
   outer-ring import and no Three.js use. `sceneVisible` is a plain callback, so exposing it costs the app one closure and gives
   the panel no import it did not already have; the `Grid` group's display settings and their three actions arrive the same way — a `gridSettings`
-  closure and three callbacks over the viewport's grid — so they too cost the panel no import; the timeline bar's flag and its toggle arrive the
+  closure and three callbacks over the viewport's grid — so the panel holds no grid state either, and the only import they cost it is the two unions
+  as **types** (`GridMode` from `../three-runtime/grid.js`, `GridAxis` from `../three-runtime/gridPlane.js`), which erase at compile time and let the
+  option lists be written without restating a display or an axis name the viewport could rename (README D49); the timeline bar's flag and its toggle arrive the
   same way, a `timelineVisible` closure and `setTimelineVisible`, so the rail's `Animation` button costs the panel no import either (README D44);
   the settings themselves are the dialog's, not the
   panel's, which is why neither `defaults` nor a voxelize target crosses this boundary any more, and why the panel holds no voxelize-related member at all.
@@ -313,9 +331,10 @@ plus the `Animation` toggle, and no
 group control at all until one is pressed; with nothing selected `Edit` must be disabled and unpressable, and pressing it with an object selected must open one window
 titled `Edit` holding that group's controls, mark the button `on`, and put the session in edit mode — the viewport mode switch must
 follow, and the gizmo must be gone; dragging the window's title bar must move it and leave it under the pointer; `×` must close it and clear the button; opening `Edit` and
-`Scene` together must show two windows at different positions, and pressing one must put it above the other; pressing `Grid` must open a window holding `Base grid`,
-`Object grid`, and `Margin (cells)`, and unticking `Base grid` must take the world grid's plane out of the viewport while committing a smaller margin must
-draw the active object's lattice tighter around it; pressing `Animation` must show the timeline bar along the bottom of the page and mark the button
+`Scene` together must show two windows at different positions, and pressing one must put it above the other; pressing `Grid` must open a window holding `Display`,
+`Plane axis`, and `Plane offset (cells)`, and choosing `Volume` must put the work cube's ground and its two walls into the viewport in place of the single floor plane, while
+choosing `Floor` again must take the walls away; the axis and the offset must be disabled under every display but `Multi plane`, and with `Multi plane` chosen an axis
+press and a committed offset in cells must move that one plane onto the axis and to the offset while the fixed displays stay where they were (README D49); pressing `Animation` must show the timeline bar along the bottom of the page and mark the button
 `on`, and pressing it again must hide the bar — leaving the keyframes it held intact when it is shown again — with the canvas' box and its drawing
 buffer still in step (README D44); a drag far past an edge must park
 the window against it with its title bar still reachable; a press below the rail must reach the viewport rather than the overlay; a second import

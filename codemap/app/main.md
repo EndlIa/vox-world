@@ -34,7 +34,7 @@ function main(): void;
    and the export camera — and the `Capture` that renders through it — tests layer 0 alone; `new THREE.WebGLRenderer({ canvas: viewport,
    antialias: true, logarithmicDepthBuffer: true })`; `new SceneMirror(project, { background, ambientIntensity })`, whose `mirror.camera` is the output camera; `new
    `ViewportControls(viewport, viewportCamera)`; `new Overlay(mirror.scene)`; `new WorldGrid()`, whose `root` is added to `mirror.scene` —
-   viewport decoration on layer 1 like the overlay, so it is never picked and never exported (D35); `new CameraControl(mirror.scene)`, the
+   viewport decoration on layer 1 like the overlay, so it is never picked and never exported (D35, D49); `new CameraControl(mirror.scene)`, the
    runtime-only camera carrier the edit gizmo aims the output camera with (README D46) — a hidden node on the same layer 1, so it is never picked
    and no export frame contains it, and it reports the authored camera rather than owning any data — with `CAMERA_CONTROL_PIVOT`, `new Vector3(0, 0, 0)`,
    as the pivot the gizmo attaches it at; `new CameraPath(mirror.scene)`, the runtime-only drawing of the authored camera's trajectory (README D47) —
@@ -191,20 +191,18 @@ function main(): void;
    - Grid display — the `Grid` group's three controls are the viewport's own settings, so the actions and `gridSettings` go through the
      `worldGrid` instance rather than through `app`: `Panels` refreshes inside its own constructor, and that first refresh runs before `app` is
      built, so a context built out of `app` would read a variable that is not there yet, while the instance has existed since step 2.
-     `setBaseGridVisible(visible)` is the base layer's switch: it hands the flag to `worldGrid.setBaseVisible` and then calls
-     `panels.refresh()`, which re-seeds the checkbox from `gridSettings()` —
-     that re-seed is what makes the box a view of the app's flag rather than a forward-only control, because a value the grid did not take would
-     come back as the box returning to its old state; it calls no `refreshObjectGrid()`, since the base plane is not the lattice.
-     `setObjectGridVisible(visible)` and `setGridMargin(cells)` write `worldGrid.setObjectVisible` and `worldGrid.setMargin` and then call both
-     `refreshObjectGrid()` and `panels.refresh()`, because each changes the lattice the second layer draws; the margin action returns early
-     unless the value is a non-negative integer (`Number.isInteger(cells) && cells >= 0`), so a cleared or fractional field never reaches the
-     grid. `refreshObjectGrid()` is the one place the second layer is aimed: it takes the active object's own grid and
-     `project.worldMatrix(id)` and hands them to `worldGrid.showObjectLattice(...)`, or clears the layer when there is no active object or that
-     object has no uniform grid. It is guarded by the cheap `objectGridKey` — the active id, the grid's `subdivision` and `size`,
-     `worldGrid.margin`, and `worldGrid.objectVisible` — because the lattice geometry is rebuilt on every call, an edit reaches this on every
-     commit, and `grid.bounds()` scans the occupied cells, so an unchanged key returns before anything is rebuilt. Its two call sites are
-     `commitDirty()` and `sessionChanged()`, which is how every commit and every session change re-aims the lattice at what is now active
-     (README D43).
+     `gridSettings: () => ({ mode: worldGrid.gridMode, axis: worldGrid.multiAxis, offset: worldGrid.multiOffset })` is the view the panel seeds
+     its three fields from. `setGridMode(mode)` hands the display to `worldGrid.setMode` and then calls `panels.refresh()`, which re-seeds the
+     `Display` select from that same view — the re-seed is what makes the field a view of the app's state rather than a forward-only control,
+     because a value the grid did not take would come back as the field showing what the grid holds — and it is also the refresh that re-derives
+     the disabled rule for the axis and the offset. `setGridAxis(axis)` calls `worldGrid.setMultiPlane(axis, worldGrid.multiOffset)` and
+     `setGridOffset(offset)` calls `worldGrid.setMultiPlane(worldGrid.multiAxis, offset)`, so each action writes one component and keeps the
+     other, and the two together are the whole of the moved plane's control. The offset action is the one that can arrive with
+     nothing usable: the field is a number input with `step 1`, so it accepts a fraction such as `0.5`, and `Number.isInteger`
+     refuses it — the action calls `panels.refresh()` and returns, so a non-integer never reaches the grid, which would refuse it
+     with a `RangeError` (README D49). Nothing here
+     re-aims a lattice any more: the per-object lattice and `refreshObjectGrid` left with D43's second layer, and its `objectGridKey` went with
+     them, so a commit and a session change now touch no grid at all.
    - Defaults: `defaults()` seeds the dialog from the retained import's `voxelizeBounds`: `extent` is that box's size per
      axis, which the dialog reads its count against to print the model's dimensions (README D29, D41). With no import, or when
      the box it would measure is empty, every axis falls back to `DEFAULT_EXTENT` — the count the prompt already opens at,
@@ -263,7 +261,10 @@ function main(): void;
    followed by `cameraPath.faceCamera(renderCamera.quaternion)`, which turns the path's rings to the drawing camera (README D47):
    the size comes from how far the drawing camera is, floored at the distance navigation orbits from, because a viewport that sits *on* the carrier —
    which is exactly what `View -> Camera` produces — would otherwise scale the drawing and the gizmo down to a dot, and the orbit radius is the
-   scene's own scale. That floor is the drawing's floor alone: `TransformControls` sizes its own handles by the distance to the drawing camera, so
+   scene's own scale. The grid follows the same camera, one statement before that distance goes to the two drawings:
+   `worldGrid.update(renderCamera)` puts the shown display's planes on the camera the frame is about to be drawn through — so a locked output
+   camera gets the same reference as the editor camera, and the planes read nothing of it but its position — and it is decoration, so nothing
+   about it reaches the render or the framing (README D49). That floor is the drawing's floor alone: `TransformControls` sizes its own handles by the distance to the drawing camera, so
    with the viewport on the carrier the handles still degenerate, and the flow that follows is to orbit away — a middle-drag moves the viewport off
    the carrier while the carrier stays where it was — after which the handles are grabbable again. Sizing them the way the object gizmo already does
    was chosen over special-casing the carrier. Finally `timelinePanel.setTime(playback.time * 1000)` — the clip's seconds into the widget's milliseconds, the mirror image of `onScrub`'s division (README D45) — and a fresh `HudState` into the HUD.
@@ -285,9 +286,9 @@ function main(): void;
 
 ## Invariants
 - `main()` creates the renderer, the mirror, and every listed object once, and schedules exactly one render loop.
-- Project mutations get `mirror.markDirty` plus `panels.refresh()` and, through `commitDirty()`, a re-aim of the object lattice
-  (`refreshObjectGrid()`); every session change refreshes the mode bar, the panels, and the timeline and re-aims that lattice too, and timeline
-  edits go through `onEdited` → `playback.rebuild`; one job at a time.
+- Project mutations get `mirror.markDirty` plus `panels.refresh()`, every session change refreshes the mode bar, the panels, and the timeline, and
+  timeline edits go through `onEdited` → `playback.rebuild`; one job at a time. A commit re-aims nothing: the grid follows the camera in the loop
+  rather than the document, so the per-object lattice's refresh and its `objectGridKey` are gone (README D49).
 - Every path that can make geometry measurable re-fits the **viewport** camera: the import path fits right after `commitDirty()`, on the raw meshes the
   user is about to answer the dialog about, and a confirmed prompt fits again through `runVoxelizeJob`, whose success path fits after
   `applyVoxelizeResult` and `commitDirty()`, because a payload can only be measured once it is attached. No other path moves the camera, and the output
@@ -343,9 +344,14 @@ function main(): void;
   the payload the object is at the identity, after it at the payload's translation, and `applySources` re-derives each mesh's local matrix from it: the app
   never re-parents a mesh, never computes a placement, and never writes a mesh matrix itself. Whether they are shown is the mirror's flag and the panel's
   checkbox (`setSourceVisible` + `sceneVisible`) — `main` keeps no copy of it and never toggles `visible` on a mesh itself.
-- The `Grid` group's settings live on the viewport's grid and never in the document: `panelContext.gridSettings` reads `WorldGrid`'s `baseVisible`,
-  `objectVisible`, and `margin`, and the three grid actions write that one instance, so the panel and the grid it displays cannot disagree; `objectGridKey`
-  is only what keeps a commit's re-aim cheap, and no grid flag ever reaches `project`, a timeline track, or an export.
+- The `Grid` group's settings live on the viewport's grid and never in the document: `panelContext.gridSettings` reads `WorldGrid`'s `gridMode`,
+  `multiAxis`, and `multiOffset`, and the three grid actions write that one instance, so the panel and the grid it displays cannot disagree; no grid
+  flag ever reaches `project`, a timeline track, or an export.
+- The grid is put on the camera the frame is drawn through, and only the shown display is put there: the loop calls
+  `worldGrid.update(renderCamera)` once a frame, after `renderCamera` is chosen and before the render, so a locked output camera gets the same
+  reference as the editor camera while the two fixed displays and the hidden planes cost nothing (README D49). It is decoration on layer 1, which
+  `frameAll` does not measure — it reads layers 0 and 2 — so a 512-unit plane can never widen an import's framing, and the export camera's layer 0
+  never sees it.
 - The timeline bar's visibility is the app's `timelineVisible` flag alone, and the bar is never shown or hidden without the canvas following:
   `index.html` carries the `hidden` attribute so the first paint is already collapsed, `setVisible` is the panel's only view of the flag and the
   rail's `Animation` button its only writer through `setTimelineVisible`, and the observer on `timelineRoot` refits the drawing buffer to the
@@ -405,8 +411,10 @@ nothing to refuse (README D46).
   `VoxelizeTarget` to import any more: the confirmed count is baked into the scaled scene (README D41).
 - `../voxels/uniform/grid.js` — `UniformGrid` for the demo cube's unit cells (README D41), and `HexColor`, `IntBox3` for the mask-color action
   and the selection text.
-- `../three-runtime/{scene,picking,controls,capture,overlay}.js` — `SceneMirror`, `Picker`, `ViewportControls`, `Capture`,
-  `Overlay`, `WorldGrid`, and `../three-runtime/cameraControl.js` — `CameraControl`, the runtime-only carrier the gizmo aims the output camera with
+- `../three-runtime/{scene,picking,controls,capture,overlay,grid}.js` — `SceneMirror`, `Picker`, `ViewportControls`, `Capture`,
+  `Overlay`, `WorldGrid`, and the `GridMode` type, plus `../three-runtime/gridPlane.js` for the `GridAxis` type — the two are imported as **types**
+  alone, because they are what the panel context's `gridSettings` view and its three grid actions are typed with (README D49); and
+  `../three-runtime/cameraControl.js` — `CameraControl`, the runtime-only carrier the gizmo aims the output camera with
   (README D46); `../three-runtime/cameraPath.js` — `CameraPath`, the runtime-only drawing of the authored camera's trajectory, and
   `../animation/trajectory.js` — `sampleCameraTrajectory` and `cameraKeyframePositions`, the points it is handed (README D47); `../animation/playback.js` and `../export/job.js` — `Playback`, `ExportJob`.
 - `../ui/{panels,timeline,hud,dom}.js` — `Panels`, `TimelinePanel`, `Hud`, `el`, and the `CameraPose` type its `setCameraPose` action takes;

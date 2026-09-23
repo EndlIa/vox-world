@@ -1,115 +1,126 @@
 # src/three-runtime/grid.ts
 
-Ring: 2 · Layer: three-runtime · Depends on: `../voxels/uniform/grid.js`, `three`
+Ring: 2 · Layer: three-runtime · Depends on: `./gridPlane.js`, `three`
 
 ## Responsibility
-The viewport's grids: a base reference plane at `y = 0` that tells the user how big a metre is — which a
-viewport showing a bare model against a flat background otherwise cannot (README D35) — and the *active*
-object's own lattice, drawn at that object's subdivision over its occupancy plus a margin of its cells, on the
-plane of its lowest occupied cell and in its own frame (README D43). Where the lattice is drawn the base plane
-is cut away, so the two never read as one grid at two scales.
+The viewport's world grid: one of three displays, each a set of shader-drawn planes, chosen by the Grid group's
+`Display` field. They are the reference viewport's displays and they are mutually exclusive rather than additive
+(README D49):
 
-Both layers are decorations in every direction: layer 1 means the raycaster never picks them (it tests 0 and
-2) and an export never contains them (the export camera enables 0 alone), `depthWrite = false` means they
-cannot occlude voxels, and `frameAll` ignores the layer, so a grid can never widen the framing of an import.
-It owns the two layers, their line geometry, and the three display settings behind the Grid group; it holds no
-project data, does no per-frame work, and rebuilds a layer only when the caller hands it something new.
+- `floor` — one horizontal plane on the world's ground, the reference for building on it.
+- `volume` — that ground plus the two walls that close a work cube, so a model can be read in three dimensions while
+  it is being built rather than only from above.
+- `multi` — one plane the user aims at an axis and slides along it, for work that does not happen on the ground.
+- `off` — no grid at all.
+
+Every plane is a `GridPlane` (`./gridPlane.ts`), so the lines anti-alias and fade instead of dissolving into noise
+with distance, and every plane is anchored in phase to the world's cell boundaries: the camera moves the quad, never
+the lines. The whole display is decoration — layer 1, no depth write, no project data, outside `frameAll`'s
+measurement — so it is never picked, never exported, and can never widen the framing of an import (README D24, D35).
+
+The active object's own lattice is gone with the displays that replaced it (README D49): a lattice at a model's own
+subdivision, on the model's own plane, read as a sheet hanging in the air the moment the model left the ground, and a
+per-object grid is not what the reference viewport shows at all. What D43 decided about the **data** stands
+untouched — a model still carries its subdivision, its cells and its placement are still measured in its own cells,
+and the import dialog is unchanged — so this module no longer imports `../voxels/uniform/grid.js` at all: only the
+drawing went, and with it the base plane's line geometry, its hole cutting, and the footprint maths that drove it.
 
 ## Public interface
 ```ts
-const DEFAULT_GRID_MARGIN = 8;
+const GRID_MODES = ['off', 'floor', 'volume', 'multi'] as const;
+type GridMode = 'off' | 'floor' | 'volume' | 'multi';
+const DEFAULT_GRID_MODE: GridMode = 'floor';
 
 class WorldGrid {
   constructor();
-  readonly root: THREE.Group;   // `world-grid`: `world-grid-base` + `world-grid-lattice`
-  get baseVisible(): boolean;
-  get objectVisible(): boolean;
-  get margin(): number;
-  setBaseVisible(visible: boolean): void;
-  setObjectVisible(visible: boolean): void;
-  setMargin(cells: number): void;
-  showObjectLattice(grid: UniformGrid | undefined, matrixWorld: THREE.Matrix4 | undefined): void;
+  readonly root: THREE.Group;   // `world-grid`: the five named planes; only the shown display's are visible
+  get gridMode(): GridMode;
+  get multiAxis(): GridAxis;
+  get multiOffset(): number;
+  setMode(mode: GridMode): void;
+  setMultiPlane(axis: GridAxis, offset: number): void;
+  update(camera: THREE.Camera): void;
   dispose(): void;
 }
 ```
+Module-private: `GROUND_OFFSET = 0` (the world's ground, the bottom plane of cell row zero), `VOLUME_WALL_OFFSET =
+-60` (the work cube's half side, so its walls sit there at negative `x` and `z`), and `DEFAULT_MULTI_AXIS = 'x'` (the
+moved plane opens vertical through the origin, where a centred model wants slicing).
 
 ## Internal logic
-1. Every line lives in a `LineSet` — a `LineSegments` with its `LineBasicMaterial` (transparent,
-   `depthWrite = false`, layer 1, `frustumCulled = false`) and a render order. `setVertices` replaces a set's
-   geometry wholesale and disposes the geometry it had, so a rebuild leaves nothing behind.
-2. Construction builds the base as two sets: `minor` at render order 0 (`0x9aa2ad` at 0.28) and `major` at 1
-   (`0xe6e8ea` at 0.5), so the brighter line is drawn last where the two levels coincide on the same `y = 0`.
-   Both come from `baseVertices`, with `step` 1 and `step` 10 over the fixed `GRID_EXTENT = 200`. The lattice
-   is one set at render order 2 (`0xe6e8ea` at 0.6 — brighter than either base level, so it reads as the finer
-   measure), `matrixAutoUpdate = false`, inside a group that starts hidden. `root` is `world-grid`; the two
-   groups are `world-grid-base` and `world-grid-lattice`.
-3. The base's colours are panel greys rather than the reference grid's pure white, which reads as a stray
-   frame line against this viewport's slate background (README D32 is the same lesson).
-4. `baseVertices(step, hole)` walks the plane's fixed coordinates from `-100` to `100` by `step` and emits each
-   line as one ground-plane segment, or — when that fixed coordinate falls strictly inside the hole's rectangle
-   — as the one or two pieces outside it (`pushSegment`, which drops a zero-length piece). A line that only
-   touches the hole's edge, and a line outside it, is emitted whole, so the plane keeps its extent and simply
-   has a rectangle missing.
-5. `latticeVertices(grid, margin)` returns the object-frame segments plus the local rectangle they span, or
-   `undefined` for a grid with no occupied cell. With `cell = grid.cellSize` it draws the cell boundaries along
-   x and z, one per cell index from `bounds.min - margin` through `bounds.max + 1 + margin` — `bounds ± margin`
-   cells — with every vertex at `y = bounds.min[1] * cell`, the plane of the lowest occupied cell.
-6. `showObjectLattice` returns before doing anything when the same grid instance, the same matrix elements, and
-   the same margin are already shown (`shown` keeps the instance, a clone of the matrix, and the margin it was
-   built for). With either argument missing, or a grid with no occupied cell, it clears: `shown` unset, the
-   layer hidden, empty geometry, and the base restored (`setHole(undefined)`). Otherwise it rebuilds the lines,
-   copies `matrixWorld` into `lines.matrix` with `matrixWorldNeedsUpdate = true` — so the placement and any
-   parent rotation are carried rather than baked into the vertices — shows the layer only while
-   `objectVisible`, and cuts the base with `footprintOf(local, matrixWorld)`: the world-space x/z bounding box
-   of the local rectangle's four corners, so a turned object is cut by its extent rather than exactly.
-7. `setMargin` re-shows the lattice at the new margin through the same path, using the retained grid and matrix
-   clone; `setBaseVisible` and `setObjectVisible` only toggle their own group — hiding the lattice leaves the
-   hole where it is, and `setObjectVisible(true)` shows the layer only if `shown` exists.
+1. Construction builds five planes — `new GridPlane('y', GROUND_OFFSET)` for `floor`;
+   `('y', GROUND_OFFSET)`, `('x', VOLUME_WALL_OFFSET)`, and `('z', VOLUME_WALL_OFFSET)` for `volume`; and
+   `(this.axis, this.offset)` for `multi` — names their meshes `world-grid-floor`, `world-grid-volume-ground`,
+   `world-grid-volume-wall-x`, `world-grid-volume-wall-z`, and `world-grid-multi`, and adds all five to one `Group`
+   named `world-grid`, which is `root`. The instance's `axis` and `offset` are the moved plane's state and start at
+   the constants above.
+2. `displays` is the map from a display to the planes it shows, and it partitions the five: `floor` holds the floor
+   plane, `volume` its own ground plus the two walls, `multi` the moved plane, and `off` nothing. No plane belongs to
+   two displays, so nothing is ever drawn twice and `dispose` can release each plane exactly once.
+3. `apply()` writes visibility for every plane from the current display's list, and is the only writer: `setMode`
+   calls it after storing the mode, and the constructor calls it once. A mode switch therefore leaves nothing of the
+   previous display on screen, and the visibility state of all five planes is always the map's answer.
+4. `setMode(mode)` throws a `RangeError` when the argument is not one of `GRID_MODES` — a stranger is a programming
+   error, not a value to ignore — and returns early when the mode is already the one on screen, so a repeated write
+   does no work.
+5. `setMultiPlane(axis, offset)` is the moved plane's writer: it throws a `RangeError` for an axis that is not in
+   `GRID_AXES` and another when the offset is not a whole world unit, then records both and hands them to the moved
+   plane's `setFacing`. It does not touch `apply`, because aiming or sliding a plane never changes which display is
+   on screen.
+6. `update(camera)` is the per-frame call: it walks the **current** display's planes and follows each, so the two
+   fixed displays and the hidden planes cost nothing, and the whole display moves on one camera in one pass.
+7. `dispose()` disposes every plane in `displays` and clears `root`, so the group is emptied as well as its children
+   released. A second call walks the same planes and re-runs the idempotent per-plane disposal on an already-empty
+   group; nothing is called twice by the app, and nothing fails.
 
 ## Invariants
-- Everything is on layer 1: the raycaster tests layers 0 and 2, so no grid is ever picked, and the export
-  camera enables layer 0 alone, so no grid ever appears in a frame (README D24). `frameAll` measures layers 0
-  and 2, so a grid can never widen the framing of an import.
-- `depthWrite = false` throughout, so a grid can never occlude a voxel, and the order between the two base
-  levels and between the layers is fixed by `renderOrder` (0, 1, 2) rather than by geometry.
-- The base keeps its extent: the fixed-coordinate set is the same with and without a hole — 201 lines per
-  direction at `step` 1 — and only a rectangle is missing, because a crossing line is emitted as its pieces
-  and those pieces reach the plane's edges. With no hole the whole plane is back.
-- A repeat `showObjectLattice` with the same grid instance, the same matrix elements, and the same margin
-  rebuilds nothing: the lattice's geometry is replaced only when the answer differs.
-- The lattice is always the object's own cells at its own level: it is built from `bounds()` in cell
-  coordinates times `cellSize`, on the object's lowest plane, so a subdivision change moves it and no world
-  unit is involved.
-- The three settings are the only state, and no method is per-frame: nothing here reads a camera, a project, or
-  a session.
-- `dispose()` disposes all three geometries and materials, empties the two groups and `root`, and unsets
-  `shown`; the group is left childless, so a second call has nothing left to empty.
+- One display at a time, and only its planes are visible: `apply()` derives all five planes' `visible` from
+  `displays[mode]`, so the displays can never be additive and switching one off leaves nothing behind (README D49).
+- The floor and the volume's ground are two different planes, not one plane shown twice: a display's planes are its
+  own instances, so a mode switch never aliases the facing or the offset one display was given into another's.
+- The fixed displays are fixed: the ground sits at `0` on `y` and the work cube's walls at `-60` on `x` and `z`, whole
+  cells out, and only `update` moves them — and it moves the two coordinates each plane does not face, so its own
+  plane is untouched.
+- Per-frame work is the shown display's planes and nothing else: `update` reads the current display's list, so `off`
+  and every plane of the other displays are genuinely free.
+- Grid settings are the viewport's, never the document's: the three settings are the only state, the app reads them
+  for the panel through `gridMode` / `multiAxis` / `multiOffset`, and nothing here reads a `Project`, a session, or an
+  export.
+- `dispose()` releases every plane exactly once and empties `root`; afterwards nothing of the grid is in the scene,
+  and calling it again is harmless.
 
 ## Errors
-- `setMargin` throws `RangeError` for a non-integer or negative `cells`, naming the method and the value.
-- Every other path is total: `showObjectLattice` reads `undefined` as "clear this layer" rather than failing,
-  and an unoccupied grid is `undefined` from `latticeVertices` rather than a throw. Nothing here throws
+- `RangeError` from `setMode` for a name that is not a display, naming the method and the value.
+- `RangeError` from `setMultiPlane` for an unknown axis, and another for an offset that is not a whole world unit:
+  a plane between two cells would put its lines between the world's own (README D49).
+- Everything else is total. The constructor builds only compile-time constants, so a plane can never be constructed
+  with a bad offset from here; `update` accepts any camera; `dispose()` is safe twice. Nothing here throws
   `TypeError`.
 
 ## Dependencies
-- `../voxels/uniform/grid.js` — `UniformGrid` (type-only import), for `grid.bounds()` and `grid.cellSize` in
-  `latticeVertices`.
-- `three` — `Group`, `LineSegments`, `LineBasicMaterial`, `BufferGeometry`, `Float32BufferAttribute`,
-  `Matrix4`, `Vector3`. No project, editor, UI, or other three-runtime module; the owner passes the scene in by
-  adding `root` itself, exactly as `Overlay` is used.
+- `./gridPlane.js` — `GridPlane`, the one plane, and `GRID_AXES`, so the axis check asks the module that defines the
+  axes rather than restating them; `GridAxis` is a type-only import for the same reason.
+- `three` — `Group` for `root` and the `Camera` type `update` takes. No project, editor, UI, document, or other
+  three-runtime module: the owner (`app/main.ts`) adds `root` to `mirror.scene` and calls `update` from the render
+  loop, exactly as it does for `Overlay`.
+- It no longer imports `../voxels/uniform/grid.js`: `UniformGrid`, `DEFAULT_GRID_MARGIN`, `showObjectLattice`, the
+  margin, the hole, and the footprint maths that existed to cut the base plane under a lattice are all gone with
+  D43's second layer.
 
 ## Tests
-`tests/grid.test.ts` pins the two layers' geometry and the three settings in the node environment; see
-`codemap/tests/grid.md`. What needs a GPU stays app-verified (README §10): the base and the lattice visible
-with their palettes and contrast, sitting under the voxels rather than over them, not pickable (a click on an
-empty grid area selects nothing), and absent from an exported frame.
+`tests/grid.test.ts` pins the displays and their mutual exclusivity, the default, the work cube's three planes staying
+on their own planes under a camera move, and the moved plane's aim, offset, facing, and refusal — in the node
+environment, no DOM and no GPU; see `codemap/tests/grid.md`. What needs a GPU stays app-verified (README §10): the
+display visible with its palette, the percentage of the view region it changes, the walls and the moved plane moving
+with the axis and the offset, nothing of the grid inside the model's silhouette, the fine lines fading before the
+coarse ones, and no hard edge where a plane ends.
 
 ## Open questions
-- The cut is a rectangle: `footprintOf` takes the lattice rectangle's axis-aligned world x/z box, so a rotated
-  object cuts away more of the base than its lattice actually covers. An exact per-line cut was not needed for
-  the placements the editor produces today.
-- The base's side is fixed at 200 world units, its cell at one, and its bright level at every tenth. A scene
-  much larger than that would want the extent to follow the content or the camera; it is a viewport
-  convenience, and it may never change the stored data (a grid is decoration, never a source of scale).
-- The margin is a fixed default of 8 cells, so a fine grid with a small occupancy still gets a wide rectangle
-  around it. A margin that followed the camera's zoom would keep the lattice at a readable density.
+- The three displays are the reference's, and `multi` is one plane: a second movable plane, or planes the pointer
+  can pick and build on as a work surface, is a later slice (README D49).
+- The work cube's half side is fixed at 60 world units — the reference's 120-cell cube — so its walls are off screen
+  for a small model until the view is pulled back.
+- Offsets are whole world units: a plane between two cells is refused rather than rounded, so sub-cell work planes
+  are not offered.
+- The display is viewport state with no persistence, so a reload opens on `floor`; nothing in a project records which
+  grid the user was looking at.
