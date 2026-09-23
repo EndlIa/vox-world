@@ -143,7 +143,7 @@ src/
     controls.ts       OrbitControls, TransformControls, gizmo claim
     capture.ts        offscreen renderer at export resolution
     overlay.ts        box preview feedback
-    cameraControl.ts  runtime-only carrier drawing the output camera: body, frustum, up marker
+    cameraControl.ts  runtime-only carrier drawing the output camera: three's frustum and up marker
   editor/
     session.ts        active object, tool, selection
     ops.ts            edit operations over document state
@@ -506,8 +506,8 @@ an empty one is taken off the screen entirely, because a bare frame over the can
 for; and `app/main.ts` stays out of all of it, since the rail is inserted inside the element `main` already
 hands to `Panels` and is ordered first by CSS rather than by append order, which is what puts the buttons above
 the status line `main` appended before the panel existed. Stacking is fixed rather than incidental: windows sit
-above the HUD and below the voxelize modal, so the one modal in the app is never covered by a window the user
-opened.
+above the HUD, and the one modal in the app is a native `dialog` in the platform's top layer rather than a rung of
+that ladder, so it is never covered by a window the user opened.
 
 **D32 — The export-aspect guide is gone.** The viewport used to carry a thin white outline marking the
 rectangle an export would capture (D17's `OutputPreview`, drawn on layer 1 and hidden while the camera lock
@@ -922,6 +922,17 @@ picker nothing); **a fixed world size** (an authored scene can be metres or kilo
 and fills the view in another); **screen-constant sizing** (it would need the drawing camera's projection here and would still not fix the handles,
 which `TransformControls` sizes from the distance).
 
+**Revision: the drawing itself is now three's `CameraHelper`.** The carrier originally built its own body box, frustum frame, and up triangle from
+hand-written buffers. It now hands the library a display-only `PerspectiveCamera` it owns and lets `CameraHelper` build the frustum, the cone, the up
+marker, the axis and the crosses, painting all five of the library's colour slots the carrier's own colour on selection; `BODY_EDGES`, `rebuildFrustum`,
+the up marker's buffer, and their three materials are gone. Two consequences are recorded rather than discovered later: the display camera is a third
+`Camera` *object* at runtime, which renders nothing, is in no scene, and is never read for a matrix — D17's "exactly two cameras" is about the cameras
+the app renders through — and the carrier now shows marks it did not have before (a cone from the apex, the axis between the frames, a cross at each
+frame), because trimming another library's geometry would mean rebuilding it. The two planes it draws are display constants (`FRUSTUM_NEAR = 1`,
+`FRUSTUM_FAR = 2`) rather than the authored camera's own near and far, which a kilometre-scale world (D40) would turn into a frustum spanning the whole
+scene. Rejected in this revision: hand-setting the interpolant-level details of another library's geometry, and keeping a hand-built frustum beside the
+library one.
+
 Affected contracts: `three-runtime/cameraControl.md` (new), `three-runtime/controls.md` (`setViewFrom`), `ui/panels.md` (the two types, the
 `cameraControl` source and its gating, the actions, the `Camera` group), `app/main.md` (the carrier, the flags, the gizmo branch, the four commands,
 the frame loop, the teardown), `tests/cameraControl.md` (new), and this file's §9.
@@ -943,10 +954,11 @@ is shown only from two camera position keyframes up, and it is hidden with the c
   `compile.ts` writes and `playback.ts` resolves (D22). The action is `LoopOnce` with `clampWhenFinished`, because a repeating action folds the sample
   taken at the clip's length back onto the first keyframe, and the drawn path has to reach the last one.
 - **One ring per keyframe, drawn in world space.** `cameraKeyframePositions` reads the authored track directly, so a ring marks a keyframe rather than
-  a sample of the curve between two of them. The rings are billboards — three has no billboard mode on a mesh — so `faceCamera` copies the drawing
-  camera's quaternion onto each one per frame, and `setScreenScale` sizes each **mesh** from the viewing distance, the same floored distance the
-  carrier uses. Scaling the marker group instead would scale the markers' world positions with their size, and the rings would drift off the path they
-  belong to.
+  a sample of the curve between two of them. The rings are one `Points` set, and the ring itself is a 64-texel annulus in a `DataTexture` the material
+  is given — built from data, so it needs no canvas and no DOM: a point sprite faces the drawing camera by construction, which removes the billboard
+  code and its per-frame rotation write, and `setScreenScale` writes the size once on the material instead of walking every marker. Scaling the marker
+  group instead would scale the markers' world positions with their size, and the rings would drift off the path they belong to — which is why the
+  library's point set, whose size lives on the material, is what the markers are drawn with.
 - **Layer 1 and unnamed (D24, D22).** The whole subtree — the root included, so a child added later cannot escape — is on the decoration layer, and
   nothing in it is named, so the picker, the export camera, and the mixer's binding walk all miss it.
 - **Two keyframes or nothing.** Fewer than two camera position keyframes is not a path, so the `Camera` group's `Show camera path` checkbox is
@@ -955,10 +967,19 @@ is shown only from two camera position keyframes up, and it is hidden with the c
 - **The bar cannot eat the viewport.** The timeline's keyframe list is capped at `100px` and scrolls, so a track of many keyframes leaves the bar a
   fixed height instead of pushing the viewport off screen; going from a few keyframes to many changes nothing above the list.
 
-Accepted costs: one quaternion copy per visible marker per frame — the price of a billboard without a built-in mode — and the app makes that call
-every frame rather than only on change; a scratch `AnimationMixer` and a fresh sampler clip are built on every redraw, at 128 segments by default, so
+Accepted costs: the marker rings are one texture stretched to their size rather than vector rings, so a marker very close to the drawing camera is
+magnified rather than crisp; a scratch `AnimationMixer` and a fresh sampler clip are built on every redraw, at 128 segments by default, so
 an edit that changes the trajectory pays for a compile plus a mixer that is discarded immediately; and the capped keyframe list scrolls, so a long
 track shows only the rows its height holds.
+
+**Revision: the markers became one point set, and the sampler stays on the mixer.** The rings were one mesh per keyframe turned to the camera by hand;
+they are now one `Points` set drawn with a ring texture, which is what removed `faceCamera`, the per-marker size walk, and the per-marker meshes. The
+sampling itself was tried through `KeyframeTrack.createInterpolant()` instead of the scratch mixer — it would have removed the scratch root, node, clip,
+and action — and that swap was withdrawn on measurement: the two agree exactly for `step` and `linear` tracks (to float32 rounding) and disagree by up
+to 7% of the path's extent for a `smooth` one, because the interpolant alone does not evaluate what playback evaluates. The difference is the end
+conditions: an `AnimationAction` gives its interpolants `endingStart`/`endingEnd` and rewrites each one's result buffer from the mixer's own binding
+buffer, and a cubic track's last segment follows the end condition. The drawn curve has to be the curve playback and export play (D2), so the mixer —
+three's own public evaluation path — stays, and the interpolant route would have meant copying mixer internals to stay faithful.
 
 Rejected: **a second interpolation implementation** (sampling the keyframes in the sampler would duplicate the compiled track's step/linear/smooth
 semantics and could disagree with playback and export, which is what D2 forbids); **sizing the markers through their group** (a scale on the group
@@ -969,7 +990,7 @@ state is also where the app says how a path comes to exist).
 Affected contracts: `animation/trajectory.md` (new), `three-runtime/cameraPath.md` (new), `tests/trajectory.md` and `tests/cameraPath.md` (new),
 `ui/timeline.md` (the capped, scrolling keyframe list), `ui/panels.md` (the two view fields, the action, the `Show camera path` box, its seeding and
 gating), `app/main.md` (the drawing, `AppContext.cameraPath`, `cameraPathVisible`, `refreshCameraPath` and its callers, the toggle, the frame-loop
-scale and billboard calls, the teardown), and this file's §9.
+scale calls, the teardown), and this file's §9.
 
 
 ### D48. A run of the clip follows the output camera, and a pause hands the frame back

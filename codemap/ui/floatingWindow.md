@@ -51,8 +51,8 @@ class FloatingWindow {
    title bar still grabbable, and both clamped numbers are what the window keeps.
 6. `raise()` puts this window above the other windows without moving anything in the DOM: it collects the siblings in the same parent that carry
    the window class, sorts them by their current inline `z-index`, renumbers them from `BASE_Z` (15), and gives this window the next step. The
-   ladder is bounded by the number of windows in the parent — five in the panel — so it never reaches the voxelize modal's `z-index: 20`, and it
-   stays above `#hud` (10) whatever order the windows are pressed in. Because the DOM is not touched, a press that raises a window cannot break
+   ladder is bounded by the number of windows in the parent — five in the panel — so it stays above `#hud` (10) whatever order the windows
+   are pressed in; the voxelize modal is a native `dialog` in the top layer, so no window is ever on its ladder. Because the DOM is not touched, a press that raises a window cannot break
    the click that follows it, so `×` still closes a window that was not on top.
 7. `dispose()` is idempotent: it ends the drag in flight, calls every stored detach function, empties the list, removes `root` from the document,
    and marks the window disposed and closed.
@@ -65,7 +65,8 @@ class FloatingWindow {
 - `onVisibilityChange` is called exactly once per change of visibility, with the new state, and never for a no-op (`open()` on an open window,
   `close()` on a closed one) — which is what keeps the owner's marker in step with the window.
 - `root` stays in the parent the owner put it in: `raise()` only rewrites inline `z-index`, and the value it writes is always at most
-  `BASE_Z + (windows in that parent) − 1`, so every window is over `#hud` (10) and under the voxelize modal (20).
+  `BASE_Z + (windows in that parent) − 1`, so every window is over `#hud` (10); the ladder never reaches the top layer the voxelize
+  modal lives in.
 - A drag's `pointermove`/`pointerup` listeners exist on `window` exactly while the pointer is down on a title bar (plus the three permanent
   listeners), and no pointer capture is ever taken.
 - After any drag the window keeps at least 120 px of its width inside the viewport and its whole title bar inside the viewport. A window wider

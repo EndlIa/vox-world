@@ -4,7 +4,8 @@ Ring: 4 · Layer: ui · Depends on: ./dom.js
 
 ## Responsibility
 The voxelization settings modal: the only place the voxel count is chosen (README D26). It shows a
-backdrop and a card, seeds the count the prompt opens at and the model's per-axis extent from the
+modal card — a native `<dialog>` the platform puts in its top layer, with `::backdrop` dimming the page
+behind it (`index.html`) — seeds the count the prompt opens at and the model's per-axis extent from the
 `defaults()` callback it was constructed with, and
 answers one `VoxelizeDialogOutcome` per prompt: `{ kind: 'run', cellsAcross }` on confirm,
 `{ kind: 'cancel' }` on Cancel or Escape. The one field asks how long the model is in voxels, and the
@@ -26,20 +27,23 @@ class VoxelizeDialog {
 ```
 
 ## Internal logic
-1. The constructor builds the whole modal once through `el`: a backdrop `div` (`position: fixed; inset: 0; z-index: 20`, a
-   translucent page-colored fill, and a centered flex row so the card sits in the middle of the window), and inside it a
-   `section` card of 320 px holding the title `h2`, the field, the read-only dimensions line, and a `.row` of the `Voxelize` and
-   `Cancel` buttons. It is never appended by the constructor: `root` receives it only while a prompt is open. The backdrop
-   itself takes no listener: a prompt is answered by its own buttons, so a stray click on it cannot discard the settings the
-   user is choosing.
+1. The constructor builds the whole modal once through `el`: a `<dialog>` holding a `section` card of 320 px — the title `h2`, a
+   `<form method="dialog">` with the field, the read-only dimensions line, and a `.row` of the `Voxelize` and `Cancel` buttons.
+   The dialog carries no look of its own: `index.html` resets the platform's border, padding, background, and color, and
+   `dialog::backdrop` is the translucent ground `showModal()` lays between the prompt and the page, so the `section` — which the
+   stylesheet already draws — is what reads as the card. It is never appended by the constructor: `root` receives it only while
+   a prompt is open. The dialog takes no click handling of its own: a prompt is answered by its own buttons, so a press on the
+   backdrop cannot dismiss the settings the user is choosing.
 2. The one field is the `Voxels across` integer input (`min 1`, `max 511`, `step 1`) with its read-only `div.dim` dimensions
    line after it, the field built through the same local labelled-field helper the panel uses (`span.dim` caption + control in
    a `label`). Nothing is hidden, shown, or disabled by state: there is one number to ask for, and no representation,
    cell size, root size, or max depth to choose from.
 3. `open(context)` closes any prompt already on screen as a cancel, then seeds from `defaults()` —
    `voxelsAcrossInput.value = DEFAULT_VOXELS_ACROSS` and `extent = defaults().extent` — writes `context.title` into the `h2`,
-   appends the backdrop to `root`, registers one `keydown` listener on `document`, focuses the count, and returns a promise
-   whose resolver it stores. Seeding on every `open()` is what lets the app ask about a different model each time with no state
+   appends the dialog to `root`, calls `showModal()` on it, focuses the count, and returns a promise whose resolver it stores.
+   `showModal()` is what makes this the platform's modal rather than a hand-built one: the dialog goes to the top layer (above
+   every window and the HUD), the page behind it becomes inert, Escape asks to close it, and closing it hands focus back to
+   whatever held it. Seeding on every `open()` is what lets the app ask about a different model each time with no state
    kept here. The count is the seed that is a constant rather than something the model decides: every prompt opens at 96
    whatever was imported, and the extent is what that count is read against to print the model's shape (README D29).
 4. `syncFields()` runs on seeding and on the count's `input`: it writes the dimensions line and sets
@@ -55,23 +59,31 @@ class VoxelizeDialog {
    sides of the aligned lattice can occupy one cell more than the nominal count, so 511 leaves the grid guard
    (`exceeds-grid`) a cell of slack. A blank field, a fraction, a negative, a non-finite value, or a count past 511 is not an
    answer: nothing is built and `Voxelize` stays disabled.
-6. The `keydown` listener answers the prompt: Enter calls the same confirm path the `Voxelize` button does, Escape closes with
-   a cancel, and both `preventDefault()` so the key never reaches the page. The listener lives on `document` rather than on the
-   card because clicking the backdrop moves focus to the body; it is registered on `open()` and removed by the close that
-   settles that prompt.
+6. Enter and Escape are the platform's, and each has one listener on the dialog. Both buttons are the card form's
+   submit buttons, so a click on either — and the Enter the platform turns into a click on its default button, `Voxelize` —
+   arrives once as one `submit` event naming the button; the handler prevents that submission, because what closes the prompt
+   is this file, not the form (`method="dialog"` is what keeps a submission from navigating the page). A `keydown` listener
+   on the dialog answers Enter as well — it `preventDefault()`s and confirms, so the key neither reaches the page nor reaches
+   the form — because the platform's own Enter needs focus inside the form and a click on the card can leave it on the dialog
+   itself. Escape is the platform's `cancel` and then its `close`, and both settle a pending prompt as a cancel: the pair is
+   not always delivered (a dialog that has been closed and shown again is dismissed with the `cancel` alone), and answering
+   both is what keeps the prompt from hanging with its card already gone from the top layer.
 7. `confirm()` resolves `{ kind: 'run', cellsAcross }` only when `readCount()` returned a count; a field that does not parse
-   leaves the prompt up instead of resolving a cancel or an impossible count. `Cancel`, Escape, and `dispose()` resolve
-   `{ kind: 'cancel' }`.
-8. One private close settles the pending promise and takes the modal out of `root`: it captures the resolver, returns at once
-   when there is none (so a second confirm, cancel, or `dispose()` is a no-op), detaches the key listener, removes the
-   backdrop, then calls the resolver with the outcome — which is why every promise settles exactly once. The field itself is
-   left as it is; the next `open()` re-seeds it.
+   leaves the prompt up instead of resolving a cancel or an impossible count — which is why the submission is prevented
+   rather than left to close the dialog. `Cancel`, Escape, and `dispose()` resolve `{ kind: 'cancel' }`.
+8. One private close settles the pending promise and takes the dialog out of the top layer and out of `root`: it captures the
+   resolver, returns at once when there is none (so a second confirm, cancel, or `dispose()` is a no-op), closes the dialog,
+   removes it, then calls the resolver with the outcome — which is why every promise settles exactly once. The `close` the
+   platform delivers in the task after a `close()` of ours finds the dialog already out of `root` and no resolver left, so it
+   settles nothing; a `close` that arrives while another prompt is up is ignored for the same reason, judged by `dialog.open`
+   (a prompt being awaited is an open dialog). The field itself is left as it is; the next `open()` re-seeds it.
 9. The nodes are built once and reused across prompts: a closed dialog is out of the DOM entirely (nothing of it is on screen,
-   and nothing of it can take a click), and the next `open()` re-appends the same elements after re-seeding them. A second
-   `open()` while a prompt is up first settles the pending one as a cancel, so one prompt is on screen at a time and the newest
-   request — its title and its seeds — is the one being answered.
-10. `dispose()` closes a pending prompt as a cancel, releases the listener, and marks the dialog dead: `open()` afterwards
-    throws, so a page being torn down cannot leave a caller waiting on a modal that will never be answered.
+   and nothing of it can take a click), and the next `open()` re-appends the same elements after re-seeding them and showing
+   them again with `showModal()`. A second `open()` while a prompt is up first settles the pending one as a cancel, so one
+   prompt is on screen at a time and the newest request — its title and its seeds — is the one being answered.
+10. `dispose()` closes a pending prompt as a cancel, takes the dialog out of the top layer and the DOM, and marks it dead:
+    `open()` afterwards throws, so a page being torn down cannot leave a caller waiting on a modal that will never be
+    answered.
 
 ## Invariants
 - At most one prompt is open, `isOpen` is true exactly while a promise is pending, and that promise settles exactly once — a
@@ -89,8 +101,8 @@ class VoxelizeDialog {
   between prompts, no defaults, and no project state.
 - The dialog calls nothing: no `Project`, no session, no ops, no voxelizer, no mirror, and no `app/` import. The outcome is
   the whole of what it produces.
-- Out of the DOM whenever closed: a settled prompt has removed the backdrop and the `document` key listener, so a closed
-  dialog cannot capture a click, a keystroke, or a tab stop.
+- Out of the DOM whenever closed: a settled prompt has closed the dialog — so it is out of the top layer as well — and
+  removed it from `root`, so a closed dialog cannot capture a click, a keystroke, or a tab stop.
 - After `dispose()` the dialog cannot be reopened.
 
 ## Errors
@@ -99,10 +111,15 @@ No `Result` and no reporting: the dialog validates nothing for anyone but itself
 `TypeError`, which is a programmer error — `main` disposes the dialog only while tearing the page down.
 
 ## Dependencies
-- `./dom.js` — `el` for construction and `on` for the document key listener, which returns its own detach function.
-- Page globals (`document`, `KeyboardEvent`) and nothing else: no Three.js, no project, no outer-ring import, and nothing in
-  `ui` imports this file except `app/main.ts` — which also imports `DEFAULT_VOXELS_ACROSS`, the count it scales an arriving
-  import to. `VoxelizeTarget` is gone from the app (README D41), so this file no longer names
+- `./dom.js` — `el` for construction and `fmt` for the dimensions readout. The prompt's listeners are handed to `el` with the
+  nodes they belong to, so there is no listener to detach: a closed dialog is out of the document.
+- `index.html` — the modal's look, and only its look: the `dialog` reset (no platform border, padding, background, or color)
+  and `dialog::backdrop`, the translucent ground the page shows through behind the card. The stacking is the platform's, not
+  the stylesheet's: `showModal()` puts the dialog in the top layer, above `#hud` (10), `#panels` (12), and `.window` (15),
+  which is why the modal needs no `z-index` of its own.
+- Page globals (`document`, `KeyboardEvent`, `SubmitEvent`) and nothing else: no Three.js, no project, no outer-ring import,
+  and nothing in `ui` imports this file except `app/main.ts` — which also imports `DEFAULT_VOXELS_ACROSS`, the count it scales
+  an arriving import to. `VoxelizeTarget` is gone from the app (README D41), so this file no longer names
   `../voxels/voxelize/voxelize.js` at all.
 
 ## Tests
@@ -113,3 +130,7 @@ line below it printing that model's dimensions in voxels, 96 along its longest a
 an `'empty'` object. A blank or out-of-range count must leave `Voxelize` disabled, and editing the count must move
 the printed dimensions before the job runs. The dialog is also the only way to voxelize — the panel holds no control that
 re-opens it — so a second attempt at the settings means importing the file again.
+The platform's own modal is part of what is checked there: the prompt must sit over every open window and the HUD (the top
+layer, not a `z-index`), a click on the dimmed page must leave it up, and Escape — on the first prompt of a session and on a
+later one, which is where the platform stops sending the `close` that follows its `cancel` — must dismiss it and leave the
+import as the raw model.

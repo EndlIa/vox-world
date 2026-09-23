@@ -75,10 +75,14 @@ pieces of chrome the panel overlay is built from, because they are layout rather
 positioned 112 px box at the top-left of the window which takes no space from `#viewport` — that is what keeps the canvas at
 the full window width — and it is `pointer-events: none` with `pointer-events: auto` on its children, so only the rail
 buttons and the status boxes take a press and the rest reaches the canvas; `.rail` is ordered first inside it, which is what
-puts the buttons above the status line `main.ts` appended before the panel existed; and `.window` is the fixed-position
-floating window (`z-index: 15`, above `#hud` at 10 and below the voxelize modal at 20) with a draggable title bar and a
-scrolling body whose `hr` is drawn as a `--line` rule, which is how a group divides what acts on every object from what
-acts on the selected one; `#modebar` is the one mount point that is a grid item of the canvas' own area rather than an
+puts the buttons above the status line `main.ts` appended before the panel existed; `.window` is the fixed-position
+floating window (`z-index: 15`, above `#hud` at 10) with a draggable title bar and a scrolling body whose `hr` is drawn as a
+`--line` rule, which is how a group divides what acts on every object from what acts on the selected one; and
+`dialog`/`dialog::backdrop` are the voxelize modal's, and only its look: the reset that drops
+the platform's border, padding, background, and color, so the `section` the dialog builds is the card, and the translucent
+ground `showModal()` lays over the page while the prompt is up. That modal is not a rung of the ladder `#hud`, `#panels`, and
+`.window` are on — `showModal()` puts it in the browser's top layer, above all of them, which is why the stylesheet gives it
+no `z-index`; `#modebar` is the one mount point that is a grid item of the canvas' own area rather than an
 absolutely positioned overlay, pinned to that area's bottom centre (`justify-self: center`, `align-self: end`) and sized to its
 buttons, so it sits over the viewport's bottom edge whatever the timeline's height is, between the HUD's `z-index` and the rail's.
 `button:disabled`, `select:disabled`, and `input:disabled` drop to `--dim` and are dimmed whole, because every control sets its own

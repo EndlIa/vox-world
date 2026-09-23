@@ -16,7 +16,7 @@ import { el, on } from './dom.js';
 /** How much of a window stays inside the viewport horizontally while it is dragged. */
 const MIN_VISIBLE = 120;
 
-/** The `z-index` of an unpressed window: over `#hud` (10) and under the voxelize modal (20). */
+/** The `z-index` of an unpressed window: over `#hud` (10). The voxelize modal is not on this ladder at all. */
 const BASE_Z = 15;
 
 /** The class every window carries, which is also how `raise()` finds the ones it stacks against. */
@@ -164,7 +164,8 @@ export class FloatingWindow {
   /**
    * Puts this window above the other windows: every window in the same parent is renumbered in its current
    * stacking order and this one takes the highest step. The ladder is bounded by the number of windows in
-   * the parent, so it stays under the voxelize modal's `z-index: 20` however often a window is raised.
+   * the parent, so it stays over `#hud` (10) however often a window is raised; the voxelize modal is a native
+   * `dialog` in the top layer and is not on this ladder at all.
    */
   private raise(): void {
     const parent = this.root.parentElement;

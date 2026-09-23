@@ -1140,7 +1140,6 @@ export function main(): void {
     worldGrid.update(renderCamera);
     cameraControl.setScreenScale(viewingDistance);
     cameraPath.setScreenScale(viewingDistance);
-    cameraPath.faceCamera(renderCamera.quaternion);
     renderer.render(mirror.scene, renderCamera);
     timelinePanel.setTime(playback.time * 1000);
     hud.update(hudState());

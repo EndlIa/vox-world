@@ -257,8 +257,9 @@ function main(): void;
    so the follow case hides the carrier exactly as the locked case does (README D46, D48), and `setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport))` — except while the carrier
    is selected and `controls.gizmoBusy()`, because a drag owns the pose until it commits and the per-frame update stands back for it. It then sets
    `const viewingDistance = max(renderCamera.position.distanceTo(cameraControl.node.position), controls.orbit.object.position.distanceTo(controls.orbit.target))`,
-   which then goes to both drawings — `cameraControl.setScreenScale(viewingDistance)` and `cameraPath.setScreenScale(viewingDistance)` — and is
-   followed by `cameraPath.faceCamera(renderCamera.quaternion)`, which turns the path's rings to the drawing camera (README D47):
+   which then goes to both drawings — `cameraControl.setScreenScale(viewingDistance)` and `cameraPath.setScreenScale(viewingDistance)`, the latter one
+   scalar for the path's whole marker set (README D47); `setScreenScale` takes the clamped scalar for the carrier in the same call, and the path's
+   rings need no rotation write here at all, because a point sprite faces the drawing camera by construction:
    the size comes from how far the drawing camera is, floored at the distance navigation orbits from, because a viewport that sits *on* the carrier —
    which is exactly what `View -> Camera` produces — would otherwise scale the drawing and the gizmo down to a dot, and the orbit radius is the
    scene's own scale. The grid follows the same camera, one statement before that distance goes to the two drawings:

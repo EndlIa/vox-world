@@ -1,7 +1,8 @@
 /**
- * The camera carrier's drawing: what it puts in the scene, what its frustum is derived from, and the two
- * separations a drag depends on — the pose node never carries the screen-size scale, and the scale never touches
- * the pose. Node-side and GPU-free: `three` builds geometry and uniforms without a renderer.
+ * The camera carrier's drawing: what it puts in the scene, what its frustum is derived from, the two separations a
+ * drag depends on — the pose node never carries the screen-size scale, and the scale never touches the pose — and the
+ * fact that the drawing is three's `CameraHelper` on a display projection of the carrier's own. Node-side and
+ * GPU-free: `three` builds geometry and uniforms without a renderer.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -11,34 +12,37 @@ import { CameraControl } from '../src/three-runtime/cameraControl.js';
 /** The viewport decoration layer (README D24). */
 const OVERLAY_LAYER = 1;
 
-/** The pieces of the drawing, found by what they are rather than by the order they were added in. */
-function parts(control: CameraControl) {
-  const lines: THREE.LineSegments[] = [];
-  const meshes: THREE.Mesh[] = [];
+function cameraHelper(control: CameraControl): THREE.CameraHelper {
+  let found: THREE.CameraHelper | undefined;
   control.node.traverse((child) => {
-    if (child instanceof THREE.LineSegments) lines.push(child);
-    if (child instanceof THREE.Mesh) meshes.push(child);
+    if (child instanceof THREE.CameraHelper) found = child;
   });
-  // The body is the fixed 12-edge box and the frustum is the rebuilt 8-segment frame, so the vertex counts
-  // separate them without the class having to expose either.
-  const body = lines.find((line) => line.geometry.getAttribute('position').count === 24);
-  const frustum = lines.find((line) => line.geometry.getAttribute('position').count === 16);
-  const up = meshes[0];
-  if (body === undefined || frustum === undefined || up === undefined) {
-    throw new Error('CameraControl: the drawing is incomplete');
-  }
-  return { body, frustum, up };
+  if (found === undefined) throw new Error('CameraControl: no camera helper');
+  return found;
 }
 
-function farCorners(frustum: THREE.LineSegments): { x: number; y: number }[] {
-  const position = frustum.geometry.getAttribute('position');
-  const corners: { x: number; y: number }[] = [];
-  for (let index = 0; index < position.count; index += 1) {
-    const z = position.getZ(index);
-    if (z === 0) continue;
-    corners.push({ x: position.getX(index), y: position.getY(index) });
-  }
-  return corners;
+/** The scaled child of the pose node: everything the distance is allowed to touch. */
+function helperGroup(control: CameraControl): THREE.Object3D {
+  const group = control.node.children[0];
+  if (group === undefined) throw new Error('CameraControl: no helper group');
+  return group;
+}
+
+/** One corner of a frustum plane, read through the helper's own point map. */
+function corner(control: CameraControl, name: string): THREE.Vector3 {
+  const helper = cameraHelper(control);
+  const index = helper.pointMap[name]?.[0];
+  if (index === undefined) throw new Error(`CameraControl: the helper has no point ${name}`);
+  return new THREE.Vector3().fromBufferAttribute(
+    helper.geometry.getAttribute('position') as THREE.BufferAttribute,
+    index,
+  );
+}
+
+/** One vertex of the drawn colour, which `setColors` writes into the geometry rather than a material. */
+function colorAt(control: CameraControl, index: number): [number, number, number] {
+  const color = cameraHelper(control).geometry.getAttribute('color');
+  return [color.getX(index), color.getY(index), color.getZ(index)];
 }
 
 describe('camera carrier', () => {
@@ -53,8 +57,8 @@ describe('camera carrier', () => {
       expect(child.layers.mask).toBe(1 << OVERLAY_LAYER);
       inspected += 1;
     });
-    // The node, the helper group, and the three pieces: a childless walk would pass this vacuously.
-    expect(inspected).toBe(5);
+    // The node, the scaled helper group, and the helper itself: a childless walk would pass this vacuously.
+    expect(inspected).toBe(3);
     control.dispose();
   });
 
@@ -64,18 +68,26 @@ describe('camera carrier', () => {
 
   it('derives the frustum from the vertical field of view and the viewport aspect', () => {
     const control = new CameraControl(new THREE.Scene());
-    const { frustum } = parts(control);
     control.setPose(new THREE.Vector3(), new THREE.Quaternion(), 90, 1);
-    for (const corner of farCorners(frustum)) {
-      expect(Math.abs(corner.y)).toBeCloseTo(1, 6);
-      expect(Math.abs(corner.x)).toBeCloseTo(1, 6);
+    for (const name of ['n1', 'n2', 'n3', 'n4']) {
+      const point = corner(control, name);
+      expect(Math.abs(point.y)).toBeCloseTo(1, 6);
+      expect(Math.abs(point.x)).toBeCloseTo(1, 6);
     }
+
     // The same field of view in a wider viewport widens the frame and leaves its height alone.
     control.setPose(new THREE.Vector3(), new THREE.Quaternion(), 90, 2);
-    for (const corner of farCorners(frustum)) {
-      expect(Math.abs(corner.x)).toBeCloseTo(2, 6);
-      expect(Math.abs(corner.y)).toBeCloseTo(1, 6);
+    for (const name of ['n1', 'n2', 'n3', 'n4']) {
+      const point = corner(control, name);
+      expect(Math.abs(point.x)).toBeCloseTo(2, 6);
+      expect(Math.abs(point.y)).toBeCloseTo(1, 6);
     }
+
+    // The far plane is the same frame one display plane further out: the library's own depth cue.
+    const near = corner(control, 'n4');
+    const far = corner(control, 'f4');
+    expect(far.z).toBeCloseTo(near.z * 2, 6);
+    expect(Math.abs(far.x)).toBeCloseTo(Math.abs(near.x) * 2, 6);
     control.dispose();
   });
 
@@ -83,8 +95,7 @@ describe('camera carrier', () => {
     const control = new CameraControl(new THREE.Scene());
     const position = new THREE.Vector3(3, 4, 5);
     control.setPose(position, new THREE.Quaternion(), 60, 1);
-    const helper = control.node.children[0];
-    if (helper === undefined) throw new Error('CameraControl: no helper');
+    const helper = helperGroup(control);
     expect(control.node.position.toArray()).toEqual([3, 4, 5]);
     expect(control.node.scale.toArray()).toEqual([1, 1, 1]);
 
@@ -102,31 +113,38 @@ describe('camera carrier', () => {
     control.dispose();
   });
 
-  it('marks up above the far frame, so a banked pose reads as banked', () => {
+  it('marks up above the marker frame, so a banked pose reads as banked', () => {
     const control = new CameraControl(new THREE.Scene());
-    const { frustum, up } = parts(control);
     control.setPose(new THREE.Vector3(), new THREE.Quaternion(), 60, 1);
-    const top = Math.max(...farCorners(frustum).map((corner) => corner.y));
-    const position = up.geometry.getAttribute('position');
-    for (let index = 0; index < position.count; index += 1) {
-      expect(position.getY(index)).toBeGreaterThan(top);
-      expect(position.getZ(index)).toBeLessThan(0);
+    const top = Math.max(corner(control, 'n1').y, corner(control, 'n3').y);
+    for (const name of ['u1', 'u2', 'u3']) {
+      const point = corner(control, name);
+      expect(point.y).toBeGreaterThan(top);
+      expect(point.z).toBeLessThan(0);
     }
     control.dispose();
   });
 
-  it('recolours on selection and releases the node on dispose, twice without complaint', () => {
+  it('paints every part one colour on selection and releases the node on dispose, twice without complaint', () => {
     const scene = new THREE.Scene();
     const control = new CameraControl(scene);
-    const { body, frustum, up } = parts(control);
-    const idle = (body.material as THREE.LineBasicMaterial).color.getHex();
+    const idle = colorAt(control, 0);
+    const uniform = (expected: [number, number, number]): void => {
+      const count = cameraHelper(control).geometry.getAttribute('color').count;
+      for (let index = 0; index < count; index += 1) {
+        expect(colorAt(control, index)).toEqual(expected);
+      }
+    };
+    // One flat colour, not the library's five-part default scheme.
+    uniform(idle);
+
     control.setSelected(true);
-    const selected = (body.material as THREE.LineBasicMaterial).color.getHex();
-    expect((frustum.material as THREE.LineBasicMaterial).color.getHex()).toBe(selected);
-    expect((up.material as THREE.MeshBasicMaterial).color.getHex()).toBe(selected);
-    expect(selected).not.toBe(idle);
+    const selected = colorAt(control, 0);
+    expect(selected).not.toEqual(idle);
+    uniform(selected);
+
     control.setSelected(false);
-    expect((body.material as THREE.LineBasicMaterial).color.getHex()).toBe(idle);
+    uniform(idle);
 
     control.dispose();
     expect(control.node.parent).toBeNull();
