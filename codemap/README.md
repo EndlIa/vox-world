@@ -924,7 +924,9 @@ viewport camera is still the only other one (D17).
   matrix would be folded into every pose it reports; the drawing is therefore a scaled child, and the frame loop rescales it from the distance to the
   drawing camera — floored at the orbit radius navigation already uses, because `View -> Camera` leaves the viewport *on* the carrier, where a pure
   distance would scale the drawing and the gizmo down to a dot. The drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose`
-  stands back for it, and the carrier is drawn only while it is selected and the lock is off: a camera cannot see itself.
+  stands back for it, and the carrier is drawn whenever the lock is off — in the idle grey until it is selected, and in the accent colour while
+  the gizmo drives it (**revised**: it used to be drawn only while it was selected, which lost the output camera from the viewport the moment the
+  gizmo went back to an object, though the carrier is the only thing that shows where that camera is), because a camera cannot see itself.
 - **The rail keeps its classification.** Everything *about the camera* — the lock that points the viewport at it, the carrier that aims it, and its
   projection — is in the `Camera` group; the keyframes stay in the timeline bar, which is animation (D44).
 
@@ -1021,7 +1023,8 @@ scale calls, the teardown), and this file's §9.
 a run does to the view. Follow is on by default, the way the reference product has it, and a run then borrows the camera lock so the viewport renders
 through the output camera and the clip takes the view along. A pause hands the frame over — the editor camera takes the pose the clip stopped at and the
 lock is given back — and a non-looping run that reaches its last frame stops the transport and restores the run's start view and playhead exactly. With
-follow off a run leaves the editor camera alone, and the carrier is drawn for the length of the run so the motion is still visible. The option is read
+follow off a run leaves the editor camera alone, and the carrier is drawn for the length of the run so the motion is still visible — which it now is
+in any case (**revised** with D46: the carrier no longer hides outside a selection, so a run needs no display of its own). The option is read
 when a run starts and never changes a run in flight.
 
 - **The app owns the transport because a run changes the viewport too.** `animation/playback.ts` gained a read-only `get loop()` beside `playing` (the

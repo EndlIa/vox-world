@@ -35,7 +35,7 @@ function main(): void;
    antialias: true, logarithmicDepthBuffer: true })`; `new SceneMirror(project, { background, ambientIntensity })`, whose `mirror.camera` is the output camera; `new
    `ViewportControls(viewport, viewportCamera)`; `new Overlay(mirror.scene)`; `new WorldGrid()`, whose `root` is added to `mirror.scene` —
    viewport decoration on layer 1 like the overlay, so it is never picked and never exported (D35, D49); `new CameraControl(mirror.scene)`, the
-   runtime-only camera carrier the edit gizmo aims the output camera with (README D46) — a hidden node on the same layer 1, so it is never picked
+   runtime-only camera carrier the edit gizmo aims the output camera with (README D46) — a node on the same layer 1, so it is never picked
    and no export frame contains it, and it reports the authored camera rather than owning any data — with `CAMERA_CONTROL_PIVOT`, `new Vector3(0, 0, 0)`,
    as the pivot the gizmo attaches it at; `new CameraPath(mirror.scene)`, the runtime-only drawing of the authored camera's trajectory (README D47) —
    hidden, unnamed, and on the same layer 1, so it is never picked and no export frame contains it, and it holds points the app hands it rather than
@@ -245,10 +245,10 @@ function main(): void;
    the locked view stretched. The output camera stays on layer 0, so the locked view shows exactly what an export shows — no overlay, no gizmo,
    no viewport decoration. Just before the render the loop also drives the carrier (README D46): it reports the output camera as it stands right
    now — the authored pose, or the sampled one while a clip runs — through `setSelected(cameraControlSelected)` — which follows only the user's
-   selection — and `setVisible((cameraControlSelected || observing) && !cameraLocked)`, where `const observing = playback.playing && !followCamera`: the
-   carrier is drawn while it is selected, and — with the follow option off — for the length of a run as well, so a run that leaves the editor camera
-   alone still shows the camera moving along the clip. That display selects nothing and is dropped when the run ends, and a camera cannot see itself,
-   so the follow case hides the carrier exactly as the locked case does (README D46, D48), and `setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport))` — except while the carrier
+   selection, and only picks the drawing's colour — and `setVisible(!cameraLocked)`: the carrier is drawn whenever the viewport shows the editor
+   camera, because it is the only thing that shows where the output camera is, and it is what the gizmo drives while it is selected. The locked view
+   is the export view, where no decoration belongs, and a camera cannot see itself there either (README D46, D48) — which is also why a run needs no
+   display of its own any more — and `setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport))` — except while the carrier
    is selected and `controls.gizmoBusy()`, because a drag owns the pose until it commits and the per-frame update stands back for it. It then sets
    `const viewingDistance = max(renderCamera.position.distanceTo(cameraControl.node.position), controls.orbit.object.position.distanceTo(controls.orbit.target))`,
    which then goes to both drawings — `cameraControl.setScreenScale(viewingDistance)` and `cameraPath.setScreenScale(viewingDistance)`, the latter one

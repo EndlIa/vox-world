@@ -1108,8 +1108,11 @@ export function main(): void {
     // clip runs — and it is drawn only while the viewport is a different camera, since a camera cannot see itself
     // (README D46). A drag owns the pose until it commits, so the per-frame update stands back for it.
     cameraControl.setSelected(cameraControlSelected);
-    const observing = playback.playing && !followCamera;
-    cameraControl.setVisible((cameraControlSelected || observing) && !cameraLocked);
+    // Drawn whether or not it is selected, in one colour or the other: the carrier shows where the output camera is, and
+    // that is worth seeing while the gizmo is on an object just as much as while it drives the camera (README D46). The
+    // selected carrier is the accent colour, the rest of the time the idle grey. The locked view is the export view,
+    // where no decoration belongs — and a camera cannot see itself there anyway.
+    cameraControl.setVisible(!cameraLocked);
     if (!(cameraControlSelected && controls.gizmoBusy())) {
       cameraControl.setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport));
     }
