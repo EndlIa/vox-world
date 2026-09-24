@@ -4,7 +4,7 @@ Ring: 3 · Layer: tests (node, no GPU) · Depends on: `../src/three-runtime/came
 
 ## Responsibility
 Pins the camera carrier's drawing and the two separations a drag depends on: the frustum three's `CameraHelper` builds
-from the vertical field of view and the viewport aspect, the pose staying on the node while the screen-size scale stays
+from the vertical field of view and the viewport aspect, the pose staying on the node while a fixed world-size scale stays
 on the helper group, the up marker sitting above the marker frame, the whole drawing painted one colour on selection,
 and the node released on `dispose` (README D46). It reads `Object3D` names, layers, visibility, transforms, the
 helper's own point map, and its colour attribute; the app wiring, the gizmo, the panel, materials as they render, and
@@ -15,15 +15,15 @@ the export path are not tested here.
 - `camera carrier` — `adds its node to the scene on the decoration layer, unnamed and hidden`,
   `rejects anything that is not a scene, so the drawing can never be orphaned`,
   `derives the frustum from the vertical field of view and the viewport aspect`,
-  `carries the pose on the node and the screen-size scale on the helper, never both on one`,
+  `carries the pose on the node and a fixed world-size scale on the helper, never both on one`,
   `marks up above the marker frame, so a banked pose reads as banked`,
   `paints every part one colour on selection and releases the node on dispose, twice without complaint`
 
 ## Internal logic
 1. `cameraHelper(control)` walks `control.node` for the one `THREE.CameraHelper`, which is how the drawing is found
    without the class exposing it. A missing helper throws rather than letting a case pass vacuously.
-2. `helperGroup(control)` returns `control.node.children[0]`, the scaled child every distance write is allowed to
-   reach, which is the node the size separation is asserted on.
+2. `helperGroup(control)` returns `control.node.children[0]`, the child that owns the drawing and its fixed scale, which is
+   the node the size separation is asserted on.
 3. `corner(control, name)` reads one point of the frustum through the helper's own `pointMap` and the geometry's
    `position` attribute, so the projection is read off the library's drawing rather than restated from it. A name the
    helper does not carry throws.
@@ -44,8 +44,8 @@ the export path are not tested here.
   The far plane is the same frame one display plane further out: `f4`'s `z` is twice `n4`'s and its `|x|` is twice
   `n4`'s, which is what pins the two display planes the projection is built for.
 - The pose stays on the node: after `setPose((3, 4, 5), …, 60, 1)` the node's position is `[3, 4, 5]` and its scale
-  is `[1, 1, 1]`. The size stays on the helper group: rescaling from distance 10 to 20 doubles its `scale.x`, the
-  node's position and unit scale are unchanged, and a later `setPose((6, 0, 0), …, 45, 1)` leaves the group's scale
+  is `[1, 1, 1]`. The size stays on the helper group and never moves: its `scale` is `[1, 1, 1]` — one world unit per helper
+  unit, which is the carrier's whole size model (README D46) — and a later `setPose((6, 0, 0), …, 45, 1)` leaves that scale
   alone while moving the node.
 - The up marker rides above the marker frame: at FOV 60 each of `u1`–`u3` has a `y` greater than the highest near
   corner and a `z < 0`, so it sits in front of the apex and points away from the frustum.
@@ -55,9 +55,8 @@ the export path are not tested here.
   `node.parent` to `null`, and a second `dispose()` does not throw.
 
 ## Errors
-- The non-scene constructor argument is the only error asserted, and it is the only one the class produces. The
-  screen-scale clamps (a distance of zero and one past the maximum) and the `setPose` early-out for an unchanged
-  projection are not pinned here.
+- The non-scene constructor argument is the only error asserted, and it is the only one the class produces. The `setPose`
+  early-out for an unchanged projection is not pinned here.
 
 ## Dependencies
 `../src/three-runtime/cameraControl.js` for `CameraControl`; `three` for `Scene`, `Object3D`, `CameraHelper`,
@@ -66,8 +65,8 @@ runs in the node environment.
 
 ## Tests
 This file *is* the test, run by `npm test` in the node environment. It is the only coverage of
-`three-runtime/cameraControl.ts`. Not covered here: the app wiring that gives the carrier its pose, selection,
-visibility, and screen scale; the gizmo attachment and the drag's two callbacks; the panel's `Camera` group; the
+`three-runtime/cameraControl.ts`. Not covered here: the app wiring that gives the carrier its pose, selection, and
+visibility; the gizmo attachment and the drag's two callbacks; the panel's `Camera` group; the
 materials as they render (colour and depth behaviour need a GPU); the export path; and the `dispose()` of the geometry
 and material's actual GPU memory, which only a renderer holds. What needs a GPU — the carrier visible in the viewport
 with its two colours, following the output camera, hidden while the viewport already is that camera, and absent

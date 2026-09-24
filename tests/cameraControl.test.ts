@@ -91,24 +91,20 @@ describe('camera carrier', () => {
     control.dispose();
   });
 
-  it('carries the pose on the node and the screen-size scale on the helper, never both on one', () => {
+  it('carries the pose on the node and a fixed world-size scale on the helper, never both on one', () => {
     const control = new CameraControl(new THREE.Scene());
-    const position = new THREE.Vector3(3, 4, 5);
-    control.setPose(position, new THREE.Quaternion(), 60, 1);
+    control.setPose(new THREE.Vector3(3, 4, 5), new THREE.Quaternion(), 60, 1);
     const helper = helperGroup(control);
     expect(control.node.position.toArray()).toEqual([3, 4, 5]);
     expect(control.node.scale.toArray()).toEqual([1, 1, 1]);
 
-    control.setScreenScale(10);
-    const fromTen = helper.scale.x;
-    control.setScreenScale(20);
-    expect(helper.scale.x).toBeCloseTo(fromTen * 2, 6);
-    expect(control.node.position.toArray()).toEqual([3, 4, 5]);
-    expect(control.node.scale.toArray()).toEqual([1, 1, 1]);
+    // The drawing's size is a size in the scene, not a size on screen: one world unit per helper unit, whatever the
+    // viewport is doing — the zoomed-out view that used to inflate the carrier cannot reach it (README D46).
+    expect(helper.scale.toArray()).toEqual([1, 1, 1]);
 
-    // A pose update after a rescale leaves the drawing's size alone.
+    // A pose update moves the node and leaves the drawing's size alone.
     control.setPose(new THREE.Vector3(6, 0, 0), new THREE.Quaternion(), 45, 1);
-    expect(helper.scale.x).toBeCloseTo(fromTen * 2, 6);
+    expect(helper.scale.toArray()).toEqual([1, 1, 1]);
     expect(control.node.position.x).toBe(6);
     control.dispose();
   });

@@ -920,10 +920,11 @@ viewport camera is still the only other one (D17).
 - **The numeric grid writes the whole pose.** The seven fields plus `FOV (deg)` are one state, so a write sends all of them; the app refuses a
   non-finite component or a zero-length quaternion and re-seeds the fields (a zero quaternion is not a rotation, so it is refused rather than
   normalized into one), and the FOV goes through `setCameraFov`, which owns the clamp and the projection refresh.
-- **The pose lives on the node and the size on the helper.** The gizmo derives its drag from the node's own matrix, so a screen-size scale on that
-  matrix would be folded into every pose it reports; the drawing is therefore a scaled child, and the frame loop rescales it from the distance to the
-  drawing camera — floored at the orbit radius navigation already uses, because `View -> Camera` leaves the viewport *on* the carrier, where a pure
-  distance would scale the drawing and the gizmo down to a dot. The drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose`
+- **The pose lives on the node and the size on the helper.** The gizmo derives its drag from the node's own matrix, so a scale on that matrix would be
+  folded into every pose it reports; the drawing is therefore a child with a size of its own, fixed at one world unit per helper unit
+  (`CARRIER_SCALE = 1`, so the carrier is one lattice cell across at its near frame). **Revised**: the frame loop used to rescale it from the distance to
+  the drawing camera, which held its *screen* size constant and therefore grew the wireframe in world terms without bound as the view pulled back — the
+  reported defect. The clipped `viewingDistance` stays, for the path's marker rings, which do want a screen-constant size. The drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose`
   stands back for it, and the carrier is drawn whenever the lock is off — in the idle grey until it is selected, and in the accent colour while
   the gizmo drives it (**revised**: it used to be drawn only while it was selected, which lost the output camera from the viewport the moment the
   gizmo went back to an object, though the carrier is the only thing that shows where that camera is), because a camera cannot see itself.
@@ -943,7 +944,8 @@ through it and the editor would have no third-person view of what it frames); **
 own export and mixer path, and a second projection to keep in step, and D17 fixes exactly two at runtime); **picking the carrier with the pointer** (a
 pick layer and a hit test for a decoration, plus a mode question with the edit tools — the `Camera` group's `Select` button is the way in and costs the
 picker nothing); **a fixed world size** (an authored scene can be metres or kilometres across, D40, D41, so a fixed drawing reads as a dot in one scene
-and fills the view in another); **screen-constant sizing** (it would need the drawing camera's projection here and would still not fix the handles,
+and fills the view in another — **taken up again, see this decision's revision**: the app's scenes are voxelized onto the lattice where one unit is one
+cell, so a fixed size is the right read, and it is the screen-constant rule chosen here instead that grew the carrier without bound); **screen-constant sizing** (it would need the drawing camera's projection here and would still not fix the handles,
 which `TransformControls` sizes from the distance).
 
 **Revision: the drawing itself is now three's `CameraHelper`.** The carrier originally built its own body box, frustum frame, and up triangle from

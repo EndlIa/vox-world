@@ -1116,16 +1116,16 @@ export function main(): void {
     if (!(cameraControlSelected && controls.gizmoBusy())) {
       cameraControl.setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport));
     }
-    // The size comes from how far the drawing camera is, floored at the distance navigation orbits from: a viewport
-    // that sits *on* the carrier — which is exactly what `View -> Camera` produces — would otherwise scale the
-    // drawing and the gizmo down to a dot, and the orbit radius is the scene's own scale (README D46).
+    // The path's marker size comes from how far the drawing camera is, floored at the distance navigation orbits from: a
+    // viewport that sits *on* the carrier — which is exactly what `View -> Camera` produces — would otherwise shrink the
+    // rings to a dot, and the orbit radius is the scene's own scale. The carrier needs none of this: its size is a fixed
+    // world size, so it scales with the scene rather than with the view (README D46, D47).
     const viewingDistance = Math.max(
       renderCamera.position.distanceTo(cameraControl.node.position),
       controls.orbit.object.position.distanceTo(controls.orbit.target),
     );
     // The grid follows the camera that draws the viewport, so a locked output camera gets the same reference.
     worldGrid.update(renderCamera);
-    cameraControl.setScreenScale(viewingDistance);
     cameraPath.setScreenScale(viewingDistance);
     renderer.render(mirror.scene, renderCamera);
     // The outline goes over the finished frame in a pass of its own, so the selected object alone cuts it (README D50).

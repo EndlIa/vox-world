@@ -30,14 +30,12 @@ class CameraControl {
   setPose(position: THREE.Vector3, quaternion: THREE.Quaternion, fovDegrees: number, aspect: number): void;
   setVisible(visible: boolean): void;
   setSelected(selected: boolean): void;
-  setScreenScale(distance: number): void;
   dispose(): void;
 }
 ```
 
 ## Internal logic
-1. Construction builds the node (`Object3D`) and one child `Group` — the scaled helper, which everything the distance
-   is allowed to touch lives in — plus the display projection and the `CameraHelper` over it. The helper's own local
+1. Construction builds the node (`Object3D`) and one child `Group` — the helper, which owns the drawing and its fixed size — plus the display projection and the `CameraHelper` over it. The helper's own local
    matrix is replaced with a fresh identity `Matrix4` and `matrixAutoUpdate` is turned off: the library normally places
    the helper with the camera's world matrix — it holds that matrix by reference from its construction — which is only
    right for a scene child, while here the node owns the pose and the helper group owns the size, so the pose has to
@@ -62,19 +60,22 @@ class CameraControl {
    (the frustum, the cone, the up marker, the axis and the crosses), because the drawing is one decoration rather than
    five states. It returns early when the flag did not change, so the frame loop's per-frame call costs nothing, and
    the constructor applies the idle colour once so the drawing is never seen in the library's default scheme.
-6. `setScreenScale(distance)` sets the helper group's uniform scale to `distance · SCREEN_SCALE`, clamped into
-   `[MIN_SCREEN_SCALE, MAX_SCREEN_SCALE]` (`SCREEN_SCALE = 0.16`, `1e-3` to `1e7`); the node's own transform is
-   untouched. It is the one thing the distance to the drawing camera changes.
+6. The drawing's size is the file's own constant, not the view's: the constructor scales the helper group by
+   `CARRIER_SCALE = 1`, one world unit per helper unit, so the near frame the pose is read from is one lattice cell across
+   and the far one is two. Nothing rescales it afterwards — `setPose` writes the projection on the helper's display camera
+   and never its scale — so the carrier is scene-sized rather than screen-sized: pulling the view back shrinks it with
+   everything else instead of inflating it (**revised**, README D46: the group used to be rescaled every frame from the
+   distance to the drawing camera, which held its *screen* size constant and grew its world size without bound).
 7. `dispose()` calls the helper's own `dispose()` — which releases the geometry and the material it built — and
    removes the node from its parent. It is idempotent: disposing twice releases nothing twice and `removeFromParent`
    on a parentless node changes nothing. The display projection owns no GPU resource and is simply dropped with the
    instance.
 
 ## Invariants
-- The pose lives on the node and the screen-size scale on the helper group, never both on one: a rescale never moves the
-  node, and a pose update never rescales it. The split exists because the gizmo derives its drag from the node's
-  own world matrix — a scale on that matrix would be folded into every reported matrix — while the drawing has to
-  follow the viewing distance, which only the helper may carry.
+- The pose lives on the node and a fixed world-size scale on the helper group, never both on one: a pose update never touches the
+  group's scale, and nothing in the class writes any scale but `CARRIER_SCALE`, so no view can resize the drawing. The split
+  exists because the gizmo derives its drag from the node's own world matrix — a scale on that matrix would be folded into every
+  reported matrix — while the drawing's size belongs to the file and must never reach the pose the drag reports.
 - The whole carrier is on layer 1 and nothing is ever moved off it: the raycaster tests layers 0 and 2, so no line
   or triangle is ever picked, and the export camera enables layer 0 alone, so no part of the carrier can appear in
   an exported frame (README D24). The node being on the layer too is what makes a later child safe by construction.
@@ -85,8 +86,8 @@ class CameraControl {
 - The display projection is never rendered, never added to a scene, and never read for a matrix: it is a projection
   descriptor for the helper. The app's two rendering cameras are untouched by this file (README D17).
 - One frame or drag allocates nothing: the helper's point set and colour attribute are built once by the constructor,
-  `setPose` rewrites them in place through the library's `update()`/`setColors()`, and `setScreenScale` writes one
-  scalar.
+  `setPose` rewrites them in place through the library's `update()`/`setColors()`, and the drawing's scale is written once,
+  in the constructor.
 - `dispose()` releases the helper's geometry and material and unparents the node; afterwards nothing of the carrier
   remains in the scene, and calling it again is safe.
 - The drawing is `depthTest: false` at `DECORATION_RENDER_ORDER`, so the carrier draws over the scene rather than
@@ -95,9 +96,9 @@ class CameraControl {
 ## Errors
 - `TypeError` from the constructor when the argument is not a `THREE.Scene`: the node would otherwise be added to
   something that cannot hold it, leaving the drawing unreachable.
-- Everything else is total. A `distance` outside the clamp range is clamped, never refused; `setSelected` and
-  `setVisible` are legal at any time; `dispose()` is safe twice. Nothing here validates `fovDegrees` or `aspect` —
-  the FOV the app hands over is the one `setCameraFov` already clamped, and the aspect comes from the canvas.
+- Everything else is total. `setSelected` and `setVisible` are legal at any time and `dispose()` is safe twice. Nothing here
+  validates `fovDegrees` or `aspect` — the FOV the app hands over is the one `setCameraFov` already clamped, and the aspect
+  comes from the canvas.
 
 ## Dependencies
 - `three` — `Scene`, `Object3D`, `Group`, `PerspectiveCamera`, `CameraHelper`, `Color`, `Vector3`, `Quaternion`.
@@ -111,10 +112,11 @@ needs a GPU stays app-verified (README §10): the carrier on screen with its two
 it is aimed and hidden while the viewport already is that camera, and absent from an exported frame.
 
 ## Open questions
-- The two display planes (`1` and `2`) and the screen scale (`distance · 0.16`, clamped) are the drawing's whole size
-  model: the on-screen size therefore follows the viewing distance, which is what keeps it readable in both a metre
-  scene and a kilometre one (README D40, D41). A constant pixel size would need the drawing camera's projection here,
-  which the file deliberately does not read.
+- The two display planes (`1` and `2`) and the fixed scale (`CARRIER_SCALE = 1`) are the drawing's whole size model: one
+  world unit is one lattice cell, so the carrier reads against the scene it is in (README D46). The one scene where it reads
+  small is a raw import that has not been voxelized onto the lattice yet, where the model itself is still metres or
+  kilometres across (README D29, D40, D41); the screen-relative rule this file used to keep the drawing legible there was
+  the one that grew the carrier without bound as the view pulled back, and it is gone.
 - The library draws more than this carrier used to — a cone from the apex, the axis, and a cross at each frame — and
   they are painted one colour rather than removed, because trimming another library's geometry would mean rebuilding
   it. If the extra marks ever read as noise, the choice is between a smaller `far` and keeping a hand-built frustum.

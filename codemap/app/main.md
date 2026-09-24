@@ -251,15 +251,15 @@ function main(): void;
    display of its own any more — and `setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport))` — except while the carrier
    is selected and `controls.gizmoBusy()`, because a drag owns the pose until it commits and the per-frame update stands back for it. It then sets
    `const viewingDistance = max(renderCamera.position.distanceTo(cameraControl.node.position), controls.orbit.object.position.distanceTo(controls.orbit.target))`,
-   which then goes to both drawings — `cameraControl.setScreenScale(viewingDistance)` and `cameraPath.setScreenScale(viewingDistance)`, the latter one
-   scalar for the path's whole marker set (README D47); `setScreenScale` takes the clamped scalar for the carrier in the same call, and the path's
-   rings need no rotation write here at all, because a point sprite faces the drawing camera by construction:
+   which now sizes one drawing only: `cameraPath.setScreenScale(viewingDistance)`, the one scalar the path's whole marker set is sized by (README D47).
+   The carrier is not sized here at all — its size is a fixed world size, a constant of its own file (README D46) — and the path's rings need no
+   rotation write here at all, because a point sprite faces the drawing camera by construction:
    the size comes from how far the drawing camera is, floored at the distance navigation orbits from, because a viewport that sits *on* the carrier —
-   which is exactly what `View -> Camera` produces — would otherwise scale the drawing and the gizmo down to a dot, and the orbit radius is the
-   scene's own scale. The grid follows the same camera, one statement before that distance goes to the two drawings:
+   which is exactly what `View -> Camera` produces — would otherwise shrink the rings to a dot, and the orbit radius is the
+   scene's own scale. The grid follows the same camera, one statement before that distance is used:
    `worldGrid.update(renderCamera)` puts the shown display's planes on the camera the frame is about to be drawn through — so a locked output
    camera gets the same reference as the editor camera, and the planes read nothing of it but its position — and it is decoration, so nothing
-   about it reaches the render or the framing (README D49). That floor is the drawing's floor alone: `TransformControls` sizes its own handles by the distance to the drawing camera, so
+   about it reaches the render or the framing (README D49). That floor is the path's alone: `TransformControls` sizes its own handles by the distance to the drawing camera, so
    with the viewport on the carrier the handles still degenerate, and the flow that follows is to orbit away — a middle-drag moves the viewport off
    the carrier while the carrier stays where it was — after which the handles are grabbable again. Sizing them the way the object gizmo already does
    was chosen over special-casing the carrier. Finally `timelinePanel.setTime(playback.time * 1000)` — the clip's seconds into the widget's milliseconds, the mirror image of `onScrub`'s division (README D45) — and a fresh `HudState` into the HUD.
@@ -366,11 +366,11 @@ function main(): void;
 - The carrier is a runtime-only handle on the output camera and never document data: its node is unnamed and on layer 1 with the rest of the
   decoration, so the raycaster cannot pick it, no export frame contains it, and the mixer's binding walk cannot reach it (README D22, D24, D46). It is
   never serialized, never a keyframe target, and never a second camera: it draws `mirror.camera`'s pose and writes back into `project.camera`. The
-  pose lives on the node and the screen-size scale on its helper, never both on one, because the gizmo derives its drag from the node's own matrix. A
-  drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose` stands back for it and the commit is the single write the gesture makes,
-  and the carrier is drawn only while it is selected and the lock is off. Its size is floored at the orbit radius, so a viewport sitting on the carrier
-  cannot scale the drawing down to a dot, while the gizmo's own handles, which `TransformControls` sizes by the distance to the drawing camera, still
-  degenerate there: the remedy is to orbit away, which moves the viewport off the carrier and leaves the carrier where it was.
+  pose lives on the node and a fixed world-size scale on its helper, never both on one, because the gizmo derives its drag from the node's own matrix.
+  A drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose` stands back for it and the commit is the single write the gesture makes,
+  and the carrier is drawn whenever the lock is off, in one colour or the other. Its size is one world unit per helper unit, so it is a scene-sized
+  object that no view can inflate (README D46); the gizmo's own handles, which `TransformControls` sizes by the distance to the drawing camera, still
+  degenerate in a viewport sitting on the carrier: the remedy is to orbit away, which moves the viewport off the carrier and leaves the carrier where it was.
 - The camera path is a runtime-only view of the authored camera track and writes nothing: `refreshCameraPath` is its only writer, the drawing holds
   no document data, and `cameraPathVisible` is the app's flag with the panel's `Show camera path` box as its view. Fewer than two camera position
   keyframes is not a path, so the flag is cleared then and the box is disabled and unchecked; while the lock is on, the path is hidden with the

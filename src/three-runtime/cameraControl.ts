@@ -15,9 +15,10 @@
  * Everything it draws is on layer 1, which is what keeps it out of the picker's raycast and out of every export
  * frame (README D24), and the node carries no name, so the mixer's binding walk can never reach it (D22).
  *
- * The helper is a scaled child of the node rather than the node itself: the node has to stay a pure pose for the
- * gizmo's matrix arithmetic, and an authored scene can be kilometres across, so the drawing is rescaled every frame
- * from how far away the camera that draws it is.
+ * The helper is a child of the node rather than the node itself: the node has to stay a pure pose for the gizmo's matrix
+ * arithmetic, while the drawing keeps a size of its own. That size is fixed — `CARRIER_SCALE` helper units of one world
+ * unit each — so the carrier is a scene-sized object: a view that pulls back shrinks it on screen along with everything
+ * else, instead of inflating it into a huge wireframe (README D46).
  */
 
 import * as THREE from 'three';
@@ -34,10 +35,12 @@ const DECORATION_RENDER_ORDER = 1000;
 const FRUSTUM_NEAR = 1;
 const FRUSTUM_FAR = 2;
 
-/** How much of the drawing size comes from the viewing distance, clamped so a corner never grows absurd. */
-const SCREEN_SCALE = 0.16;
-const MIN_SCREEN_SCALE = 1e-3;
-const MAX_SCREEN_SCALE = 1e7;
+/**
+ * The drawing's scale, in helper units of one world unit each: the near frame the pose is read from is one cell of the
+ * lattice across and the far one is two. It is a fixed world size, not a screen size, so the carrier behaves like
+ * anything else in the scene — the further the view pulls back, the smaller it gets (README D46).
+ */
+const CARRIER_SCALE = 1;
 
 const IDLE_COLOR = 0x9aa2ad;
 const SELECTED_COLOR = 0x4da3ff;
@@ -69,6 +72,7 @@ export class CameraControl {
 
     this.node = new THREE.Object3D();
     this.helper = new THREE.Group();
+    this.helper.scale.setScalar(CARRIER_SCALE);
     this.node.add(this.helper);
 
     // The helper builds its geometry in the camera's own space and places it with the camera's world matrix, which
@@ -123,15 +127,6 @@ export class CameraControl {
     if (selected === this.selected) return;
     this.selected = selected;
     this.applyColor(selected);
-  }
-
-  /**
-   * Rescales the drawing from how far the camera that draws it is: an authored scene can be metres or kilometres
-   * across, and the carrier has to read the same in both. The node's own transform is untouched.
-   */
-  setScreenScale(distance: number): void {
-    const scale = Math.min(Math.max(distance * SCREEN_SCALE, MIN_SCREEN_SCALE), MAX_SCREEN_SCALE);
-    this.helper.scale.setScalar(scale);
   }
 
   /** Releases the frustum's geometry and material and the node. Idempotent. */
