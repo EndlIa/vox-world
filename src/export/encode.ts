@@ -5,7 +5,8 @@ export type FrameSink = { push(frame: ImageBitmap, index: number): void };
 
 export type CodecChoice = { codec: string; muxerCodec: 'avc' | 'hevc' | 'av1' | 'vp9'; label: string };
 
-type FinishResult =
+/** What `Mp4Writer.finish()` returns: the finished file with the codec reported, or the reason it failed. */
+export type FinishResult =
   | { ok: true; blob: Blob; codec: string }
   | { ok: false; error: 'encoder-failed' | 'not-finalized'; detail: string };
 

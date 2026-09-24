@@ -219,11 +219,12 @@ function main(): void;
      writes `project.camera.fov`, and copies the clamped value onto `mirror.camera` with `updateProjectionMatrix()`, because assigning `fov` alone
      leaves the projection stale. The locked viewport and the next export therefore both show the authored value, and a camera `fov` keyframe records
      it instead of the value the mirror camera was constructed with.
-   - Export: `exportMp4(options)` sizes the capture to the requested resolution with `capture.resize(options.width, options.height)` and points the
+   - Export: `exportMp4(options)` refuses while a job is in flight (`if (jobController !== undefined) return`, the app's one export slot), sizes the capture to the requested resolution with `capture.resize(options.width, options.height)` and points the
      capture at that aspect, then runs `new ExportJob({ mirror }).run({ project, scene: mirror.scene, capture, playback, output: { width:
-     options.width, height: options.height, fps: options.fps, from: options.from, to: options.to, mode: options.mode } }, onProgress, signal)` →
-     `saveMp4(blob, 'vox-world.mp4')`; failure → `reportFailure(result)`.
-     only the capture that must render at them.
+     options.width, height: options.height, fps: options.fps, from: options.from, to: options.to, mode: options.mode } }, signal)` →
+     `saveMp4(blob, 'vox-world.mp4')`; failure → `reportFailure(result)`. The slot is released and the gizmo re-attached in a `finally`, so a run
+     that fails or stalls cannot leave the button refusing to start another for the rest of the session — which is exactly what a stalled encoder
+     did before the release moved there.
    - Drop: `wireDropTarget(viewport, file => { void importFile(file); })`.
    - Timeline bar — `setTimelineVisible(visible)`, the rail's `Animation` toggle, is a view-only write: it sets `timelineVisible` and calls
      `timelinePanel.setVisible(visible)`, so the app's flag stays the only state and the panel is told what to show rather than asked; the bar keeps

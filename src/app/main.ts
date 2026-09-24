@@ -41,6 +41,7 @@ import { CameraPath } from '../three-runtime/cameraPath.js';
 import { cameraKeyframePositions, sampleCameraTrajectory } from '../animation/trajectory.js';
 import { Playback } from '../animation/playback.js';
 import { ExportJob } from '../export/job.js';
+import type { ExportResult } from '../export/job.js';
 import { Panels } from '../ui/panels.js';
 import type { CameraPose, PanelContext } from '../ui/panels.js';
 import { DEFAULT_VOXELS_ACROSS, VoxelizeDialog } from '../ui/voxelizeDialog.js';
@@ -519,25 +520,32 @@ export function main(): void {
     controls.detachGizmo();
     // The capture renders at the requested resolution; nothing in the viewport marks it.
     capture.resize(options.width, options.height);
-    const result = await new ExportJob({ mirror }).run(
-      {
-        project,
-        scene: mirror.scene,
-        capture,
-        playback,
-        output: {
-          width: options.width,
-          height: options.height,
-          fps: options.fps,
-          from: options.from,
-          to: options.to,
-          mode: options.mode,
+    const job = new ExportJob({ mirror });
+    let result: ExportResult;
+    try {
+      result = await job.run(
+        {
+          project,
+          scene: mirror.scene,
+          capture,
+          playback,
+          output: {
+            width: options.width,
+            height: options.height,
+            fps: options.fps,
+            from: options.from,
+            to: options.to,
+            mode: options.mode,
+          },
         },
-      },
-      controller.signal,
-    );
-    if (jobController === controller) jobController = undefined;
-    syncGizmo();
+        controller.signal,
+      );
+    } finally {
+      // The job's slot is released on every exit path, and the gizmo comes back with it: this is what keeps one
+      // failed or stalled export from leaving the button refusing to start another for the rest of the session.
+      if (jobController === controller) jobController = undefined;
+      syncGizmo();
+    }
     if (!result.ok) {
       reportFailure(result);
       return;

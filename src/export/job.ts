@@ -3,7 +3,18 @@ import type { Playback } from '../animation/playback.js';
 import type { SceneMirror } from '../three-runtime/scene.js';
 import type { Capture } from '../three-runtime/capture.js';
 import { Mp4Writer, selectCodec } from './encode.js';
+import type { FinishResult } from './encode.js';
 import type * as THREE from 'three';
+
+/**
+ * How long the writer's teardown may take before the encoder is treated as unresponsive.
+ *
+ * The teardown waits for the encoder's own queue to drain and for its flush, and an encoder that has accepted frames
+ * and stopped answering leaves that wait pending forever: measured here, an export then walks its whole range and
+ * never returns, reports nothing, and holds the one job slot the app has — so the deadline turns a silent hang into a
+ * reported failure (README D7, D38).
+ */
+const FINISH_DEADLINE_MS = 20_000;
 
 export type ExportRequest = {
   project: Project;
@@ -72,7 +83,7 @@ export class ExportJob {
           setTimeout(resolve, 0);
         });
       }
-      const written = await writer.finish();
+      const written = await this.finishWriter(writer, total);
       finished = true;
       if (!written.ok) return { ok: false, error: written.error, detail: written.detail };
       return { ok: true, blob: written.blob, codec: written.codec, frames: total };
@@ -80,6 +91,34 @@ export class ExportJob {
       if (!finished) writer.cancel();
       this.mirror.setMaskMode(false);
       playback.setTime(restoreTime);
+    }
+  }
+
+  /**
+   * Takes the writer's teardown, but not for longer than `FINISH_DEADLINE_MS`.
+   *
+   * The teardown waits for the encoder's queue to drain and then for its flush, and an encoder that has accepted
+   * frames and stopped answering leaves both pending for good: the export then walks its whole range, returns
+   * nothing, and holds the app's one job slot. A deadline that expires cancels the writer — which closes its frames,
+   * drops its muxer, and closes the encoder, so the wait inside resolves instead of staying pending — and reports the
+   * failure with the number of frames the run reached (README D7, D38).
+   */
+  private async finishWriter(writer: Mp4Writer, frames: number): Promise<FinishResult> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<FinishResult>((resolve) => {
+      timer = setTimeout(() => {
+        writer.cancel();
+        resolve({
+          ok: false,
+          error: 'encoder-failed',
+          detail: `the encoder did not finish ${frames} frame(s) within ${Math.round(FINISH_DEADLINE_MS / 1000)} s`,
+        });
+      }, FINISH_DEADLINE_MS);
+    });
+    try {
+      return await Promise.race([writer.finish(), deadline]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
