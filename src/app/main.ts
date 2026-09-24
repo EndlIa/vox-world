@@ -304,6 +304,8 @@ export function main(): void {
       // A keyframe edit is what changes the camera's trajectory, so the path is redrawn here (README D47).
       refreshCameraPath();
     },
+    // A camera key records the pose the author is aiming, and the viewport is what they aim with (README D46).
+    adoptViewAsCamera,
   };
 
   const panels = new Panels(panelsRoot, panelContext);
@@ -696,16 +698,27 @@ export function main(): void {
   }
 
   /**
-   * `Camera -> View`: the authored camera adopts the editor's current view, which is how a shot is started without
-   * aiming the carrier from scratch. It selects the carrier, because aiming it is what the user came here to do.
+   * Adopts the editor's current view as the output camera's pose, which is what a camera keyframe records: the author
+   * aims with the viewport, so a key has to take the pose they are looking along rather than the one the project was
+   * created with (README D46). The authored `fov` is left alone — it is the shot's own value, not the viewport's.
    */
-  function cameraToView(): void {
+  function adoptViewAsCamera(): void {
     const { position, quaternion } = viewportCamera;
     const transform = project.camera.transform;
     transform.position.copy(position);
     transform.quaternion.copy(quaternion);
     mirror.camera.position.copy(position);
     mirror.camera.quaternion.copy(quaternion);
+    refreshCameraPath();
+    panels.refresh();
+  }
+
+  /**
+   * `Camera -> View`: the authored camera adopts the editor's current view, which is how a shot is started without
+   * aiming the carrier from scratch. It selects the carrier, because aiming it is what the user came here to do.
+   */
+  function cameraToView(): void {
+    adoptViewAsCamera();
     cameraControlSelected = true;
     syncGizmo();
     panels.refresh();

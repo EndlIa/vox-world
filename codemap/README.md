@@ -973,7 +973,7 @@ the camera's offset from its current position (a position track survived) and th
 Measured with the lock on and a two-key rotation track: 0.09 % of the viewport changed over the keyed span, against 30.57 % for a position track on the
 same keys and 0.0 % for a paused frame; with the lock off the carrier — which reads the output camera — did turn, so the clip and the mixer were never at
 fault. The arrangement is gone rather than patched: navigation only ever flies the editor camera, and the output camera is written by the clip, the
-numeric pose fields, a carrier drag, and `Camera -> View` alone (README D48). Aiming a shot is `Camera -> View` to adopt the editor's view and
+numeric pose fields, a carrier drag, and `Camera -> View` alone (README D48). **A camera keyframe records the editor's view.** With no lock the viewport is the camera the author aims with, and the document's own camera pose only moves when they write it, so the timeline asks the app to adopt the current view before it reads a camera key (position and rotation; `fov` stays the shot's own value, README D47). `Camera -> View` is the same write with the carrier selected, and
 `View -> Camera` to go back and judge it; nothing renders the viewport through the output camera any more, and the export never did anything else.
 
 ### D47. The camera path is a runtime-only drawing of the authored camera track
