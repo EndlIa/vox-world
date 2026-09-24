@@ -967,6 +967,15 @@ Affected contracts: `three-runtime/cameraControl.md` (new), `three-runtime/contr
 the frame loop, the teardown), `tests/cameraControl.md` (new), and this file's §9.
 
 
+**Revision: the camera lock is removed.** The lock did two things at once — it made the viewport *be* the output camera, and it handed that camera
+to `OrbitControls` to aim — and the second was what broke camera animation: `OrbitControls.update()` ends with `object.lookAt(target)`, so it re-derived
+the camera's offset from its current position (a position track survived) and then re-aimed it at the editor's orbit pivot (a rotation track did not).
+Measured with the lock on and a two-key rotation track: 0.09 % of the viewport changed over the keyed span, against 30.57 % for a position track on the
+same keys and 0.0 % for a paused frame; with the lock off the carrier — which reads the output camera — did turn, so the clip and the mixer were never at
+fault. The arrangement is gone rather than patched: navigation only ever flies the editor camera, and the output camera is written by the clip, the
+numeric pose fields, a carrier drag, and `Camera -> View` alone (README D48). Aiming a shot is `Camera -> View` to adopt the editor's view and
+`View -> Camera` to go back and judge it; nothing renders the viewport through the output camera any more, and the export never did anything else.
+
 ### D47. The camera path is a runtime-only drawing of the authored camera track
 
 **Decided.** `three-runtime/cameraPath.ts` draws the authored camera's trajectory in the viewport as a white polyline through the sampled curve plus
