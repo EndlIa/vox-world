@@ -696,38 +696,16 @@ export function main(): void {
   }
 
   /**
-   * Adopts the editor's current view as the output camera's pose. Navigation is how the author aims the shot — there
-   * is no camera lock any more, so the viewport is the aiming tool — and this is the one write that makes that true:
-   * the pose reaches `project.camera.transform`, which is what a camera keyframe records, and `mirror.camera`, which is
-   * what the carrier and the export render. The authored `fov` is left alone: it is the shot's own value, not the
-   * viewport's. `Camera -> View` is this same write plus the carrier selection; `View -> Camera` is its mirror image
-   * (the viewport moves to the authored pose).
+   * `Camera -> View`: the authored camera adopts the editor's current view, which is how a shot is started without
+   * aiming the carrier from scratch. It selects the carrier, because aiming it is what the user came here to do.
    */
-  function adoptViewAsCamera(): void {
+  function cameraToView(): void {
     const { position, quaternion } = viewportCamera;
     const transform = project.camera.transform;
     transform.position.copy(position);
     transform.quaternion.copy(quaternion);
     mirror.camera.position.copy(position);
     mirror.camera.quaternion.copy(quaternion);
-    panels.refresh();
-  }
-
-  /**
-   * Navigation keeps the authored camera current: flying the viewport is how a shot is aimed, and the pose has to
-   * reach the document for a keyframe to record it. Skipped while a clip runs — the clip owns the output camera's pose
-   * then, and writing its samples back would drift the authored pose frame by frame (README D46, D48).
-   */
-  controls.onOrbitChange(() => {
-    if (!playback.playing) adoptViewAsCamera();
-  });
-
-  /**
-   * `Camera -> View`: the authored camera adopts the editor's current view, which is how a shot is started without
-   * aiming the carrier from scratch. It selects the carrier, because aiming it is what the user came here to do.
-   */
-  function cameraToView(): void {
-    adoptViewAsCamera();
     refreshCameraPath();
     cameraControlSelected = true;
     syncGizmo();
@@ -1110,7 +1088,6 @@ export function main(): void {
     app.worldGrid.dispose();
     app.cameraControl.dispose();
     app.cameraPath.dispose();
-    // Also drops the orbit-change registration: the callbacks live in the controls.
     app.controls.dispose();
     app.playback.dispose();
     app.mirror.dispose();
