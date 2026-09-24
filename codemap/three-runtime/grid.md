@@ -1,115 +1,104 @@
 # src/three-runtime/grid.ts
 
-Ring: 2 · Layer: three-runtime · Depends on: `../voxels/uniform/grid.js`, `three`
+Ring: 2 · Layer: three-runtime · Depends on: `three`, `@pmndrs/vanilla/core/Grid`, `./shaderPatch.js`
 
 ## Responsibility
-The viewport's grids: a base reference plane at `y = 0` that tells the user how big a metre is — which a
-viewport showing a bare model against a flat background otherwise cannot (README D35) — and the *active*
-object's own lattice, drawn at that object's subdivision over its occupancy plus a margin of its cells, on the
-plane of its lowest occupied cell and in its own frame (README D43). Where the lattice is drawn the base plane
-is cut away, so the two never read as one grid at two scales.
+The viewport's world grid: **one** horizontal plane of shader-drawn lines on the world's ground, shown or hidden by the
+app's one `World grid` flag. It is the only grid — the vertical work planes (`volume`'s walls, the movable `multi`
+plane) and the second copy of the ground the volume display carried are gone, because vox-world places and aligns
+content on the world lattice itself (README D41, D42) and a wall of grid is a reference nothing here is built against.
+The active object's own lattice is gone as well (README D49). The look is the reference viewport's floor plane: one
+white line per world cell, a brighter one every `GRID_SECTION_SIZE` cells (README D35).
 
-Both layers are decorations in every direction: layer 1 means the raycaster never picks them (it tests 0 and
-2) and an export never contains them (the export camera enables 0 alone), `depthWrite = false` means they
-cannot occlude voxels, and `frameAll` ignores the layer, so a grid can never widen the framing of an import.
-It owns the two layers, their line geometry, and the three display settings behind the Grid group; it holds no
-project data, does no per-frame work, and rebuilds a layer only when the caller hands it something new.
+The plane is `@pmndrs/vanilla`'s shader grid with three pure patches applied where the material compiles:
+three's logarithmic-depth chunks, the reference material's derivative-based line attenuation, and no distance fade.
+The whole thing is decoration: layer 1, so the picker's raycaster (layers 0 and 2) never hits it and no export frame
+contains it (README D24), and `depthWrite = false`, so it cannot occlude a voxel below the plane.
 
 ## Public interface
 ```ts
-const DEFAULT_GRID_MARGIN = 8;
+const GRID_CELL_SIZE = 1;        // one cell is one world unit: the lines are the cell boundaries (README D41)
+const GRID_SECTION_SIZE = 20;    // the brighter line, the reference material's majorUnitFrequency
+const GRID_PLANE_EXTENT = 4096;  // side of the quad, in world units
+
+function withLogDepth(vertexShader: string, fragmentShader: string): { vertexShader: string; fragmentShader: string };
+function withAnisotropicAttenuation(fragmentShader: string): string;
+function withoutDistanceFade(fragmentShader: string): string;
 
 class WorldGrid {
   constructor();
-  readonly root: THREE.Group;   // `world-grid`: `world-grid-base` + `world-grid-lattice`
-  get baseVisible(): boolean;
-  get objectVisible(): boolean;
-  get margin(): number;
-  setBaseVisible(visible: boolean): void;
-  setObjectVisible(visible: boolean): void;
-  setMargin(cells: number): void;
-  showObjectLattice(grid: UniformGrid | undefined, matrixWorld: THREE.Matrix4 | undefined): void;
+  readonly root: THREE.Group;   // the owner adds this to its scene
+  get visible(): boolean;
+  setVisible(visible: boolean): void;
+  update(camera: THREE.Camera): void;   // once a frame, after the camera itself has been settled
   dispose(): void;
 }
 ```
 
 ## Internal logic
-1. Every line lives in a `LineSet` — a `LineSegments` with its `LineBasicMaterial` (transparent,
-   `depthWrite = false`, layer 1, `frustumCulled = false`) and a render order. `setVertices` replaces a set's
-   geometry wholesale and disposes the geometry it had, so a rebuild leaves nothing behind.
-2. Construction builds the base as two sets: `minor` at render order 0 (`0x9aa2ad` at 0.28) and `major` at 1
-   (`0xe6e8ea` at 0.5), so the brighter line is drawn last where the two levels coincide on the same `y = 0`.
-   Both come from `baseVertices`, with `step` 1 and `step` 10 over the fixed `GRID_EXTENT = 200`. The lattice
-   is one set at render order 2 (`0xe6e8ea` at 0.6 — brighter than either base level, so it reads as the finer
-   measure), `matrixAutoUpdate = false`, inside a group that starts hidden. `root` is `world-grid`; the two
-   groups are `world-grid-base` and `world-grid-lattice`.
-3. The base's colours are panel greys rather than the reference grid's pure white, which reads as a stray
-   frame line against this viewport's slate background (README D32 is the same lesson).
-4. `baseVertices(step, hole)` walks the plane's fixed coordinates from `-100` to `100` by `step` and emits each
-   line as one ground-plane segment, or — when that fixed coordinate falls strictly inside the hole's rectangle
-   — as the one or two pieces outside it (`pushSegment`, which drops a zero-length piece). A line that only
-   touches the hole's edge, and a line outside it, is emitted whole, so the plane keeps its extent and simply
-   has a rectangle missing.
-5. `latticeVertices(grid, margin)` returns the object-frame segments plus the local rectangle they span, or
-   `undefined` for a grid with no occupied cell. With `cell = grid.cellSize` it draws the cell boundaries along
-   x and z, one per cell index from `bounds.min - margin` through `bounds.max + 1 + margin` — `bounds ± margin`
-   cells — with every vertex at `y = bounds.min[1] * cell`, the plane of the lowest occupied cell.
-6. `showObjectLattice` returns before doing anything when the same grid instance, the same matrix elements, and
-   the same margin are already shown (`shown` keeps the instance, a clone of the matrix, and the margin it was
-   built for). With either argument missing, or a grid with no occupied cell, it clears: `shown` unset, the
-   layer hidden, empty geometry, and the base restored (`setHole(undefined)`). Otherwise it rebuilds the lines,
-   copies `matrixWorld` into `lines.matrix` with `matrixWorldNeedsUpdate = true` — so the placement and any
-   parent rotation are carried rather than baked into the vertices — shows the layer only while
-   `objectVisible`, and cuts the base with `footprintOf(local, matrixWorld)`: the world-space x/z bounding box
-   of the local rectangle's four corners, so a turned object is cut by its extent rather than exactly.
-7. `setMargin` re-shows the lattice at the new margin through the same path, using the retained grid and matrix
-   clone; `setBaseVisible` and `setObjectVisible` only toggle their own group — hiding the lattice leaves the
-   hole where it is, and `setObjectVisible(true)` shows the layer only if `shown` exists.
+1. Constants: `OVERLAY_LAYER = 1` (README D24), `GRID_RENDER_ORDER = 0` (below the 1000 the box preview and the
+   camera path draw at), `GRID_CELL_SIZE = 1`, `GRID_SECTION_SIZE = 20`, `GRID_PLANE_EXTENT = 4096`,
+   `CELL_THICKNESS = 0.42`, `SECTION_THICKNESS = 0.55`, one white `GRID_LINE_COLOR = 0xffffff`.
+2. Construction builds the library's `Grid` with `args: [EXTENT, EXTENT]`, `cellSize`, `sectionSize`, the two
+   thicknesses, both colours white, `followCamera: false`, `infiniteGrid: false`, `side: THREE.DoubleSide`, names the
+   mesh `world-grid-plane`, leaves its quaternion the identity, gives it layer 1 and `GRID_RENDER_ORDER`, takes the
+   material's `depthWrite` off, and installs its `onBeforeCompile` patch. The mesh goes into a `Group` named
+   `world-grid`, which is what `root` is.
+3. **No rotation is applied, and that is the whole orientation story.** The library's vertex program swizzles the
+   geometry — `localPosition = position.xzy` — before the model matrix, so an unturned `PlaneGeometry` already lies in
+   the plane whose normal is the world's up. A mesh rotation here (which the first version of this port had) turns the
+   floor into a wall, and the app then draws no grid at all: it renders edge-on to the camera. `tests/grid.test.ts`
+   pins both halves of that — the swizzle in the program and the identity quaternion on the mesh.
+4. `setVisible` writes `root.visible`, which is what the app's checkbox reads back through `visible`. Nothing else in
+   the file touches visibility.
+5. `update(camera)` moves the quad to the camera's own cell — `x` and `z` rounded to whole cells, `y` left on the
+   world's ground — so the lines stay on the cell boundaries however far the viewport travels. Nothing else follows the
+   camera, and the library's own `update` (which only fed the distance fade) is not used, because the fade is patched
+   out.
+6. `withLogDepth` adds three's `<common>` and `<logdepthbuf_pars_vertex>` above `main` and `<logdepthbuf_vertex>` at the
+   end of it, and the two fragment chunks, because a custom shader without them writes a depth nothing else in the
+   scene can be compared against (README D40).
+7. `withAnisotropicAttenuation` rewrites the library's `return 1.0 - min(line, 1.0);` to multiply the line by
+   `clamp(1.0 / (length(vec2(dFdx(r.x), dFdy(r.x))) * 1.41421356 + 1.0) - 0.1, 0.0, 1.0)` — the reference grid
+   material's anisotropy clamp, in the cell-space derivative the library hands it. Without it a unit grid saturates at
+   the horizon and beats against the pixel grid.
+8. `withoutDistanceFade` rewrites `float d = 1.0 - min(dist / fadeDistance, 1.0);` to `float d = 1.0;`: the reference
+   grid does not fade with distance at all, and what thins its lines there is the clamp above.
+9. `dispose()` takes the plane out of the scene, disposes its geometry and material, and empties the root. It is
+   idempotent.
 
 ## Invariants
-- Everything is on layer 1: the raycaster tests layers 0 and 2, so no grid is ever picked, and the export
-  camera enables layer 0 alone, so no grid ever appears in a frame (README D24). `frameAll` measures layers 0
-  and 2, so a grid can never widen the framing of an import.
-- `depthWrite = false` throughout, so a grid can never occlude a voxel, and the order between the two base
-  levels and between the layers is fixed by `renderOrder` (0, 1, 2) rather than by geometry.
-- The base keeps its extent: the fixed-coordinate set is the same with and without a hole — 201 lines per
-  direction at `step` 1 — and only a rectangle is missing, because a crossing line is emitted as its pieces
-  and those pieces reach the plane's edges. With no hole the whole plane is back.
-- A repeat `showObjectLattice` with the same grid instance, the same matrix elements, and the same margin
-  rebuilds nothing: the lattice's geometry is replaced only when the answer differs.
-- The lattice is always the object's own cells at its own level: it is built from `bounds()` in cell
-  coordinates times `cellSize`, on the object's lowest plane, so a subdivision change moves it and no world
-  unit is involved.
-- The three settings are the only state, and no method is per-frame: nothing here reads a camera, a project, or
-  a session.
-- `dispose()` disposes all three geometries and materials, empties the two groups and `root`, and unsets
-  `shown`; the group is left childless, so a second call has nothing left to empty.
+- The grid is one plane: `root.children.length === 1` from construction, and no mode, axis, or offset exists to change
+  what is drawn — the app's `World grid` flag is the only state (README D35).
+- The plane lies in the world's ground plane: the library's program swizzles the quad into its local `xz` plane and
+  the mesh carries no rotation of its own, and `update` never moves it off `y = 0`.
+- The plane's `x`/`z` always sit on whole cells, so every line falls on a cell boundary.
+- The plane is on layer 1 with `depthWrite = false` and `GRID_RENDER_ORDER`, so a pick cannot reach it and it cannot
+  occlude what is below it (README D24).
+- The three patches are the only difference from the library's own shader, and each is a pure string transform, so each
+  is checked without a GPU (`tests/grid.test.ts`). The library's `followCamera` and `infiniteGrid` stay off: both move
+  the grid inside the shader, and the quad is moved instead so the mesh stays where the lines it draws are.
+- `dispose()` releases the plane's geometry and material and is safe twice.
 
 ## Errors
-- `setMargin` throws `RangeError` for a non-integer or negative `cells`, naming the method and the value.
-- Every other path is total: `showObjectLattice` reads `undefined` as "clear this layer" rather than failing,
-  and an unoccupied grid is `undefined` from `latticeVertices` rather than a throw. Nothing here throws
-  `TypeError`.
+Nothing throws. `update` accepts any camera, `setVisible` any boolean, and `dispose` is safe twice. `GRID_PLANE_EXTENT`
+and `GRID_SECTION_SIZE` are module constants, not validated inputs.
 
 ## Dependencies
-- `../voxels/uniform/grid.js` — `UniformGrid` (type-only import), for `grid.bounds()` and `grid.cellSize` in
-  `latticeVertices`.
-- `three` — `Group`, `LineSegments`, `LineBasicMaterial`, `BufferGeometry`, `Float32BufferAttribute`,
-  `Matrix4`, `Vector3`. No project, editor, UI, or other three-runtime module; the owner passes the scene in by
-  adding `root` itself, exactly as `Overlay` is used.
+- `three` — `Group`, `Mesh`, `Vector3`, `Color`, `DoubleSide`, `ShaderMaterial`, `Camera`, `Scene` (by the caller).
+- `@pmndrs/vanilla/core/Grid` — the shader grid itself: its material, geometry, and uniform set.
+- `./shaderPatch.js` — `insertChunks`, the one transform the log-depth patch needs.
 
 ## Tests
-`tests/grid.test.ts` pins the two layers' geometry and the three settings in the node environment; see
-`codemap/tests/grid.md`. What needs a GPU stays app-verified (README §10): the base and the lattice visible
-with their palettes and contrast, sitting under the voxels rather than over them, not pickable (a click on an
-empty grid area selects nothing), and absent from an exported frame.
+`tests/grid.test.ts` pins the one plane, its layer and depth behaviour, the cell and section spacing, the white lines,
+the floor orientation (the program's swizzle with no mesh rotation), the whole-cell follow, the visibility switch, the
+two dispose calls, and each of the three patches — including that the material's own `onBeforeCompile` hook applies
+them. What needs a GPU stays app-verified (README §10): the grid on screen, its lines on the cell boundaries, the
+coarser level every twenty cells, and its absence from a pick and from an exported frame.
 
 ## Open questions
-- The cut is a rectangle: `footprintOf` takes the lattice rectangle's axis-aligned world x/z box, so a rotated
-  object cuts away more of the base than its lattice actually covers. An exact per-line cut was not needed for
-  the placements the editor produces today.
-- The base's side is fixed at 200 world units, its cell at one, and its bright level at every tenth. A scene
-  much larger than that would want the extent to follow the content or the camera; it is a viewport
-  convenience, and it may never change the stored data (a grid is decoration, never a source of scale).
-- The margin is a fixed default of 8 cells, so a fine grid with a small occupancy still gets a wide rectangle
-  around it. A margin that followed the camera's zoom would keep the lattice at a readable density.
+- `GRID_PLANE_EXTENT = 4096` is the answer to "the grid must not end in view" without a fade: the reference uses a disc
+  of radius 5100 for the same reason. If a view ever shows the quad's edge, the extent is the knob.
+- The reference's floor is a dark translucent surface (`mainColor` at `mesh.visibility = 0.1`) whose lines are white at
+  the same 10%. This grid has no fill and no overall alpha: over the viewport's slate background the fill would only
+  darken what is already there, and the two levels are told apart by line coverage instead of by two greys.

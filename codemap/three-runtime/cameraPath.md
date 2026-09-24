@@ -12,6 +12,10 @@ never serialized, never a keyframe target, and never a camera: it is the picture
 `animation/trajectory.ts` hands it (README D47), and it shares the viewing distance and the hidden-with-the-carrier rule with
 `three-runtime/cameraControl.ts`, the carrier it pairs with (README D46).
 
+Both halves are three's own primitives: a `Line` over a buffer it grows on demand, and one `Points` set whose material
+draws the ring from a `DataTexture` rather than a mesh per keyframe. A point sprite faces the drawing camera by
+construction, so nothing here turns a marker to the camera and the app has no per-frame call for it.
+
 ## Public interface
 ```ts
 class CameraPath {
@@ -19,7 +23,6 @@ class CameraPath {
   readonly root: THREE.Group;   // the whole drawing; not a document node and not a gizmo target
   setTrajectory(points: readonly THREE.Vector3[]): void;
   setMarkers(points: readonly THREE.Vector3[]): void;
-  faceCamera(quaternion: THREE.Quaternion): void;
   setScreenScale(distance: number): void;
   setVisible(visible: boolean): void;
   dispose(): void;
@@ -28,85 +31,85 @@ class CameraPath {
 
 ## Internal logic
 1. Constants: `OVERLAY_LAYER = 1`, the decoration layer `grid.ts`, `overlay.ts`, `controls.ts`, and `cameraControl.ts`
-   share (README D24); `DECORATION_RENDER_ORDER = 1000`; the ring's `MARKER_RADIUS = 0.9`, `MARKER_INNER_RATIO =
-   0.62`, and `MARKER_SEGMENTS = 24`; the size rule's `MARKER_SCALE = 0.02`, clamped into `[1e-4, 1e6]`; and the one
-   colour, `0xffffff`.
-2. Construction builds one `Group` root holding a `Line` over its own `BufferGeometry` and a marker `Group`. The line
-   material is `LineBasicMaterial({ color, depthTest: false, transparent: true })`; the line is `frustumCulled =
-   false` at `DECORATION_RENDER_ORDER`; and every marker will share one
-   `RingGeometry(MARKER_RADIUS * MARKER_INNER_RATIO, MARKER_RADIUS, MARKER_SEGMENTS)` and one
-   `MeshBasicMaterial({ color, side: DoubleSide, depthTest: false, transparent: true })`. The root then takes the
-   layer along with every child (`root.traverse`, the root itself included), is hidden, and is added to the scene it
-   was given (`mirror.scene`). The four resources — two geometries, two materials — are collected in `resources` for
-   `dispose`.
-3. `setTrajectory(points)` replaces the polyline. An empty list only narrows the draw range, `setDrawRange(0, 0)`, and
+   share (README D24); `DECORATION_RENDER_ORDER = 1000`; the ring's `MARKER_INNER_RATIO = 0.62` and the
+   `MARKER_TEXTURE_SIZE = 64` texels it is drawn into; the size rule's `MARKER_SCALE = 0.036` — the ring's diameter as
+   a share of the viewing distance, which is the 1.8 helper units the old per-marker scale added up to — clamped into
+   `[1.8e-4, 1.8e6]`; and the one colour, `0xffffff`.
+2. `ringTexture()` builds the marker's whole appearance from data: one white annulus in an RGBA `Uint8Array`, its band
+   feathered by a texel at each edge and its two filters set to `LinearFilter`, so a 64-texel ring does not read as a
+   staircase. It is a `DataTexture` rather than a canvas texture because it needs no DOM, which is what keeps this file
+   testable in the node environment; the alpha at the centre and outside the outer radius is zero, which is what makes
+   the marker read as a ring rather than a disc. The texture is then flagged with `needsUpdate = true`, because a
+   `DataTexture` does not flag itself for upload and a material given an unuploaded map draws nothing at all.
+3. Construction builds one `Group` root holding the `Line` over its own `BufferGeometry` and the `Points` over theirs.
+   The line material is `LineBasicMaterial({ color, depthTest: false, transparent: true })`; the point material is
+   `PointsMaterial({ color, map: ringTexture(), size: 0, sizeAttenuation: true, depthTest: false, transparent: true })`;
+   both objects are `frustumCulled = false` at `DECORATION_RENDER_ORDER`. The root then takes the layer along with
+   every child (`root.traverse`, the root itself included), is hidden, and is added to the scene it was given
+   (`mirror.scene`). The five resources — two geometries, two materials, and the texture — are collected in
+   `resources` for `dispose`.
+4. `setTrajectory(points)` replaces the polyline. An empty list only narrows the draw range, `setDrawRange(0, 0)`, and
    never dereferences a `position` attribute that may not exist yet, because a path that has never been drawn has no
-   buffer. A list longer than `capacity` grows the buffer through `grow(count)` first, and only then are the points
-   written with `setXYZ` per index and the attribute marked `needsUpdate`. `setDrawRange(0, points.length)` is what
-   makes two points one segment and one point nothing, and `computeBoundingSphere()` follows, because the sphere is
-   still what a measure or a ray would read even though the line is never frustum-culled.
-4. `grow(count)` allocates a fresh `BufferAttribute(new Float32Array(count * 3), 3)` and installs it as `position`,
-   recording the new `capacity`. It replaces the old buffer rather than reusing it: growth is the rare path — a longer
-   trajectory than any seen so far — and a shorter one afterwards only narrows the draw range and overwrites the same
-   array.
-5. `setMarkers(points)` is the ring pool. Index `i` reuses `markers[i]` when it exists and otherwise creates one
-   `Mesh` from the shared geometry and material, `frustumCulled = false`, at `DECORATION_RENDER_ORDER`, on
-   `OVERLAY_LAYER`, and adds it to the marker group; then it copies `points[i]` into `marker.position` and shows it.
-   A list shorter than the pool hides the surplus (`visible = false`) instead of removing it, so a keyframe deleted
-   and added again reuses the meshes it had.
-6. `faceCamera(quaternion)` copies the drawing camera's quaternion onto every visible marker. Three has no billboard
-   mode on a mesh, so this is one copy per marker per frame — the price of a ring that reads as a circle from any
-   angle, and the reason the app calls it every frame rather than on change.
-7. `setScreenScale(distance)` scales every marker mesh by `clamp(distance * MARKER_SCALE, MIN_MARKER_SCALE,
-   MAX_MARKER_SCALE)`. It writes the meshes, never the marker group: a scale on the group would scale the markers'
-   world positions with their size, and the rings would drift off the path they belong to.
-8. `setVisible(visible)` writes the root's `visible`, which takes the whole drawing — polyline and markers — off the
+   buffer. A list longer than `lineCapacity` grows the buffer first — a fresh `BufferAttribute(new Float32Array(count *
+   3), 3)`, which replaces the old one because growth is the rare path — and only then are the points written with
+   `setXYZ` per index and the attribute marked `needsUpdate`. `setDrawRange(0, points.length)` is what makes two points
+   one segment and one point nothing, and `computeBoundingSphere()` follows, because the sphere is still what a measure
+   or a ray would read even though the line is never frustum-culled.
+5. `setMarkers(points)` writes the same way into the point set's one buffer, with its own `markerCapacity`: one point
+   per authored keyframe, drawn exactly as far as the list goes. The draw range is what the count follows, so a
+   keyframe deleted and added again reallocates nothing and no mesh is ever created per marker.
+6. `setScreenScale(distance)` writes one scalar, the material's `size`, as `clamp(distance * MARKER_SCALE,
+   MIN_MARKER_SCALE, MAX_MARKER_SCALE)`. It never walks the markers: a point sprite's size is its material's, so their
+   positions cannot be touched by a resize — which is also why scaling a group, the arrangement that would move the
+   markers off the path, is not available here.
+7. `setVisible(visible)` writes the root's `visible`, which takes the whole drawing — polyline and markers — off the
    screen in one write; a hidden path is not seen, picked, or exported either way.
-9. `dispose()` disposes the two geometries and the two materials from `resources`, empties that list and the marker
-   pool, and unparents the root. The second call disposes nothing and `removeFromParent` on a parentless node changes
-   nothing, so it is idempotent; the marker meshes stay children of the marker group, but nothing draws through them
-   and the root is out of the scene.
+8. `dispose()` disposes the two geometries, the two materials, and the ring texture from `resources`, empties that list,
+   and unparents the root. The second call disposes nothing and `removeFromParent` on a parentless node changes nothing,
+   so it is idempotent.
 
 ## Invariants
-- The whole subtree is on layer 1 at every moment: the construction walk covers the root and both children, and each
-  marker is put on the layer as it is created. Nothing is ever moved off it, so the raycaster's layers and the export
-  camera's cannot reach the drawing (README D24).
-- Nothing is named — the root, the line, the marker group, and every marker carry no name — so the mixer's binding
-  walk, which resolves `<ObjectId>` nodes and `camera`, can never bind a path object (README D22).
-- The line and the markers use `depthTest: false` at `DECORATION_RENDER_ORDER`, so the path draws over the scene
+- The whole subtree is on layer 1 at every moment: the construction walk covers the root and both children, and nothing
+  is ever moved off it, so the raycaster's layers and the export camera's cannot reach the drawing (README D24).
+- Nothing is named — the root, the line, and the point set carry no name — so the mixer's binding walk, which resolves
+  `<ObjectId>` nodes and `camera`, can never bind a path object (README D22).
+- The line and the points use `depthTest: false` at `DECORATION_RENDER_ORDER`, so the path draws over the scene
   rather than being buried in it — the same decoration choice the grid, the overlay, and the carrier make.
-- Position and size are separate: `setScreenScale` never moves a marker and `setMarkers` never rescales one, so a
-  ring is always drawn at the point it belongs to, whatever its size.
-- The buffer's capacity only grows, and growth is the one allocation: a shorter trajectory narrows the draw range and
+- Position and size are separate: `setScreenScale` writes the material and never a point, and `setMarkers` never sizes
+  anything, so a ring is always drawn at the point it belongs to, whatever its size.
+- Each buffer's capacity only grows, and growth is the one allocation: a shorter list narrows the draw range and
   overwrites the same `Float32Array`, and an empty one touches no buffer at all.
-- The marker pool only grows with the widest marker list seen; surplus markers are hidden, never removed, so the mesh
-  count and the keyframe count can differ without anything being rebuilt.
-- `dispose()` releases both geometries and both materials exactly once, drops the marker pool, and unparents the root;
-  afterwards nothing of the path is in the scene and calling it again is safe.
+- A marker faces the drawing camera by construction — it is a point sprite — so no per-frame rotation exists for the
+  app to call and no marker can be left facing the wrong way.
+- `dispose()` releases both geometries, both materials, and the ring texture, and unparents the root; afterwards nothing
+  of the path is in the scene and calling it again is safe.
 
 ## Errors
 - `TypeError` from the constructor when the argument is not a `THREE.Scene`: the root would otherwise be added to
   something that cannot hold it, leaving the drawing unreachable.
 - Everything else is total. `setScreenScale` clamps a distance outside the range rather than refusing it;
-  `setTrajectory`, `setMarkers`, `faceCamera`, and `setVisible` accept whatever they are handed and may be called in
-  any order, including before any trajectory exists; `dispose()` is safe twice. Nothing here validates that a point is
-  finite — the points come from the sampler and the authored keyframes, which are finite by construction.
+  `setTrajectory`, `setMarkers`, and `setVisible` accept whatever they are handed and may be called in any order,
+  including before any trajectory exists; `dispose()` is safe twice. Nothing here validates that a point is finite —
+  the points come from the sampler and the authored keyframes, which are finite by construction.
 
 ## Dependencies
-- `three` — `Scene`, `Group`, `Line`, `LineBasicMaterial`, `BufferGeometry`, `BufferAttribute`, `Mesh`,
-  `RingGeometry`, `MeshBasicMaterial`, `Vector3`, `Quaternion`, `DoubleSide`.
+- `three` — `Scene`, `Group`, `Line`, `LineBasicMaterial`, `Points`, `PointsMaterial`, `BufferGeometry`,
+  `BufferAttribute`, `DataTexture`, `LinearFilter`, `RGBAFormat`, `Vector3`.
 No outer-ring import: no project, timeline, editor, UI, or other three-runtime module. The caller hands in the scene,
 exactly as it does for `Overlay` and `CameraControl`, and `app/main.ts` is the only caller.
 
 ## Tests
-`tests/cameraPath.test.ts` pins the layer and naming invariants, the polyline buffer and its draw range, the ring
-pool, the position/size separation, the billboard copy, and `dispose`, in the node environment — no DOM, no GPU — see
-`codemap/tests/cameraPath.md`. What needs a GPU stays app-verified (README §10): the white polyline and its rings on
-screen over the scene, turning to face the viewport as it orbits, resizing with the viewing distance, following the
-toggle, and absent from an exported frame and from a pick.
+`tests/cameraPath.test.ts` pins the layer and naming invariants, the polyline buffer and its draw range, the marker set
+and its draw range, the ring the material draws from its texture data, the position/size separation, and `dispose`, in
+the node environment — no DOM, no GPU — see `codemap/tests/cameraPath.md`. What needs a GPU stays app-verified
+(README §10): the white polyline and its rings on screen over the scene, staying readable as the viewport orbits and as
+the viewing distance changes, following the toggle, and absent from an exported frame and from a pick.
 
 ## Open questions
-- Every marker shares one geometry and one material, so per-marker colouring — marking the keyframe under the
-  playhead, for instance — would need a second material. Nothing asks for it today.
+- Every marker shares one geometry, one texture, and one material, so per-marker colouring — marking the keyframe under
+  the playhead, for instance — would need a second material or a per-point attribute. Nothing asks for it today.
 - The polyline is a `Line`, so it carries the platform's one-pixel width; a thicker path would need a different
   primitive. At demo scale the rings carry the reading anyway.
+- The ring is a fixed 64-texel annulus stretched to the distance-derived size, so a marker very close to the camera is
+  magnified rather than crisp. A screen-space size would need the drawing camera's projection here, which this file
+  deliberately does not read.

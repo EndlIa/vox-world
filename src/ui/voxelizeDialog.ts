@@ -9,11 +9,15 @@
  * The prompt asks how many voxels long the model is (README D29, D41); the dimensions it prints beside the
  * field are an orientation readout, never the value handed to the job.
  *
- * The nodes are appended to `root` for the duration of a prompt only: a closed dialog is out of the DOM
- * entirely, so nothing of it is left on screen — or in the way of a click — between prompts.
+ * The prompt is the platform's own `<dialog>`, opened with `showModal()`: the platform puts it in the top
+ * layer, above every window and the HUD, dims the page behind it with `::backdrop` (index.html), and makes
+ * the rest of the page inert — which is what makes this modal, and why it carries no backdrop element and
+ * no `z-index` of its own. Its nodes are appended to `root` for the duration of a prompt only: a closed
+ * dialog is out of the DOM entirely, so nothing of it is left on screen — or in the way of a click —
+ * between prompts.
  */
 
-import { el, fmt, on } from './dom.js';
+import { el, fmt } from './dom.js';
 
 /**
  * The count the prompt opens at: how many voxels long the model is. One voxel is one world unit
@@ -52,7 +56,8 @@ function field(label: string, control: HTMLElement): HTMLLabelElement {
 export class VoxelizeDialog {
   private readonly root: HTMLElement;
   private readonly defaults: () => VoxelizeDialogDefaults;
-  private readonly backdrop: HTMLDivElement;
+  /** The modal itself: `showModal()` is what stacks it — and the card it holds — over the page. */
+  private readonly dialog: HTMLDialogElement;
   private readonly titleText: HTMLHeadingElement;
   private readonly voxelsAcrossField: HTMLLabelElement;
   private readonly voxelsAcrossInput: HTMLInputElement;
@@ -63,21 +68,32 @@ export class VoxelizeDialog {
   private extent = { x: 0, y: 0, z: 0 };
   /** Resolves the pending `open()`, or `undefined` while no prompt is on screen. */
   private settle: ((outcome: VoxelizeDialogOutcome) => void) | undefined = undefined;
-  /** Removes the document key listener; present exactly while a prompt is open. */
-  private detachKeys: (() => void) | undefined = undefined;
   private disposed = false;
 
   constructor(root: HTMLElement, defaults: () => VoxelizeDialogDefaults) {
     this.root = root;
     this.defaults = defaults;
 
-    // The backdrop is what makes this modal: fixed over the whole window, so neither a panel control
-    // nor the viewport can be reached while a prompt is up. Clicking it does nothing — a prompt is
-    // answered by its own buttons, so a stray click cannot discard the settings the user is choosing.
-    this.backdrop = el('div');
-    this.backdrop.style.cssText =
-      'position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;' +
-      ' background: rgba(16, 18, 21, 0.72);';
+    // The modal is the platform's own `<dialog>`: `showModal()` puts it in the top layer, above every
+    // window and the HUD, and makes the rest of the page inert, so neither a panel control nor the viewport
+    // can be reached while a prompt is up. Clicking outside the card does nothing — a prompt is answered by
+    // its own buttons, so a stray click cannot discard the settings the user is choosing.
+    // The prompt's events are registered here rather than on the form the card holds, whose index signature
+    // would swallow `el`'s listener types. Enter is answered by the key listener and by the form's
+    // submission; Escape is the platform's `cancel` and then its `close`, and both settle the prompt — the
+    // second finds no resolver left — because the pair is not always delivered: a dialog that has been
+    // closed and shown again is dismissed with the `cancel` alone.
+    this.dialog = el('dialog', {
+      on: {
+        keydown: (event) => this.onKeyDown(event),
+        cancel: () => this.settleWith({ kind: 'cancel' }),
+        close: () => this.onDialogClose(),
+        submit: (event) => this.onSubmit(event),
+      },
+    });
+    // The card: the `section` the stylesheet already draws, sized as this modal has always been. The
+    // dialog around it carries no look of its own — `index.html` resets the platform's border, padding,
+    // background, and color — so the card is what reads as the modal.
     const card = el('section');
     card.style.width = '320px';
     card.style.marginBottom = '0';
@@ -94,16 +110,21 @@ export class VoxelizeDialog {
     this.dimensionsLine = el('div', { class: 'dim', text: '' });
     this.voxelsAcrossField = field('Voxels across', this.voxelsAcrossInput);
 
-    this.voxelizeButton = el('button', { text: 'Voxelize', on: { click: () => this.confirm() } });
-    const cancelButton = el('button', { text: 'Cancel', on: { click: () => this.close({ kind: 'cancel' }) } });
+    // Both buttons are the card's form's submit buttons, so the platform turns a click on either — and
+    // the Enter it answers with its default button, `Voxelize` — into one `submit` event that names the
+    // pressed button: `Voxelize` runs the prompt, `Cancel` dismisses it. `method="dialog"` is what keeps
+    // that submission from navigating the page.
+    this.voxelizeButton = el('button', { type: 'submit', text: 'Voxelize' });
+    const cancelButton = el('button', { type: 'submit', text: 'Cancel' });
 
     const body = el('div', undefined, [
       this.voxelsAcrossField,
       this.dimensionsLine,
       el('div', { class: 'row' }, [this.voxelizeButton, cancelButton]),
     ]);
-    card.append(this.titleText, body);
-    this.backdrop.append(card);
+    const form = el('form', { method: 'dialog' }, [body]);
+    card.append(this.titleText, form);
+    this.dialog.append(card);
   }
 
   /**
@@ -113,11 +134,13 @@ export class VoxelizeDialog {
    */
   open(context: { title: string }): Promise<VoxelizeDialogOutcome> {
     if (this.disposed) throw new TypeError('VoxelizeDialog.open: the dialog has been disposed');
-    this.close({ kind: 'cancel' });
+    this.settleWith({ kind: 'cancel' });
     this.seed();
     this.titleText.textContent = context.title;
-    this.root.append(this.backdrop);
-    this.detachKeys = on(document, 'keydown', (event) => this.onKeyDown(event));
+    this.root.append(this.dialog);
+    // The platform's modal: the top layer, the inert page behind it, Escape closing it, focus on the
+    // card's first focusable control — the count — and that focus handed back where it was on close.
+    this.dialog.showModal();
     // Focus starts in the count, so Enter or Escape answers the prompt at once.
     this.voxelsAcrossInput.focus();
     return new Promise<VoxelizeDialogOutcome>((resolve) => {
@@ -129,9 +152,9 @@ export class VoxelizeDialog {
     return this.settle !== undefined;
   }
 
-  /** Closes a pending prompt — resolving it as a cancel — and releases the listener and the nodes. */
+  /** Closes a pending prompt — resolving it as a cancel — and releases the nodes. */
   dispose(): void {
-    this.close({ kind: 'cancel' });
+    this.settleWith({ kind: 'cancel' });
     this.disposed = true;
   }
 
@@ -164,18 +187,41 @@ export class VoxelizeDialog {
     return `${cell(x)} \u00d7 ${cell(y)} \u00d7 ${cell(z)} voxels`;
   }
 
-  /** Enter confirms; Escape cancels. Both are answered by the prompt, never by whatever holds focus. */
+  /**
+   * Enter confirms, wherever focus is inside the prompt: the count, a button, or the card the platform
+   * focuses after a click on it. Escape is not handled here — it is the platform's own `cancel`, and
+   * `showModal()` closing the dialog is what answers it.
+   */
   private onKeyDown(event: Event): void {
-    if (!(event instanceof KeyboardEvent)) return;
-    if (event.key === 'Enter') {
-      event.preventDefault();
+    if (!(event instanceof KeyboardEvent) || event.key !== 'Enter') return;
+    // `preventDefault()` keeps the key from reaching the page — and from reaching the form as well, since
+    // this is the prompt's one answer to Enter: the platform's implicit submission of `Voxelize` needs
+    // focus inside the form, and a click on the card can move it off onto the dialog itself.
+    event.preventDefault();
+    this.confirm();
+  }
+
+  /**
+   * Answers the form's submission — a click on `Voxelize` or on `Cancel`, named by `submitter`. The
+   * submission is prevented because this file closes the prompt, not the platform: `confirm()` leaves a
+   * count that does not parse up, where a `method="dialog"` close would have dismissed it as a cancel.
+   */
+  private onSubmit(event: Event): void {
+    event.preventDefault();
+    if (event instanceof SubmitEvent && event.submitter === this.voxelizeButton) {
       this.confirm();
       return;
     }
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      this.close({ kind: 'cancel' });
-    }
+    this.settleWith({ kind: 'cancel' });
+  }
+
+  /**
+   * The platform closed the dialog without asking first, which is a dismissal all the same. A `close` is
+   * delivered in a task of its own and can therefore arrive after a later prompt is already up: only a
+   * dialog that is no longer `open` is the platform dismissing the prompt being awaited.
+   */
+  private onDialogClose(): void {
+    if (!this.dialog.open) this.settleWith({ kind: 'cancel' });
   }
 
   /**
@@ -186,17 +232,20 @@ export class VoxelizeDialog {
   private confirm(): void {
     const cellsAcross = this.readCount();
     if (cellsAcross === undefined) return;
-    this.close({ kind: 'run', cellsAcross });
+    this.settleWith({ kind: 'run', cellsAcross });
   }
 
-  /** Settles the pending promise and takes the modal out of the DOM. A repeat call is a no-op. */
-  private close(outcome: VoxelizeDialogOutcome): void {
+  /**
+   * Settles the pending promise and takes the dialog out of the top layer and out of `root`. Closing it
+   * first is what empties the top layer; the nodes go after, so nothing is left open behind them. A repeat
+   * call is a no-op, which is why every path settles the same promise exactly once.
+   */
+  private settleWith(outcome: VoxelizeDialogOutcome): void {
     const settle = this.settle;
     if (settle === undefined) return;
     this.settle = undefined;
-    this.detachKeys?.();
-    this.detachKeys = undefined;
-    this.backdrop.remove();
+    this.dialog.close();
+    this.dialog.remove();
     settle(outcome);
   }
 

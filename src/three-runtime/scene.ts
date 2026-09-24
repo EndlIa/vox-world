@@ -18,6 +18,7 @@
 import type { ObjectId, Project, SceneObject } from '../document/project.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
+import { applyFaceBorder } from './faceGrid.js';
 
 /** The imported-source-mesh layer (README D24); `picking.ts` enables it on its raycaster too. */
 const SOURCE_LAYER = 2;
@@ -103,7 +104,10 @@ export class SceneMirror {
     sun.position.set(4, 8, 6);
     this.scene.add(sun);
 
+    // The one material every voxel instance shares, carrying the per-face border on top of its shading (README D35):
+    // the mask pass swaps in a material of its own, so the border never reaches an identity frame (README D11).
     this.shadingMaterial = new THREE.MeshLambertMaterial();
+    applyFaceBorder(this.shadingMaterial);
 
     const settings = project.camera;
     this.camera = new THREE.PerspectiveCamera(settings.fov, 1, settings.near, settings.far);

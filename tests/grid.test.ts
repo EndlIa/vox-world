@@ -1,129 +1,140 @@
+/**
+ * The world grid: one plane of shader-drawn lines on the world's ground, the look the Grid group's one switch shows
+ * or hides, and the three patches that adapt the library's shader. Node-side and GPU-free: `three` builds the plane,
+ * its uniforms, and its material without a renderer.
+ */
+
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { Matrix4, Vector3 } from 'three';
-import { DEFAULT_GRID_MARGIN, WorldGrid } from '../src/three-runtime/grid.js';
-import { UniformGrid } from '../src/voxels/uniform/grid.js';
+import {
+  GRID_CELL_SIZE,
+  GRID_SECTION_SIZE,
+  WorldGrid,
+  withAnisotropicAttenuation,
+  withoutDistanceFade,
+  withLogDepth,
+} from '../src/three-runtime/grid.js';
 
-/** A 4 x 4 x 4 block of cells from the origin, at the subdivision asked for. */
-function block(subdivision: number): UniformGrid {
-  const grid = UniformGrid.create(subdivision);
-  for (let x = 0; x < 4; x += 1) {
-    for (let y = 0; y < 4; y += 1) {
-      for (let z = 0; z < 4; z += 1) grid.set(x, y, z, 0x3366ff);
-    }
-  }
-  return grid;
+/** A camera at this position, which is all the grid reads from one. */
+function cameraAt(x: number, y: number, z: number): THREE.PerspectiveCamera {
+  const camera = new THREE.PerspectiveCamera();
+  camera.position.set(x, y, z);
+  return camera;
 }
 
-function layer(grid: WorldGrid, name: string): THREE.Group {
-  const found = grid.root.getObjectByName(name);
-  if (!(found instanceof THREE.Group)) throw new TypeError(`no ${name} layer`);
+/** The grid's one plane, wherever the last `update` put it. */
+function plane(grid: WorldGrid): THREE.Mesh {
+  const found = grid.root.getObjectByName('world-grid-plane');
+  if (!(found instanceof THREE.Mesh)) throw new TypeError('WorldGrid: no plane');
   return found;
 }
 
-/** The base layer's two line sets, by the render order that decides which is drawn last. */
-function baseLineSets(grid: WorldGrid): { faint: THREE.LineSegments; bright: THREE.LineSegments } {
-  const sets = layer(grid, 'world-grid-base').children.filter(
-    (child): child is THREE.LineSegments => child instanceof THREE.LineSegments,
-  );
-  const sorted = [...sets].sort((a, b) => a.renderOrder - b.renderOrder);
-  if (sorted.length !== 2) throw new TypeError(`expected two base line sets, got ${sorted.length}`);
-  return { faint: sorted[0]!, bright: sorted[1]! };
-}
-
-/** The active object's single lattice line set. */
-function latticeLines(grid: WorldGrid): THREE.LineSegments {
-  const found = layer(grid, 'world-grid-lattice').children.find(
-    (child): child is THREE.LineSegments => child instanceof THREE.LineSegments,
-  );
-  if (found === undefined) throw new TypeError('the lattice layer holds no line set');
+/** The plane's material, which is where the library keeps the spacing, the colours, and the patch hook. */
+function material(grid: WorldGrid): THREE.ShaderMaterial {
+  const found = plane(grid).material;
+  if (!(found instanceof THREE.ShaderMaterial)) throw new TypeError('WorldGrid: the plane is not a shader grid');
   return found;
 }
 
-function vertices(lines: THREE.LineSegments): number[] {
-  const attribute = lines.geometry.getAttribute('position');
-  return Array.from(attribute.array as ArrayLike<number>);
-}
-
-/** The distinct values a line set draws at, sorted: one per line, so a spacing is readable from it. */
-function coordinates(lines: THREE.LineSegments, axis: 0 | 2): number[] {
-  const values = new Set<number>();
-  const array = vertices(lines);
-  for (let index = 0; index < array.length; index += 3) values.add(array[index + axis]!);
-  return [...values].sort((a, b) => a - b);
+/** A uniform's value, read the way the library writes it. */
+function uniform(grid: WorldGrid, name: string): unknown {
+  return material(grid).uniforms[name]?.value;
 }
 
 describe('world grid', () => {
-  it('draws a base plane at the world unit with a brighter line every tenth', () => {
-    const world = new WorldGrid();
-    const { faint, bright } = baseLineSets(world);
-    // 200 units: one line per unit on the faint set, one every ten on the bright one, both spanning the plane.
-    expect(coordinates(faint, 0)).toEqual([...Array(201).keys()].map((index) => index - 100));
-    expect(coordinates(bright, 0)).toEqual([...Array(21).keys()].map((index) => (index - 10) * 10));
-    expect(vertices(faint)[1]).toBe(0);
-    world.dispose();
+  it('is one plane of decoration, on the layer a pick and an export both exclude', () => {
+    const grid = new WorldGrid();
+    expect(grid.root.children).toHaveLength(1);
+    expect(plane(grid).layers.mask).toBe(1 << 1);
+    expect(material(grid).depthWrite).toBe(false);
+    // Shown from construction: the app's checkbox is a view of this flag (README D35).
+    expect(grid.visible).toBe(true);
+    grid.dispose();
   });
 
-  it("draws the active object's lattice at its own cell size, on the plane of its lowest cell", () => {
-    const world = new WorldGrid();
-    world.showObjectLattice(block(2), new Matrix4().makeTranslation(5, 0, 0));
-    const lattice = latticeLines(world);
-    // Cells 0..3 at subdivision 2, plus the default margin of cells either side: x from -8 to 12 cells, 0.5 units
-    // each, so the lines sit at -4 .. 6 in half units.
-    expect(coordinates(lattice, 0)).toEqual([...Array(21).keys()].map((index) => (index - 8) * 0.5));
-    expect(vertices(lattice)[1]).toBe(0);
-    // The layer carries the object's placement rather than baking it in, so a moved object moves its grid.
-    expect(new Vector3().setFromMatrixPosition(lattice.matrix).toArray()).toEqual([5, 0, 0]);
-    expect(layer(world, 'world-grid-lattice').visible).toBe(true);
-    world.dispose();
+  it('draws the world unit with a brighter line every twenty cells, in white', () => {
+    const grid = new WorldGrid();
+    expect(uniform(grid, 'cellSize')).toBe(GRID_CELL_SIZE);
+    expect(uniform(grid, 'sectionSize')).toBe(GRID_SECTION_SIZE);
+    // The reference material's `majorUnitFrequency` (README D35): a coarser level every twenty cells, not every ten.
+    expect(GRID_SECTION_SIZE).toBe(20);
+    expect((uniform(grid, 'cellColor') as THREE.Color).getHex()).toBe(0xffffff);
+    expect((uniform(grid, 'sectionColor') as THREE.Color).getHex()).toBe(0xffffff);
+    grid.dispose();
   });
 
-  it('cuts the base plane away where the lattice is drawn, and leaves it alone everywhere else', () => {
-    const world = new WorldGrid();
-    const { faint } = baseLineSets(world);
-    const wholePlane = coordinates(faint, 0).length;
-    world.showObjectLattice(block(2), new Matrix4());
-    const after = vertices(faint);
-    // Nothing of the base survives inside the lattice's footprint (-4 .. 6 on both axes): every vertex either
-    // sits outside it on x, or outside it on z, or is the cut edge itself.
-    for (let index = 0; index < after.length; index += 3) {
-      const x = after[index]!;
-      const z = after[index + 2]!;
-      const insideX = x > -4 && x < 6;
-      const insideZ = z > -4 && z < 6;
-      expect(insideX && insideZ).toBe(false);
-    }
-    // The plane is still a plane: the cut takes material out of lines, so the lines it still draws are the same
-    // ones, all the way to the edges.
-    expect(coordinates(faint, 0)).toHaveLength(wholePlane);
-    expect(coordinates(faint, 0)).toContain(-100);
-    expect(coordinates(faint, 0)).toContain(100);
-    world.dispose();
+  it('lies in the world\u2019s ground plane rather than standing up as a wall', () => {
+    const grid = new WorldGrid();
+    // Two halves make the floor: the library's vertex program swizzles the quad into its local `xz` plane
+    // (`localPosition = position.xzy`), and the mesh carries no rotation of its own on top of that. A turn here —
+    // which this port had — stands the grid up instead, and the app then renders no grid at all.
+    expect(material(grid).vertexShader).toContain('position.xzy');
+    expect(plane(grid).quaternion.toArray()).toEqual([0, 0, 0, 1]);
+    grid.dispose();
   });
 
-  it('follows the two switches and the margin', () => {
-    const world = new WorldGrid();
-    const grid = block(1);
-    world.showObjectLattice(grid, new Matrix4());
+  it('follows the camera on whole cells and keeps its height on the world\u2019s ground', () => {
+    const grid = new WorldGrid();
+    grid.update(cameraAt(3.4, 12.6, -8.1));
+    expect(plane(grid).position.toArray()).toEqual([3, 0, -8]);
+    // Snapping is what keeps the lines on the cell boundaries instead of sliding with the view.
+    grid.update(cameraAt(-0.6, 0.2, 0.49));
+    expect(plane(grid).position.toArray()).toEqual([-1, 0, 0]);
+    grid.dispose();
+  });
 
-    world.setMargin(0);
-    expect(coordinates(latticeLines(world), 0)).toEqual([0, 1, 2, 3, 4]);
-    expect(DEFAULT_GRID_MARGIN).toBe(8);
+  it('draws the whole grid with one switch, and hides all of it', () => {
+    const grid = new WorldGrid();
+    grid.setVisible(false);
+    expect(grid.visible).toBe(false);
+    expect(plane(grid).parent?.visible).toBe(false);
+    grid.setVisible(true);
+    expect(grid.visible).toBe(true);
+    grid.dispose();
+  });
 
-    world.setObjectVisible(false);
-    expect(layer(world, 'world-grid-lattice').visible).toBe(false);
-    world.setBaseVisible(false);
-    expect(layer(world, 'world-grid-base').visible).toBe(false);
-    world.setBaseVisible(true);
-    world.setObjectVisible(true);
-    expect(layer(world, 'world-grid-lattice').visible).toBe(true);
+  it('releases the plane and its material, twice over', () => {
+    const grid = new WorldGrid();
+    grid.dispose();
+    expect(grid.root.children).toHaveLength(0);
+    expect(() => grid.dispose()).not.toThrow();
+  });
+});
 
-    // Clearing the lattice restores the whole base plane and hides the layer.
-    world.showObjectLattice(undefined, undefined);
-    expect(layer(world, 'world-grid-lattice').visible).toBe(false);
-    // 201 lines per direction, two segments each, two vertices, three floats: the whole plane is back.
-    expect(vertices(baseLineSets(world).faint).length).toBe(201 * 2 * 2 * 3);
-    expect(() => world.setMargin(-1)).toThrow(RangeError);
-    world.dispose();
+describe('grid shader patches', () => {
+  it('injects the logarithmic-depth chunks a custom shader is missing', () => {
+    const patched = withLogDepth('void main() {\n}\n', 'void main() {\n}\n');
+    expect(patched.vertexShader).toContain('#include <common>');
+    expect(patched.vertexShader).toContain('#include <logdepthbuf_pars_vertex>');
+    expect(patched.vertexShader).toContain('#include <logdepthbuf_vertex>');
+    expect(patched.fragmentShader).toContain('#include <logdepthbuf_pars_fragment>');
+    expect(patched.fragmentShader).toContain('#include <logdepthbuf_fragment>');
+  });
+
+  it('attenuates a line by how fast it varies across a pixel', () => {
+    const source = 'float getGrid(float size, float thickness) { return 1.0 - min(line, 1.0); }';
+    const patched = withAnisotropicAttenuation(source);
+    expect(patched).not.toBe(source);
+    expect(patched).toContain('dFdx(r.x)');
+    expect(patched).toContain('1.41421356');
+  });
+
+  it('drops the library\u2019s distance fade, and leaves any other source alone', () => {
+    expect(withoutDistanceFade('float d = 1.0 - min(dist / fadeDistance, 1.0);')).toBe('float d = 1.0;');
+    expect(withoutDistanceFade('nothing to patch')).toBe('nothing to patch');
+  });
+
+  it('adapts the library\u2019s own shader where the material compiles it', () => {
+    const grid = new WorldGrid();
+    const shader = {
+      vertexShader: 'void main() {\n}\n',
+      fragmentShader:
+        'float getGrid(float size, float thickness) { return 1.0 - min(line, 1.0); }\nfloat d = 1.0 - min(dist / fadeDistance, 1.0);\nvoid main() {\n}\n',
+    };
+    material(grid).onBeforeCompile(shader as THREE.WebGLProgramParametersWithUniforms, null as unknown as THREE.WebGLRenderer);
+    expect(shader.fragmentShader).toContain('float d = 1.0;');
+    expect(shader.fragmentShader).toContain('dFdx(r.x)');
+    expect(shader.vertexShader).toContain('#include <logdepthbuf_vertex>');
+    grid.dispose();
   });
 });

@@ -53,10 +53,10 @@ export type PanelContext = {
    */
   sceneVisible?: () => boolean;
   /**
-   * The grid display settings, if the app exposes them (`WorldGrid`). When present the Grid group's controls are a
-   * view of them and `refresh()` seeds them; when absent they are forward-only (README D43).
+   * Whether the world grid is drawn, if the app exposes the flag (`WorldGrid`). When present the Grid group's
+   * checkbox is a view of it and `refresh()` seeds it; when absent the checkbox is forward-only (README D35).
    */
-  gridSettings?: () => { base: boolean; object: boolean; margin: number };
+  gridVisible?: () => boolean;
   /**
    * Whether the timeline bar is on screen, if the app exposes the flag. When present the rail's `Animation` button
    * is a toggle over it and `refresh()` seeds its state; when absent that button is disabled. The button opens no
@@ -87,9 +87,7 @@ export type PanelContext = {
     setActiveSubdivision(subdivision: number): void;
     detachSelection(): void;
     setSourceVisible(enabled: boolean): void;
-    setBaseGridVisible(visible: boolean): void;
-    setObjectGridVisible(visible: boolean): void;
-    setGridMargin(cells: number): void;
+    setGridVisible(visible: boolean): void;
     setTimelineVisible(visible: boolean): void;
     renameActive(name: string): void;
     reparentActive(parentId: ObjectId | null): void;
@@ -185,9 +183,7 @@ export class Panels {
   private readonly visibleInput: HTMLInputElement;
   private readonly alignToGridInput: HTMLInputElement;
   private readonly subdivisionSelect: HTMLSelectElement;
-  private readonly baseGridInput: HTMLInputElement;
-  private readonly objectGridInput: HTMLInputElement;
-  private readonly gridMarginInput: HTMLInputElement;
+  private readonly worldGridInput: HTMLInputElement;
   /** The rail's `Edit` button: it also selects the edit mode, so `refresh()` gates it on the active object. */
   private readonly editGroupButton: HTMLButtonElement;
   /** The rail's `Animation` button: it opens no window, it toggles the timeline bar (README D44). */
@@ -215,14 +211,14 @@ export class Panels {
     exportTo: boolean;
     cameraFov: boolean;
     objectName: boolean;
-    gridMargin: boolean;
+    gridOffset: boolean;
   } = {
     exportFps: false,
     exportFrom: false,
     exportTo: false,
     cameraFov: false,
     objectName: false,
-    gridMargin: false,
+    gridOffset: false,
   };
 
   constructor(root: HTMLElement, context: PanelContext) {
@@ -391,26 +387,11 @@ export class Panels {
       { on: { change: () => context.actions.setActiveSubdivision(Number(this.subdivisionSelect.value)) } },
       SUBDIVISIONS.map((level) => el('option', { value: String(level), text: String(level) })),
     );
-    // The Grid group: the two display layers and how far the second one reaches (README D43). They are the
-    // viewport's own settings, not document state, so the app owns them and `refresh()` only reads them back.
-    this.baseGridInput = el('input', {
+    // The Grid group: one world grid, and one switch over it. It is the viewport's own flag rather than document
+    // state, so the app owns it and `refresh()` only reads it back (README D35).
+    this.worldGridInput = el('input', {
       type: 'checkbox',
-      on: { change: () => context.actions.setBaseGridVisible(this.baseGridInput.checked) },
-    });
-    this.objectGridInput = el('input', {
-      type: 'checkbox',
-      on: { change: () => context.actions.setObjectGridVisible(this.objectGridInput.checked) },
-    });
-    this.gridMarginInput = el('input', {
-      type: 'number',
-      min: '0',
-      step: '1',
-      on: {
-        input: () => {
-          this.touched.gridMargin = true;
-        },
-        change: () => context.actions.setGridMargin(Number(this.gridMarginInput.value)),
-      },
+      on: { change: () => context.actions.setGridVisible(this.worldGridInput.checked) },
     });
     this.objectList = el('div');
     // The rail: one button per group, in the order the groups are built, and nothing else — no heading and
@@ -529,11 +510,7 @@ export class Panels {
       this.field('Subdivision', this.subdivisionSelect),
     ]);
 
-    group('Grid', [
-      this.field('Base grid', this.baseGridInput),
-      this.field('Object grid', this.objectGridInput),
-      this.field('Margin (cells)', this.gridMarginInput),
-    ]);
+    group('Grid', [this.field('World grid', this.worldGridInput)]);
 
     // The one rail entry that opens nothing: the timeline is a bar along the bottom of the page rather than a
     // floating window, so this button is a plain toggle over the app's flag. It takes no `index`, which is why
@@ -569,15 +546,9 @@ export class Panels {
     // without `sceneVisible()` owns the state itself, so `refresh()` leaves the box alone.
     const sceneVisible = this.context.sceneVisible;
     if (sceneVisible !== undefined) this.sourceVisibleInput.checked = sceneVisible();
-    // Same rule for the Grid group: with a settings source these are a view of the viewport's own flags; the
-    // margin field is left alone while the user is typing in it, because `change` is what commits it.
-    const gridSettings = this.context.gridSettings;
-    if (gridSettings !== undefined) {
-      const settings = gridSettings();
-      this.baseGridInput.checked = settings.base;
-      this.objectGridInput.checked = settings.object;
-      if (!this.touched.gridMargin) this.gridMarginInput.value = String(settings.margin);
-    }
+    // Same rule for the Grid group: with a source the checkbox is a view of the viewport's own flag.
+    const gridVisible = this.context.gridVisible?.();
+    if (gridVisible !== undefined) this.worldGridInput.checked = gridVisible;
 
     const cameraControl = this.context.cameraControl?.();
     if (cameraControl !== undefined) {

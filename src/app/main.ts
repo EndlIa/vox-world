@@ -214,8 +214,6 @@ export function main(): void {
   let resolutionCache: EditResolution | null = null;
   /** The mirror node the gizmo is attached to, so a rebuilt replacement is noticed (see `syncGizmo`). */
   let gizmoNode: Object3D | undefined;
-  /** What the second grid layer was last pointed at, so a repeat call rebuilds nothing (see `refreshObjectGrid`). */
-  let objectGridKey = '';
   /** Whether the timeline bar is on screen. It starts collapsed; the rail's `Animation` button is how it is shown. */
   let timelineVisible = false;
   /** Whether the camera carrier is selected: while it is, the gizmo drives the output camera instead of an object. */
@@ -242,11 +240,7 @@ export function main(): void {
     project,
     session,
     sceneVisible: () => mirror.sourceVisible,
-    gridSettings: () => ({
-      base: worldGrid.baseVisible,
-      object: worldGrid.objectVisible,
-      margin: worldGrid.margin,
-    }),
+    gridVisible: () => worldGrid.visible,
     timelineVisible: () => timelineVisible,
     // The carrier's controls are a view of the app's own flags and of the authored camera, never of the carrier
     // node: what the fields show is what a keyframe would record (README D46).
@@ -282,9 +276,7 @@ export function main(): void {
       setActiveAlignToGrid: applySetActiveAlignToGrid,
       setActiveSubdivision: applySetActiveSubdivision,
       setSourceVisible,
-      setBaseGridVisible,
-      setObjectGridVisible,
-      setGridMargin,
+      setGridVisible,
       setTimelineVisible,
       renameActive: applyRenameActive,
       reparentActive: applyReparent,
@@ -853,7 +845,6 @@ export function main(): void {
   function commitDirty(): void {
     for (const id of dirtyIds) if (project.get(id) !== undefined) mirror.markDirty(id);
     dirtyIds.clear();
-    refreshObjectGrid();
     refreshReadouts();
     panels.refresh();
     timelinePanel.refresh();
@@ -863,30 +854,14 @@ export function main(): void {
     if (session.activeObjectId !== null) dirtyIds.add(session.activeObjectId);
     refreshReadouts();
     syncGizmo();
-    refreshObjectGrid();
     modeBar.refresh();
     panels.refresh();
     timelinePanel.refresh();
   }
 
-  /** Grid group: the base layer's own switch. */
-  function setBaseGridVisible(visible: boolean): void {
-    worldGrid.setBaseVisible(visible);
-    panels.refresh();
-  }
-
-  /** Grid group: the active object's lattice, on or off. */
-  function setObjectGridVisible(visible: boolean): void {
-    worldGrid.setObjectVisible(visible);
-    refreshObjectGrid();
-    panels.refresh();
-  }
-
-  /** Grid group: cells of lattice drawn around the active object. A value that is not a cell count is dropped. */
-  function setGridMargin(cells: number): void {
-    if (!Number.isInteger(cells) || cells < 0) return;
-    worldGrid.setMargin(cells);
-    refreshObjectGrid();
+  /** Grid group: whether the world grid is drawn (README D35). */
+  function setGridVisible(visible: boolean): void {
+    worldGrid.setVisible(visible);
     panels.refresh();
   }
 
@@ -901,24 +876,6 @@ export function main(): void {
   function refreshReadouts(): void {
     const objectId = session.activeObjectId;
     resolutionCache = objectId === null ? null : session.resolutionOf(objectId) ?? null;
-  }
-
-  /**
-   * Points the viewport's second grid layer at the active object: its own lattice, or none. Guarded by a cheap key
-   * — the id, the level, the cell count, the margin, and whether the layer is on — because the lattice geometry is
-   * rebuilt per call and an edit reaches here on every commit, while `grid.bounds()` scans the occupied cells.
-   */
-  function refreshObjectGrid(): void {
-    const objectId = session.activeObjectId;
-    const grid = objectId === null ? undefined : project.get(objectId)?.uniform;
-    const key = `${objectId}|${grid?.subdivision ?? 0}|${grid?.size ?? 0}|${worldGrid.margin}|${worldGrid.objectVisible}`;
-    if (key === objectGridKey) return;
-    objectGridKey = key;
-    if (grid === undefined || objectId === null) {
-      worldGrid.showObjectLattice(undefined, undefined);
-      return;
-    }
-    worldGrid.showObjectLattice(grid, project.worldMatrix(objectId));
   }
 
   /**
@@ -1096,8 +1053,9 @@ export function main(): void {
       viewportCamera.position.distanceTo(cameraControl.node.position),
       controls.orbit.object.position.distanceTo(controls.orbit.target),
     );
+    // The grid follows the camera that draws the viewport.
+    worldGrid.update(viewportCamera);
     cameraPath.setScreenScale(viewingDistance);
-    cameraPath.faceCamera(viewportCamera.quaternion);
     renderer.render(mirror.scene, viewportCamera);
     timelinePanel.setTime(playback.time * 1000);
     hud.update(hudState());

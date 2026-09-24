@@ -1,10 +1,16 @@
 /**
  * Transient viewport feedback.
  *
- * Draws the box-drag preview frame. It is strictly presentational: one wireframe object, rewritten per
- * update, holding no persistent state, no document reference, and no source data. Layer 1 keeps it out
- * of both consumers — the picker's raycaster tests layer 0 only and the export camera enables layer 0
- * only (README D24).
+ * Draws the box-drag preview frame with three's own `Box3Helper`, which supplies the box's 12 edges and puts
+ * them on the box it is handed. It is strictly presentational: one wireframe object and one box, rewritten per
+ * update, holding no persistent state, no document reference, and no source data. Layer 1 keeps it out of both
+ * consumers — the picker's raycaster tests layer 0 only and the export camera enables layer 0 only (README D24).
+ *
+ * A `Box3Helper` draws an axis-aligned box in the space it sits in, so it is parented into the group that
+ * carries the owning object's world matrix rather than added to the scene: a rotated or scaled object then
+ * draws the rotated box the edit will write. Composing the two matrices that way is also what keeps a
+ * non-uniform scale exact — decomposing their product into one transform, which the hand-written version did,
+ * cannot express the shear that a rotation inside a scale produces.
  */
 
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
@@ -16,56 +22,46 @@ const OVERLAY_LAYER = 1;
 const DEFAULT_COLOR: HexColor = 0x38bdf8;
 const OVERLAY_RENDER_ORDER = 1000;
 
-/** The 12 edges of a unit cube centered on the origin, as 24 line-segment vertices. Read-only. */
-const CUBE_EDGES = new Float32Array([
-  -0.5, -0.5, -0.5, 0.5, -0.5, -0.5,
-  -0.5, -0.5, 0.5, 0.5, -0.5, 0.5,
-  -0.5, 0.5, -0.5, 0.5, 0.5, -0.5,
-  -0.5, 0.5, 0.5, 0.5, 0.5, 0.5,
-
-  -0.5, -0.5, -0.5, -0.5, 0.5, -0.5,
-  -0.5, -0.5, 0.5, -0.5, 0.5, 0.5,
-  0.5, -0.5, -0.5, 0.5, 0.5, -0.5,
-  0.5, -0.5, 0.5, 0.5, 0.5, 0.5,
-
-  -0.5, -0.5, -0.5, -0.5, -0.5, 0.5,
-  0.5, -0.5, -0.5, 0.5, -0.5, 0.5,
-  -0.5, 0.5, -0.5, -0.5, 0.5, 0.5,
-  0.5, 0.5, -0.5, 0.5, 0.5, 0.5,
-]);
-
-/** Scratch matrices, so a pointer-move update allocates nothing. */
-const _placement = new THREE.Matrix4();
-const _scale = new THREE.Matrix4();
-
 export class Overlay {
-  private readonly geometry: THREE.BufferGeometry;
+  /** The owning object's space, which every update copies a world matrix onto. The scene's only added node. */
+  private readonly space: THREE.Group;
+  private readonly helper: THREE.Box3Helper;
   private readonly material: THREE.LineBasicMaterial;
-  private readonly lines: THREE.LineSegments;
 
   constructor(scene: THREE.Scene) {
     if (!(scene instanceof THREE.Scene)) {
       throw new TypeError('Overlay: the constructor argument must be a THREE.Scene');
     }
 
-    this.geometry = new THREE.BufferGeometry();
-    // Allocated once; every update only moves and scales this unit cube, never rewriting vertices.
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(CUBE_EDGES, 3));
-    this.material = new THREE.LineBasicMaterial({ depthTest: false, transparent: true });
-    this.lines = new THREE.LineSegments(this.geometry, this.material);
-    this.lines.frustumCulled = false;
-    this.lines.renderOrder = OVERLAY_RENDER_ORDER;
-    this.lines.layers.set(OVERLAY_LAYER);
-    this.lines.visible = false;
-    scene.add(this.lines);
+    // The box is the live one the helper reads, so an update rewrites two triples instead of a transform, and
+    // the helper's own `updateMatrixWorld` is what places the frame. Its material comes from the library with a
+    // generic `Material` type, so it is narrowed once here.
+    this.helper = new THREE.Box3Helper(new THREE.Box3(), DEFAULT_COLOR);
+    this.helper.frustumCulled = false;
+    this.helper.renderOrder = OVERLAY_RENDER_ORDER;
+    this.material = this.helper.material as THREE.LineBasicMaterial;
+    this.material.depthTest = false;
+    this.material.transparent = true;
+
+    // The space is posed from the matrix `showBox` is handed, never from its own transform.
+    this.space = new THREE.Group();
+    this.space.matrixAutoUpdate = false;
+    this.space.add(this.helper);
+    // The group takes the layer too, so a child added later cannot escape it (README D24).
+    this.space.traverse((child) => {
+      child.layers.set(OVERLAY_LAYER);
+    });
+    this.space.visible = false;
+    scene.add(this.space);
   }
 
   /**
    * Shows the inclusive integer box an edit will write, in the owning object's space.
    *
-   * The box is min-corner indexed in cells and one cell is `cell` world units (README D41, D43), so its local
-   * extents are `min * cell` to `(max + 1) * cell` and the wireframe matrix is
-   * `matrixWorld * translate(center) * scale(size)`.
+   * The box is min-corner indexed in cells and one cell is `cell` world units (README D41, D43), so the box runs
+   * from `min * cell` to `(max + 1) * cell` in the owning object's space, and the space is put on the world matrix
+   * the caller hands over: the frame follows the object's own position, orientation, and scale, at the object's own
+   * cell size, whatever its subdivision.
    */
   showBox(
     boxLocal: IntBox3,
@@ -82,31 +78,29 @@ export class Overlay {
     requireIntegerCorners(boxLocal);
 
     const box = normalizeBox(boxLocal.min, boxLocal.max);
-    const minX = box.min[0] * cell;
-    const minY = box.min[1] * cell;
-    const minZ = box.min[2] * cell;
-    const maxX = (box.max[0] + 1) * cell;
-    const maxY = (box.max[1] + 1) * cell;
-    const maxZ = (box.max[2] + 1) * cell;
+    this.helper.box.min.set(box.min[0] * cell, box.min[1] * cell, box.min[2] * cell);
+    this.helper.box.max.set(
+      (box.max[0] + 1) * cell,
+      (box.max[1] + 1) * cell,
+      (box.max[2] + 1) * cell,
+    );
 
-    _placement.makeTranslation((minX + maxX) / 2, (minY + maxY) / 2, (minZ + maxZ) / 2);
-    _placement.multiply(_scale.makeScale(maxX - minX, maxY - minY, maxZ - minZ));
-    _placement.premultiply(matrixWorld);
-    _placement.decompose(this.lines.position, this.lines.quaternion, this.lines.scale);
-
+    this.space.matrix.copy(matrixWorld);
+    // The matrix is written directly rather than composed from a transform, so the renderer has to be told to
+    // recompute the space's world matrix — and, through it, the helper's own placement from the box.
+    this.space.matrixWorldNeedsUpdate = true;
     this.material.color.setHex(color);
-    this.lines.visible = true;
+    this.space.visible = true;
   }
 
   clear(): void {
-    this.lines.visible = false;
+    this.space.visible = false;
   }
 
-  /** Removes the wireframe from the scene and releases its geometry and material. */
+  /** Removes the frame from the scene and releases the helper's geometry and material. */
   dispose(): void {
-    this.lines.removeFromParent();
-    this.geometry.dispose();
-    this.material.dispose();
+    this.helper.dispose();
+    this.space.removeFromParent();
   }
 }
 
