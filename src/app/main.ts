@@ -898,6 +898,9 @@ export function main(): void {
    * README D37). Called on every session change and whenever the node under the gizmo was replaced.
    */
   function syncGizmo(): void {
+    // The outline is object mode's affordance for the same choice the gizmo makes: it marks the object the gizmo is on,
+    // and it is cleared in edit mode and while the carrier holds the gizmo (README D39, D46).
+    mirror.setSelected(session.mode === 'object' && !cameraControlSelected ? session.activeObjectId : null);
     const node = gizmoNodeNow();
     const objectId = session.activeObjectId;
     if (node === undefined) {
@@ -1057,6 +1060,9 @@ export function main(): void {
     worldGrid.update(viewportCamera);
     cameraPath.setScreenScale(viewingDistance);
     renderer.render(mirror.scene, viewportCamera);
+    // The outline goes over the finished frame in a pass of its own, so the selected object alone cuts it (README D50).
+    // It is viewport decoration like the carrier, so the shot never contains it.
+    mirror.renderSelectionOutline(renderer, viewportCamera);
     timelinePanel.setTime(playback.time * 1000);
     hud.update(hudState());
   }
