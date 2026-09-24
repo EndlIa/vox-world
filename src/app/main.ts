@@ -941,6 +941,9 @@ export function main(): void {
    * README D37). Called on every session change and whenever the node under the gizmo was replaced.
    */
   function syncGizmo(): void {
+    // The outline is object mode's affordance for the same choice the gizmo makes: it marks the object the gizmo is on,
+    // and it is cleared in edit mode and while the carrier holds the gizmo (README D39, D46).
+    mirror.setSelected(session.mode === 'object' && !cameraControlSelected ? session.activeObjectId : null);
     const node = gizmoNodeNow();
     const objectId = session.activeObjectId;
     if (node === undefined) {

@@ -147,7 +147,9 @@ function main(): void;
      the next `mirror.sync()` pick the change up, since the panel is re-read only through `commitDirty`.
    - Gizmo: `syncGizmo()` attaches the edit gizmo to `gizmoNodeNow()` — the carrier's node while the carrier is selected, otherwise the active
      object's mirrored node while the session is in `object` mode, and nothing in `edit` mode or with an empty selection — and detaches it
-     otherwise (README D39, D46). The attach pivots at `CAMERA_CONTROL_PIVOT` for the carrier — its own origin, the camera position, because a
+     otherwise (README D39, D46). It also tells the mirror which object to outline, with the same condition the gizmo uses
+     (`mirror.setSelected(session.mode === 'object' && !cameraControlSelected ? session.activeObjectId : null)`): the outline says which object the
+     handles are on, so it comes and goes with them and is never drawn in edit mode or on the carrier. The attach pivots at `CAMERA_CONTROL_PIVOT` for the carrier — its own origin, the camera position, because a
      camera has no content to center on — and at `mirror.contentCenterOf(objectId)`, the center of the object's own content, for an object, so the
      handles sit on what the user edits instead of at the node origin the document transform means (README D37). Both go through the same
      `gizmoMode`, which is the app's one flag for both. The drag has two halves: `onGizmoChange`, for the carrier, decomposes the reported matrix

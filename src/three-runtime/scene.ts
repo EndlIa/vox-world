@@ -18,10 +18,23 @@
 import type { ObjectId, Project, SceneObject } from '../document/project.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
+import { Outlines } from '@pmndrs/vanilla/core/Outlines';
 import { applyFaceBorder } from './faceGrid.js';
 
 /** The imported-source-mesh layer (README D24); `picking.ts` enables it on its raycaster too. */
 const SOURCE_LAYER = 2;
+/**
+ * The viewport decoration layer (README D24): the selection outline lives here, so a pick cannot reach it and no
+ * export frame contains it. It is the same number `grid.ts`, `overlay.ts`, `controls.ts`, and `cameraControl.ts`
+ * use, and it is why wrapping the selected object in an outline cannot change what a click or an export sees.
+ */
+const OVERLAY_LAYER = 1;
+/** The selected object's outline: yellow, which nothing else in the scene uses. */
+const SELECTION_COLOR = 0xffd400;
+/** How far the outline's hull is pushed out along each face, as a share of the object's own cell. */
+const OUTLINE_SHARE = 0.06;
+/** Drawn after the content it wraps and below the 1000 the box preview and the camera path draw at. */
+const OUTLINE_RENDER_ORDER = 1;
 /** The mirror's face-shading light: separates cube faces without overwhelming the ambient term. */
 const DIRECTIONAL_INTENSITY = 0.5;
 const FRAME_MARGIN = 1.1;
@@ -54,6 +67,12 @@ type MirrorEntry = {
   node: THREE.Object3D;
   meshes: VoxelMesh[];
   lookup: CellLookup | undefined;
+  /**
+   * The selected object's outline, present for a `uniform` object and absent for a transform-only one: the library's
+   * inverted hull over this node's own instances, hidden until `setSelected` names this object. It is a child of the
+   * node, so it follows the object's transform without any per-frame work.
+   */
+  outline: THREE.Group | undefined;
 };
 
 /**
@@ -82,6 +101,8 @@ export class SceneMirror {
   private readonly entries = new Map<ObjectId, MirrorEntry>();
   private readonly dirty = new Set<ObjectId>();
   private maskMode = false;
+  /** The object whose outline is drawn: the app's object-mode selection, kept so a rebuild re-shows it (README D39). */
+  private selectedId: ObjectId | null = null;
   /**
    * The raw meshes the app attached, per object, each with the baked node matrix it is placed by. The
    * mirror parents and shows them but never disposes them: they belong to the app, which drops them at
@@ -247,6 +268,21 @@ export class SceneMirror {
    */
   lookupOf(id: ObjectId): CellLookup | undefined {
     return this.entries.get(id)?.lookup;
+  }
+
+  /**
+   * Marks one object as the selected one: its outline is drawn and every other object's is hidden.
+   *
+   * The outline says which object the edit gizmo is on, so it belongs to object mode: the app clears it in edit mode
+   * and while the camera carrier holds the gizmo (`app/main.ts`, README D39, D46). The id is remembered, not only
+   * applied, because a rebuild replaces a node and its outline together (README D4) — a payload edit would otherwise
+   * drop the outline the user is looking at.
+   */
+  setSelected(id: ObjectId | null): void {
+    this.selectedId = id;
+    for (const [objectId, entry] of this.entries) {
+      if (entry.outline !== undefined) entry.outline.visible = objectId === id;
+    }
   }
 
   /**
@@ -417,7 +453,7 @@ export class SceneMirror {
       const node = new THREE.Group();
       node.name = id;
       node.userData['objectId'] = id;
-      entry = { node, meshes: [], lookup: undefined };
+      entry = { node, meshes: [], lookup: undefined, outline: undefined };
     }
 
     this.entries.set(id, entry);
@@ -456,10 +492,30 @@ export class SceneMirror {
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor !== null) mesh.instanceColor.needsUpdate = true;
 
+    // The selection outline, built over this mesh's own instances: the library's inverted hull shares the instance
+    // matrix, so every cube of the object is wrapped and no per-instance work is added. The hull's thickness is a share
+    // of the cell rather than a world constant, so an object at subdivision 4 has four times the finer outline, and the
+    // whole group is on the decoration layer so a pick and an export both miss it (README D24).
+    const outline = Outlines({
+      color: new THREE.Color(SELECTION_COLOR),
+      thickness: cell * OUTLINE_SHARE,
+      screenspace: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      renderOrder: OUTLINE_RENDER_ORDER,
+    });
+    mesh.add(outline.group);
+    outline.generate();
+    outline.group.traverse((child) => {
+      child.layers.set(OVERLAY_LAYER);
+    });
+    outline.group.visible = this.selectedId === id;
+
     return {
       node: mesh,
       meshes: [{ mesh, instanceColor: null, maskMaterial: null }],
       lookup: cells.length === 0 ? undefined : { objectId: id, cells, colors },
+      outline: outline.group,
     };
   }
 
@@ -489,8 +545,21 @@ export class SceneMirror {
       item.mesh.dispose();
       item.maskMaterial?.dispose();
     }
+    // The outline's geometry is the library's own creased copy of the mesh's, and its material is its own too: both are
+    // rebuilt with every rebuild, so both are released here. The hull is a child of the mesh, so `removeFromParent`
+    // below takes it out of the scene as well.
+    entry.outline?.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      child.geometry.dispose();
+      if (Array.isArray(child.material)) {
+        for (const material of child.material) material.dispose();
+      } else {
+        child.material.dispose();
+      }
+    });
     entry.meshes = [];
     entry.lookup = undefined;
+    entry.outline = undefined;
     entry.node.removeFromParent();
   }
 }

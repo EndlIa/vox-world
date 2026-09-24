@@ -36,6 +36,92 @@ function instances(mirror: SceneMirror, id: string): { translations: string[]; w
   return { translations: translations.sort(), width: (mesh.geometry as THREE.BoxGeometry).parameters.width };
 }
 
+/** The selection outline under one object's node: the library's hull group, or `undefined` when the object has none. */
+function outlineOf(mirror: SceneMirror, id: string): THREE.Group | undefined {
+  const node = mirror.objectOf(id);
+  if (node === undefined) return undefined;
+  return node.children.find(
+    (child): child is THREE.Group =>
+      child instanceof THREE.Group && child.children.some((grandchild) => grandchild instanceof THREE.Mesh),
+  );
+}
+
+describe('selection outline', () => {
+  it("wraps a uniform object's own instances in a hidden hull", () => {
+    const { project, id } = voxelObject(1, [[0, 0, 0], [2, 0, 0]]);
+    const mirror = new SceneMirror(project);
+    mirror.sync();
+    const outline = outlineOf(mirror, id);
+    if (outline === undefined) throw new Error('the object has no outline');
+    // Hidden until the app says this object is the selected one: the outline is object mode's affordance, not a
+    // decoration every object carries (README D39).
+    expect(outline.visible).toBe(false);
+
+    const hull = outline.children[0];
+    const mesh = mirror.objectOf(id);
+    if (!(hull instanceof THREE.InstancedMesh) || !(mesh instanceof THREE.InstancedMesh)) {
+      throw new TypeError('expected the hull and the voxels to be instances');
+    }
+    // One hull per voxel, through the mesh's own instance buffer rather than a copy of it: every cube of the object is
+    // wrapped, and a rebuild is the only thing that can change them.
+    expect(hull.instanceMatrix).toBe(mesh.instanceMatrix);
+    expect(hull.count).toBe(mesh.count);
+    // Decoration layer, so a pick's raycaster (layers 0 and 2) and an export camera (layer 0) both miss it (README D24).
+    expect(outline.layers.mask).toBe(1 << 1);
+    expect(hull.layers.mask).toBe(1 << 1);
+  });
+
+  it('shows exactly the selected object, and keeps it across a rebuild', () => {
+    const project = new Project();
+    const firstGrid = UniformGrid.create(1);
+    firstGrid.set(0, 0, 0, 0xff0000);
+    const secondGrid = UniformGrid.create(1);
+    secondGrid.set(1, 0, 0, 0x00ff00);
+    const first = project.createVoxelObject({
+      name: 'first',
+      maskColor: 0x111111,
+      payload: { kind: 'uniform', grid: firstGrid },
+      position: new Vector3(),
+    });
+    const second = project.createVoxelObject({
+      name: 'second',
+      maskColor: 0x222222,
+      payload: { kind: 'uniform', grid: secondGrid },
+      position: new Vector3(),
+    });
+    const mirror = new SceneMirror(project);
+    mirror.sync();
+
+    mirror.setSelected(first.id);
+    expect(outlineOf(mirror, first.id)?.visible).toBe(true);
+    expect(outlineOf(mirror, second.id)?.visible).toBe(false);
+
+    // A rebuild replaces the node and its outline together, so the mirror has to re-apply the selection itself:
+    // otherwise any payload edit would drop the outline the user is looking at (README D4).
+    mirror.markDirty(first.id);
+    mirror.sync();
+    expect(outlineOf(mirror, first.id)?.visible).toBe(true);
+    expect(outlineOf(mirror, second.id)?.visible).toBe(false);
+
+    mirror.setSelected(second.id);
+    expect(outlineOf(mirror, first.id)?.visible).toBe(false);
+    expect(outlineOf(mirror, second.id)?.visible).toBe(true);
+
+    mirror.setSelected(null);
+    expect(outlineOf(mirror, first.id)?.visible).toBe(false);
+    expect(outlineOf(mirror, second.id)?.visible).toBe(false);
+  });
+
+  it('has no outline for a transform-only object, which has no instances to wrap', () => {
+    const project = new Project();
+    const group = project.createObject({ name: 'group', parentId: null, representation: 'empty' });
+    const mirror = new SceneMirror(project);
+    mirror.sync();
+    mirror.setSelected(group.id);
+    expect(outlineOf(mirror, group.id)).toBeUndefined();
+  });
+});
+
 describe('derived voxel geometry', () => {
   it("draws one cube the size of the object's own cell, centered half a cell past its index", () => {
     const unit = voxelObject(1, [[3, 0, 0]]);

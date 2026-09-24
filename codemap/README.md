@@ -1155,7 +1155,9 @@ deferred is deferred deliberately, not forgotten.
   view, then a modal dialog with the one setting — how long the model is in voxels (D29, D41); confirm runs it with
   cancel and a budget guard, and cancel leaves the raw model visible.
 - Toggle the raw mesh against the voxel result; assign one mask color per object.
-- Select and edit voxel objects: create, name, delete, hide, transform, reparent.
+- Select and edit voxel objects: create, name, delete, hide, transform, reparent. In `Object` mode the object the gizmo is on is wrapped in a
+  yellow outline (`@pmndrs/vanilla`'s `Outlines` over that object's own instances), which comes and goes with the gizmo: it is decoration on
+  layer 1, so it is never picked, never exported, and never widens a framing (D39, D24).
 - Voxels: drag a box (anchor, opposite corner) to select it, or to add, remove, paint, or
   detach it as a new object; a click is a 1×1×1 box.
 - Viewport grid: one horizontal plane of shader-drawn lines on the world's ground, one white line per world unit and a
