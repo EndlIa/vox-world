@@ -31,8 +31,12 @@ const SOURCE_LAYER = 2;
 const OVERLAY_LAYER = 1;
 /** The selected object's outline: yellow, which nothing else in the scene uses. */
 const SELECTION_COLOR = 0xffd400;
-/** How far the outline's hull is pushed out along each face, as a share of the object's own cell. */
-const OUTLINE_SHARE = 0.06;
+/**
+ * How far the outline's hull is pushed out along each face, as a share of the object's own cell. A share rather than a
+ * world size keeps the line proportional at every subdivision, and it is small on purpose: the rim reads as a drawn edge
+ * at roughly one pixel per cell on screen, which is what a selection affordance wants.
+ */
+const OUTLINE_SHARE = 0.025;
 /** Drawn after the content it wraps and below the 1000 the box preview and the camera path draw at. */
 const OUTLINE_RENDER_ORDER = 1;
 /** The mirror's face-shading light: separates cube faces without overwhelming the ambient term. */

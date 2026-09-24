@@ -69,6 +69,23 @@ describe('selection outline', () => {
     // Decoration layer, so a pick's raycaster (layers 0 and 2) and an export camera (layer 0) both miss it (README D24).
     expect(outline.layers.mask).toBe(1 << 1);
     expect(hull.layers.mask).toBe(1 << 1);
+
+    // The hull's thickness is a share of the object's own cell, so the same share of half a cell is half the world
+    // thickness: an object at a finer subdivision carries a proportionally finer outline, not the same one.
+    const materialOf = (instance: THREE.InstancedMesh): THREE.ShaderMaterial => {
+      const material = instance.material;
+      if (!(material instanceof THREE.ShaderMaterial)) throw new TypeError('expected the hull to be a shader material');
+      return material;
+    };
+    const fine = voxelObject(2, [[0, 0, 0]]);
+    const fineMirror = new SceneMirror(fine.project);
+    fineMirror.sync();
+    const fineHull = outlineOf(fineMirror, fine.id)?.children[0];
+    if (!(fineHull instanceof THREE.InstancedMesh)) throw new TypeError('the finer object has no hull');
+    const unitThickness = materialOf(hull).uniforms['thickness']?.value as number;
+    const fineThickness = materialOf(fineHull).uniforms['thickness']?.value as number;
+    expect(unitThickness).toBeGreaterThan(0);
+    expect(fineThickness).toBeCloseTo(unitThickness / 2, 6);
   });
 
   it('shows exactly the selected object, and keeps it across a rebuild', () => {
