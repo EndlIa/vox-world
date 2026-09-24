@@ -31,14 +31,12 @@ export type CameraPose = {
   fov: number;
 };
 
-/** What the carrier's controls read: whether it is selected, the gizmo's mode, the lock, and the authored pose. */
+/** What the carrier's controls read: whether it is selected, the gizmo's mode, and the authored pose. */
 export type CameraControlView = {
   selected: boolean;
   mode: 'translate' | 'rotate';
-  locked: boolean;
   pose: CameraPose;
-  /** Whether a run of the clip takes the viewport with it, and whether one is running (the option then waits). */
-  follow: boolean;
+  /** Whether a run of the clip is on, so the fields that would disturb it can wait. */
   playing: boolean;
   /** Whether the camera path is drawn, and whether the track holds a path at all (two keyframes or more). */
   pathVisible: boolean;
@@ -67,8 +65,8 @@ export type PanelContext = {
   timelineVisible?: () => boolean;
   /**
    * The camera carrier's state, if the app has one. When present the `Camera` group's carrier controls are a view of
-   * it — `refresh()` seeds the pose fields, the lock, and the two label swaps from it — and it also gates them: a
-   * viewport that already *is* the output camera has nothing for the carrier to aim (README D46).
+   * it — `refresh()` seeds the pose fields and the two label swaps from it — and it is what gates them: a context
+   * without a carrier has nothing for them to aim (README D46).
    */
   cameraControl?: () => CameraControlView;
   actions: {
@@ -93,7 +91,6 @@ export type PanelContext = {
     setTimelineVisible(visible: boolean): void;
     renameActive(name: string): void;
     reparentActive(parentId: ObjectId | null): void;
-    setCameraLock(enabled: boolean): void;
     setCameraFov(fov: number): void;
     setCameraPose(pose: CameraPose): void;
     toggleCameraControl(): void;
@@ -101,7 +98,6 @@ export type PanelContext = {
     cameraToView(): void;
     viewToCamera(): void;
     setCameraPathVisible(visible: boolean): void;
-    setFollowCamera(enabled: boolean): void;
   };
 };
 
@@ -192,7 +188,6 @@ export class Panels {
   /** The rail's `Animation` button: it opens no window, it toggles the timeline bar (README D44). */
   private readonly animationButton: HTMLButtonElement;
   private readonly sourceVisibleInput: HTMLInputElement;
-  private readonly cameraLockInput: HTMLInputElement;
   private readonly cameraFovInput: HTMLInputElement;
   /** The carrier's numeric grid, in label order: X, Y, Z, QX, QY, QZ, QW (README D46). */
   private readonly cameraPoseInputs: HTMLInputElement[];
@@ -201,7 +196,6 @@ export class Panels {
   private readonly cameraToViewButton: HTMLButtonElement;
   private readonly viewToCameraButton: HTMLButtonElement;
   private readonly cameraPathInput: HTMLInputElement;
-  private readonly followCameraInput: HTMLInputElement;
   private readonly exportResolutionSelect: HTMLSelectElement;
   private readonly exportFpsInput: HTMLInputElement;
   private readonly exportFromInput: HTMLInputElement;
@@ -283,11 +277,6 @@ export class Panels {
       on: { input: () => context.session.setEditColor(parseInt(this.editColorInput.value.slice(1), 16)) },
     });
 
-    // Camera: hand navigation to the output camera, so the viewport frames what an export captures.
-    this.cameraLockInput = el('input', {
-      type: 'checkbox',
-      on: { change: () => context.actions.setCameraLock(this.cameraLockInput.checked) },
-    });
     // The authored vertical FOV of the output camera; a cleared field parses to NaN and the app
     // refuses it, so the project keeps the last valid value.
     this.cameraFovInput = el('input', {
@@ -459,10 +448,6 @@ export class Panels {
       title: 'move the viewport to the output camera',
       on: { click: () => context.actions.viewToCamera() },
     });
-    this.followCameraInput = el('input', {
-      type: 'checkbox',
-      on: { change: () => context.actions.setFollowCamera(this.followCameraInput.checked) },
-    });
     this.cameraPathInput = el('input', {
       type: 'checkbox',
       on: { change: () => context.actions.setCameraPathVisible(this.cameraPathInput.checked) },
@@ -476,10 +461,6 @@ export class Panels {
       }),
     );
     group('Camera', [
-      this.field('Camera lock (output)', this.cameraLockInput),
-      el('div', { class: 'dim', text: 'navigation then drives the output camera' }),
-      this.field('Follow camera', this.followCameraInput),
-      el('hr'),
       el('div', { class: 'row' }, [this.cameraSelectButton, this.cameraModeButton]),
       el('div', { class: 'row' }, [this.cameraToViewButton, this.viewToCameraButton]),
       this.field('Show camera path', this.cameraPathInput),
@@ -560,14 +541,9 @@ export class Panels {
 
     const cameraControl = this.context.cameraControl?.();
     if (cameraControl !== undefined) {
-      // The lock is the app's flag, so the box is a view of it rather than a forward-only control.
-      this.cameraLockInput.checked = cameraControl.locked;
       this.cameraSelectButton.textContent = cameraControl.selected ? 'Deselect' : 'Select';
       this.cameraModeButton.textContent = cameraControl.mode === 'rotate' ? '-> Move' : '-> Rotate';
       // A path needs two keyframes to exist at all, so below that the box is unchecked as well as disabled.
-      // The follow option is read when a run starts, so it waits while one is running rather than changing a run.
-      this.followCameraInput.checked = cameraControl.follow;
-      this.followCameraInput.disabled = cameraControl.playing;
       this.cameraPathInput.disabled = !cameraControl.pathAvailable;
       this.cameraPathInput.checked = cameraControl.pathAvailable && cameraControl.pathVisible;
       const authored = [...cameraControl.pose.position, ...cameraControl.pose.quaternion, cameraControl.pose.fov];
@@ -576,9 +552,9 @@ export class Panels {
         if (document.activeElement !== input) input.value = fmt(authored[index] ?? 0, 4);
       });
     }
-    // A locked viewport already *is* the output camera: there is nothing left for the carrier to aim, and a
+    // The carrier's own controls need a carrier: a context without one has nothing for them to aim, and a
     // rotation mode with no carrier selected has nothing to rotate.
-    const carrierGated = cameraControl === undefined || cameraControl.locked;
+    const carrierGated = cameraControl === undefined;
     this.cameraSelectButton.disabled = carrierGated;
     this.cameraModeButton.disabled = carrierGated || !cameraControl?.selected;
     this.cameraToViewButton.disabled = carrierGated;

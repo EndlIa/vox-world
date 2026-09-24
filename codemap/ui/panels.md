@@ -35,7 +35,6 @@ type CameraPose = {                 // one authored camera pose: the carrier's f
 type CameraControlView = {          // what the carrier's controls read (README D46)
   selected: boolean;                // whether the gizmo currently drives the carrier
   mode: 'translate' | 'rotate';     // the gizmo's mode, shared with objects
-  locked: boolean;                  // the app's camera lock; while on, the carrier's controls are gated
   follow: boolean;                  // whether a run takes the viewport with it; the option applies to the next run (README D48)
   playing: boolean;                 // whether a run is in flight, which is when the follow option waits
   pose: CameraPose;                 // the authored camera, i.e. what a keyframe would record
@@ -64,7 +63,6 @@ type PanelContext = {
     setTimelineVisible(visible: boolean): void;     // shows or hides the timeline bar; the app owns the flag
     renameActive(name: string): void;           // renames the active object; the app trims and refuses ''
     reparentActive(parentId: ObjectId | null): void;
-    setCameraLock(enabled: boolean): void;   // hands viewport navigation to the output camera
     setCameraFov(fov: number): void;         // authors the output camera's vertical FOV
     setCameraPose(pose: CameraPose): void;   // writes the whole authored pose; the app refuses a bad component
     toggleCameraControl(): void;             // selects or deselects the carrier (README D46)
@@ -72,7 +70,6 @@ type PanelContext = {
     cameraToView(): void;                    // `Camera -> View`: authors the pose the viewport shows
     viewToCamera(): void;                    // `View -> Camera`: moves the viewport, writes nothing
     setCameraPathVisible(visible: boolean): void;   // draws or hides the camera path; a view switch, so it writes nothing else
-    setFollowCamera(enabled: boolean): void;        // whether a run takes the viewport with it; the app owns the option
   };
 };
 class Panels {
@@ -84,7 +81,7 @@ class Panels {
 ## Internal logic
 1. The constructor builds every control once through `el` and places each group's controls in that group's own window: the
    import group (an import button, a dim line saying a `.glb` can be dropped on the viewport, and a `Show raw meshes`
-   checkbox), the edit group (a `row` of the four `ActiveTool` tool buttons the `edit` mode uses, the `detachButton` in a `row` of its own directly under them — a plain button that is never a tool: its click is `context.actions.detachSelection()` and nothing else, no click writes a tool, and `refresh()` never gives it the `on` class — then the `Select` field — the shapes a press can select, `box` alone so far — and the `Color` field), the camera group (the `Camera lock (output)` checkbox with a dim line saying what it does, the `Follow camera` checkbox directly after that hint and ahead of the `hr`, then a `row` of the carrier's `Select`/`Deselect` and mode buttons, a `row` of `Camera -> View` and `View -> Camera`, the `Show camera path` checkbox, a `row` of `X`, `Y`, and `Z` fields, a `row` of `QX`, `QY`, `QZ`, and `QW` fields, and the `FOV (deg)` number input), the export group shown as `Render` (a
+   checkbox), the edit group (a `row` of the four `ActiveTool` tool buttons the `edit` mode uses, the `detachButton` in a `row` of its own directly under them — a plain button that is never a tool: its click is `context.actions.detachSelection()` and nothing else, no click writes a tool, and `refresh()` never gives it the `on` class — then the `Select` field — the shapes a press can select, `box` alone so far — and the `Color` field), the camera group (the the carrier's controls checkbox with a dim line saying what it does, the the carrier's controls checkbox directly after that hint and ahead of the `hr`, then a `row` of the carrier's `Select`/`Deselect` and mode buttons, a `row` of `Camera -> View` and `View -> Camera`, the `Show camera path` checkbox, a `row` of `X`, `Y`, and `Z` fields, a `row` of `QX`, `QY`, `QZ`, and `QW` fields, and the `FOV (deg)` number input), the export group shown as `Render` (a
    resolution select, fps, `from`, and `to` inputs, a beauty/mask mode select, and its `Render MP4` button), and the objects group
    shown as `Scene`, which is two halves in one window: above a plain `hr`, the `Create group` button and the object list — the
    part that chooses among every object — and below it the active object's `Mask color`, `Parent`, `Name`, `Visible`, `Grid align`, and `Subdivision` fields,
@@ -146,10 +143,10 @@ class Panels {
    `setActiveAlignToGrid(checked)` from the grid-align checkbox, `setActiveSubdivision(level)` from the subdivision select,
    `setGridVisible(checked)` from the `World grid` checkbox, `detachSelection()` from the `detach` button,
    `renameActive(value)` from the `Name` field,
-   `reparentActive(parentId | null)` from the parent select, `setCameraLock(checked)` from the camera-lock checkbox — the panel forwards the checkbox's own state and
+   `reparentActive(parentId | null)` from the parent select — the panel forwards the control's own state and
    never tracks the lock itself, so the app stays the only owner of the flag — the carrier's four actions and its pose write
    (`toggleCameraControl()`, `toggleGizmoMode()`, `cameraToView()`, `viewToCamera()`, and `setCameraPose(pose)`), the camera path's toggle,
-   `setCameraPathVisible(checked)` from the `Show camera path` box, and `setFollowCamera(checked)` from the `Follow camera` box, all of which leave as the same kind of callback (README D46, D47, D48). Unlike the camera lock, the
+   and `setCameraPathVisible(checked)` from the `Show camera path` box, both of which leave as the same kind of callback (README D46, D47).
    `Visible` checkbox is document state: `refresh()` writes `object.visible` back into it, so it always shows what the project holds, and the
    `Grid align` checkbox is document state the same way (`refresh()` writes `active.alignToGrid` back into it). The `Name` field
    forwards on its `change` event only — never per keystroke — so a half-typed name cannot reach the document, and until the user types it displays the
@@ -199,8 +196,7 @@ class Panels {
   selected and with no region there is nothing to detach; the tool buttons are never disabled, since a press is what creates the region those tools
   work on (README D19, D23).
 - The camera-lock checkbox forwards `checked` and nothing else: the panel never touches `ViewportControls`, the mirror, or any camera, and the app owns the flag. With `context.cameraControl()` present it is a view of that flag — `refresh()` writes `cameraControl.locked` into it — and with no such provider it stays forward-only and `refresh()` leaves it alone.
-- The carrier's controls are a view of the app's own state and never a second copy of it: `refresh()` seeds the seven pose fields, the lock box, and the two button labels from `context.cameraControl()`, so what the fields show is what the app would record in a keyframe (README D46). The panel keeps no pose, no selection, and no mode of its own, and the four buttons are gated rather than tracked — `disabled` with no provider or with the lock on, and the mode button also while the carrier is not selected. The `Show camera path` box is seeded from the same view — `checked = pathAvailable && pathVisible`, `disabled = !pathAvailable` — so it can never show a drawn path below two keyframes and the panel holds no visibility flag of its own (README D47). The `Follow camera` box is seeded from the same view too — `checked = follow`, `disabled = playing` — because the option is read when a run starts rather than changing a run in flight, and the app owns the flag either way (README D48).
-- The `Follow camera` checkbox is the panel's view of one app option and never a second copy of it: `refresh()` writes `cameraControl.follow` into it and disables it while `cameraControl.playing`, since the option applies to the next run rather than to a run in flight, and its `change` event forwards `checked` through `setFollowCamera(enabled)` and nothing else. The panel keeps no flag of its own, and the box sits after the lock's hint and ahead of the group's `hr` (README D48).
+- The carrier's controls are a view of the app's own state and never a second copy of it: `refresh()` seeds the seven pose fields, the lock box, and the two button labels from `context.cameraControl()`, so what the fields show is what the app would record in a keyframe (README D46). The panel keeps no pose, no selection, and no mode of its own, and the four buttons are gated rather than tracked — `disabled` with no provider or with the lock on, and the mode button also while the carrier is not selected. The `Show camera path` box is seeded from the same view — `checked = pathAvailable && pathVisible`, `disabled = !pathAvailable` — so it can never show a drawn path below two keyframes and the panel holds no visibility flag of its own (README D47). The the carrier's controls box is seeded from the same view too — `checked = follow`, `disabled = playing` — because the option is read when a run starts rather than changing a run in flight, and the app owns the flag either way (README D48).
 - `Show raw meshes` forwards `checked` and nothing else, and is the panel's only view of the raw-mesh override while `context.sceneVisible()` exists:
   it then displays that value on every `refresh()` and holds no copy of its own, so the mirror and the checkbox cannot disagree. With no `sceneVisible()`
   in the context the checkbox is forward-only and `refresh()` leaves it alone — the panel then displays the user's last click, and the app is the only
@@ -277,7 +273,7 @@ never sees a value it would refuse (README D49).
   `editColor` shared with the add and paint tools, and `EditResolution` for the cells a row reports (README D41) and the level the subdivision select shows.
 - `../voxels/uniform/grid.js` — `HexColor` for the color inputs and the mask-color action. The panel no longer names `VoxelizeTarget`, so
   `../voxels/voxelize/voxelize.js` is no longer imported here.
-- Mask color, the name, visibility, reparenting, the camera lock, the FOV, and the raw-mesh override arrive as `PanelContext` callbacks
+- Mask color, the name, visibility, reparenting, the FOV, and the raw-mesh override arrive as `PanelContext` callbacks
   that `main` implements with
   `editor/ops.ts`, `three-runtime/controls.ts`, `three-runtime/scene.ts`, and the project camera; this file imports neither `editor/ops.js` nor anything from `app/`. No
   outer-ring import and no Three.js use. `sceneVisible` is a plain callback, so exposing it costs the app one closure and gives
@@ -288,7 +284,7 @@ never sees a value it would refuse (README D49).
   panel's, which is why neither `defaults` nor a voxelize target crosses this boundary any more, and why the panel holds no voxelize-related member at all.
   The carrier's four actions and its pose write arrive the same way — plain `PanelContext` callbacks that `main` implements over the carrier and the
   project camera, so the carrier costs the panel no import either (README D46) — and so does the camera path's toggle, `setCameraPathVisible`, which
-  `main` implements over the drawing and the app's flag (README D47), and the follow option, `setFollowCamera`, which `main` implements over the app's
+  `main` implements over the drawing and the app's flag (README D47), and
   own flag and the transport it drives (README D48).
 
 ## Tests
@@ -296,17 +292,17 @@ None. The panel needs a DOM and vitest runs in the node environment, so it is ve
 voxelize control or setting anywhere — no representation select, voxel size, cell size, root size, or max depth, and no button that would open the
 dialog — so importing a GLB must ask for the settings in the modal and nothing in the panel asks again. The rest of the walk: set a mask color, type a name and confirm the object list and the HUD follow it — the row read-out is the object's size in cells, `Demo cube · uniform · 4×4×4` beside the boot cube, not a length in metres (README D41) — clear the name to see the refusal, untick `Visible` and confirm the
 object disappears, click a row and confirm a trash appears at its right end on that row and on no other and that pressing it removes that object
-from the list while the HUD stops naming it, reparent an object, tick `Camera lock (output)` and steer the output camera, type a `FOV` and confirm the locked
+from the list while the HUD stops naming it, reparent an object, tick the carrier's controls and steer the output camera, type a `FOV` and confirm the locked
 view and the export follow it, tick and untick `Show raw meshes` against the raw meshes of an imported object and confirm they appear over and
 disappear behind the voxels — in the same place — without changing what an export renders. The carrier walk is on the same group (README D46): with the lock off,
 pressing `Select` must put the gizmo on the camera carrier and enable `Camera -> View`, `View -> Camera`, and the mode button, `Camera -> View` must author
 the pose the viewport shows into the seven fields, a drag on the carrier must aim the shot and commit one pose into them, typing any of `X`, `Y`, `Z`,
 `QX`, `QY`, `QZ`, `QW` must move the shot and re-seed the others, `View -> Camera` must move the viewport to the authored shot and change no field,
 the mode button must read `-> Move` after a press and keep the carrier selected, `Deselect` must hand the gizmo back to the active object, and ticking
-`Camera lock (output)` must disable all four carrier buttons and leave the carrier off the screen, because the viewport then *is* the output camera
+the carrier's controls must disable all four carrier buttons and leave the carrier off the screen, because the viewport then *is* the output camera
 and a camera cannot see itself. The path box is on the same group (README D47): with two camera keyframes it must be enabled, and ticking it must
 draw the white polyline through the trajectory with one ring per keyframe and unticking it must take the drawing away, while with fewer than two
-camera keyframes it must be disabled and unchecked and nothing must be drawn; ticking `Camera lock (output)` must hide the path along with the
+camera keyframes it must be disabled and unchecked and nothing must be drawn; ticking the carrier's controls must hide the path along with the
 carrier, and an export must contain no part of it. The follow option is on the same group (README D48): with follow on — its default — pressing play must take the viewport with the clip and disable the box for the length of the run, pausing must stop the transport, release the lock, and leave the viewport on the frame the clip stopped at, and letting a non-looping run reach its end must stop the transport, put the playhead back to the run's start value, and return the view to the one the run started from; with follow off, the box must be enabled again on the next run and a run must leave the editor camera where it was — the transport's own overlay is the only change — while the carrier shows the camera moving along the clip.
 
 The rail and window walk is the same run: the overlay must show exactly the six group buttons `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`

@@ -53,8 +53,8 @@ class CameraControl {
    cone from the apex, the up triangle, the axis and the two crosses — into the geometry it already owns. No vertex is
    built here: the frustum math is three's.
 4. `setVisible(visible)` writes the node's `visible`, so the carrier is hidden from the frame it is called for; the app drives it with
-   `!locked`, which draws the carrier whether or not it is selected — selecting it only changes its colour (D46) — while the locked view, which
-   already is the output camera, shows no decoration.
+   `true` from the app's first frame, and selecting the carrier only changes its colour (D46): it is the only thing that shows where the output
+   camera is, and a run moves that camera whether or not the author is aiming it.
 5. `setSelected(selected)` paints the whole helper one colour — `SELECTED_COLOR = 0x4da3ff` while selected, the idle
    grey `0x9aa2ad` otherwise — by calling the library's `setColors` with the same `Color` for all five of its parts
    (the frustum, the cone, the up marker, the axis and the crosses), because the drawing is one decoration rather than

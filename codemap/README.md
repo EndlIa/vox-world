@@ -353,7 +353,7 @@ which is what allows one timeline and one export path to cover both. Concretely 
 cameras at runtime: `SceneMirror.camera` is the **output** camera, derived from `project.camera` and
 used for export and for FOV tracks; the **viewport** camera is created by the
 app, is the one `ViewportControls` moves by default, and is never rendered into the output. The single
-exception is the camera lock: while the user locks navigation to the output camera, `ViewportControls`
+exception was the camera lock, which has been removed: `ViewportControls`
 retargets to `mirror.camera`, the viewport renders through it, and each navigation change is copied
 into `project.camera.transform` so a camera keyframe records the authored pose. The copy is refused
 while the mixer is playing, because authored data must never be written from a running clip.
@@ -514,7 +514,7 @@ above the HUD, and the one modal in the app is a native `dialog` in the platform
 that ladder, so it is never covered by a window the user opened.
 
 **D32 — The export-aspect guide is gone.** The viewport used to carry a thin white outline marking the
-rectangle an export would capture (D17's `OutputPreview`, drawn on layer 1 and hidden while the camera lock
+rectangle an export would capture (D17's `OutputPreview`, drawn on layer 1 and hidden while the viewport
 was on). The user asked for it to be removed after seeing it as two white lines across an otherwise dark
 viewport: at an export aspect close to the window's, the outline's top and bottom edges land on the viewport's
 own edges and only the two verticals show, which reads as a rendering defect rather than as a framing aid. It
@@ -901,7 +901,7 @@ Affected contracts: `document/timeline.md` (the fields and units, the clamp, the
 **Decided.** `three-runtime/cameraControl.ts` draws the output camera as a body, a frustum frame derived from the vertical FOV and the viewport
 aspect, and a triangle marking which way is up. The drawing's node — not the drawing, which is a scaled child — is what the edit gizmo moves while
 the carrier is selected from the `Camera` group, and a drag, the numeric fields, or `Camera -> View` write `project.camera.transform`, the same
-authored pose the camera lock already writes. The carrier is a handle, never a third camera: `mirror.camera` is still the output camera and the
+authored pose the pose writes already cover. The carrier is a handle, never a third camera: `mirror.camera` is still the output camera and the
 viewport camera is still the only other one (D17).
 
 - **Layer 1 and unnamed, like the grid and the overlay.** The whole carrier — the node included, so a child added later cannot escape — is on the
@@ -1022,61 +1022,23 @@ gating), `app/main.md` (the drawing, `AppContext.cameraPath`, `cameraPathVisible
 scale calls, the teardown), and this file's §9.
 
 
-### D48. A run of the clip follows the output camera, and a pause hands the frame back
+### D48. A run of the clip moves the editor camera, and a pause hands the frame back
 
 **Decided.** The transport is the app's, not the widget's: the timeline's toggle reports the press through `onTransport` and `app/main.ts` decides what
-a run does to the view. Follow is on by default, the way the reference product has it, and a run then borrows the camera lock so the viewport renders
-through the output camera and the clip takes the view along. A pause hands the frame over — the editor camera takes the pose the clip stopped at and the
-lock is given back — and a non-looping run that reaches its last frame stops the transport and restores the run's start view and playhead exactly. With
-follow off a run leaves the editor camera alone, and the carrier is drawn for the length of the run so the motion is still visible — which it now is
-in any case (**revised** with D46: the carrier no longer hides outside a selection, so a run needs no display of its own). The option is read
-when a run starts and never changes a run in flight.
+happens. A run is reversible — `startPlayback` captures the viewport's position, quaternion and orbit target, and the playhead, before anything moves;
+`pausePlayback` stops the transport and hands the editor camera the pose the clip stopped at, so the frame can be judged and flown on from there; and
+`finishPlayback` ends a non-looping run at its last frame by stopping the transport, putting the playhead back at the value the run started from, and
+restoring the saved view exactly. `playback.playing` is what makes the transport state readable from the app and what refuses writes that would drift
+authored data. The `Follow camera` option and the camera lock are **removed** (see D46's revision), so a run never renders through the output camera and
+never needs one: what the clip does to the output camera is visible in the carrier, and the export samples the clip for its own frames (README D17).
 
-- **Navigation is handed the viewport camera for the run (D46).** A run draws the viewport through the output camera — that is what makes the viewport
-  *be* the shot — and the clip owns that camera's pose for as long as the run lasts. `OrbitControls.update()` re-derives its offset from the camera's
-  current position and then re-aims it with `object.lookAt(target)`, so a navigation that still owned the output camera would overwrite the poses the
-  mixer had just applied on every single frame: a camera track's rotation could never be seen, and even its position would be aimed at the editor's
-  orbit pivot rather than where the author put it. So the lock is engaged as before, and only *navigation* is pointed at the viewport camera until the
-  run pauses — which is also where the author gets the aiming workflow back.
+- **Nothing is authored by a run.** Handing the view over and restoring it both go through `controls.setViewFrom`, which touches no document, so a run
+  can move the editor camera and put it back without writing `project.camera`.
+- **The clip owns the output camera's pose.** The export renders `mirror.camera` frame by frame at the clip's times, and nothing in the viewport writes
+  that camera, so a camera track (position and orientation alike) reaches the exported frames and cannot be fought over by navigation.
 
-- **The app owns the transport because a run changes the viewport too.** `animation/playback.ts` gained a read-only `get loop()` beside `playing` (the
-  private flag is now `looping`), and the widget's toggle calls `onTransport` instead of `play`/`pause`, reading `playback.playing` back only for its
-  label. The frame loop's end check reads `loop`: a run of a non-looping clip is over at the final frame, which is where `finishPlayback` stops the
-  transport and hands the view back — a looping clip wraps and never reaches that edge.
-- **A run is captured before it moves anything.** `startPlayback` stores `playbackView` — the viewport camera's pose, the orbit target, whether the
-  camera lock was already the user's, and `playback.time` — engages the lock when follow is on and the viewport is not already locked, and plays.
-- **The pause's order is the whole point.** `pausePlayback` releases the lock *first* and only then calls `controls.setViewFrom` with the output
-  camera's pose: while the lock is on the orbit belongs to the output camera, so moving it first would write the handoff into
-  `project.camera.transform`, which is authored data (D17). `setViewFrom` gained an optional `target`, so the handoff and the end-of-run restore put
-  the pivot exactly where the view was aimed rather than at a point straight ahead of it.
-- **An end restores exactly; a pause does not have to.** `finishPlayback` clears `playbackView`, pauses, sets the playhead back with `setTime`, and then
-  either re-asserts the user's lock or releases it and restores the captured pose *and* target. Restoring the playhead is also what restores the view
-  while the output camera draws, because that camera's pose comes from the clip.
-- **The carrier is the observe view.** The frame loop draws it while it is selected and, with follow off, for the length of a run — `observing` is
-  `playback.playing && !followCamera` — so a run that leaves the editor camera alone still shows the camera moving along the clip. That display selects
-  nothing and is dropped when the run ends, and the follow case hides the carrier exactly as the locked case does, because a camera cannot see itself.
-- **The option applies to the next run.** The `Camera` group's `Follow camera` box sits directly after the lock's hint and ahead of the group's `hr`, and
-  `refresh()` seeds it from the app's flag and disables it while a run is in flight, because what it sets is read when a run starts.
-
-Accepted costs: the lock is borrowed for the duration of a run, so the `Camera` group's carrier controls are gated and `View -> Camera` is not available
-while the clip plays; the pause handoff resets the viewport's bank, because an orbit camera cannot represent one and `setViewFrom` derives the pivot
-from the pose; and a run that starts while the lock is already on restores only the playhead, since the viewport then draws through the output camera
-and the playhead is what puts its pose back. The carrier's temporary display during an unfollowed run is one more thing the frame loop decides, and it
-is state no panel shows.
-
-Rejected: **a separate preview camera** (D17 fixes exactly two, and a third would need its own pose, projection, and export path); **following without
-the lock** (the viewport could not render the clip, so following would mean copying the sampled pose onto the editor camera every frame — an orbit
-camera's pose rewritten under the user's own navigation, which is what the lock exists to arbitrate); **restoring the view on every pause** (a pause is
-where the user wants to judge and fly the frame, so snapping the view back would take the shot away again — the run's start view belongs to the end of
-a run); **a stop button** (D44's row already declined it, and returning to the start is what the scrub bar and the exact-time field are for); **changing
-the option mid-run** (a run that part-way stopped following the viewport, or started to, would leave `playbackView` meaning something different from
-what it captured, so the box waits for the next run).
-
-Affected contracts: `animation/playback.md` (the `looping` field, the `loop` reader and its invariant), `three-runtime/controls.md` (`setViewFrom`'s
-optional target and its restore invariant), `ui/timeline.md` (`onTransport`, the transport's description and the corrected invariant), `ui/panels.md`
-(the two view fields, the action, the `Follow camera` box, its seeding and gating), `app/main.md` (the two flags, the four functions, the frame loop's
-end check and the carrier's observe case, the wiring, the new invariants), D45's transport paragraph, and this file's §9.
-
+Affected contracts: `animation/playback.md`, `app/main.md` (the flags, the four functions, the frame loop), `three-runtime/controls.md` (navigation
+never leaves the viewport camera), `ui/panels.md`, and this file's section 9.
 ### D49. The world grid is three mutually exclusive shader displays, and the per-object lattice is gone
 
 **Decided.** The viewport's grid is the reference viewport's, in structure as well as in look: three displays to choose
@@ -1216,8 +1178,8 @@ deferred is deferred deliberately, not forgotten.
   starts collapsed and is summoned from the rail's `Animation` button (D44), and the output camera these keyframes record is
   aimed from third person through its carrier in the `Camera` group (D46), and the camera's authored trajectory is drawn back into the
   viewport as a white polyline with one hollow ring per keyframe, shown from two keyframes up (D47). A run of the clip takes the viewport with it by
-  default — the transport is the app's, so play engages the camera lock and follows the clip, a pause hands the frame over and gives the lock back,
-  and a non-looping run's end stops the transport and puts the run's start view and playhead back exactly — while unticking `Follow camera` leaves the
+  default — the transport is the app's, so a pause hands the frame over and a non-looping run's end stops the transport and puts the run's start view and
+  playhead back exactly — while the run leaves the
   editor camera alone for a run and shows the carrier moving along the clip instead (D48).
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range,
   with cancel; a failure reaches the console (D38).

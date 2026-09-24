@@ -194,6 +194,9 @@ export function main(): void {
   // aimed from third person instead of by flying the viewport (README D46). It is decoration like the grid, so it
   // lives on layer 1 and no export frame contains it.
   const cameraControl = new CameraControl(mirror.scene);
+  // The carrier is drawn from the first frame: it is the only thing that shows where the output camera is, and a run
+  // moves that camera whether or not the author is aiming it (README D46).
+  cameraControl.setVisible(true);
   // The camera path: the trajectory of the authored camera, drawn as a polyline with one ring per keyframe (D47).
   const cameraPath = new CameraPath(mirror.scene);
   const capture = new Capture({ width: DEFAULT_EXPORT_WIDTH, height: DEFAULT_EXPORT_HEIGHT });
@@ -208,13 +211,6 @@ export function main(): void {
   const dirtyIds = new Set<ObjectId>();
   let boundIds: ReadonlySet<ObjectId> = new Set<ObjectId>();
   let bindingsDirty = true;
-  /** While set, navigation drives the output camera and the viewport renders through it. */
-  let cameraLocked = false;
-  /**
-   * The camera navigation currently owns. The lock hands it the output camera and a run takes it back, so the choice is
-   * made once per frame from those two flags rather than at each of the places that set them (README D46, D48).
-   */
-  let navigationTarget: PerspectiveCamera = viewportCamera;
   let resolutionCache: EditResolution | null = null;
   /** The mirror node the gizmo is attached to, so a rebuilt replacement is noticed (see `syncGizmo`). */
   let gizmoNode: Object3D | undefined;
@@ -226,12 +222,8 @@ export function main(): void {
   let gizmoMode: 'translate' | 'rotate' = 'translate';
   /** Whether the camera path is drawn. A track with fewer than two keyframes has no path, so this is cleared then. */
   let cameraPathVisible = false;
-  /** Whether a run of the clip takes the viewport with it. On by default, the way the reference product has it. */
-  let followCamera = true;
   /** The viewport state a run started from, so a pause can hand the view on and the end of a run can undo it. */
-  let playbackView:
-    | { position: Vector3; quaternion: Quaternion; target: Vector3; locked: boolean; time: number }
-    | undefined;
+  let playbackView: { position: Vector3; quaternion: Quaternion; target: Vector3; time: number } | undefined;
   let lastImport: ImportedAssets | undefined;
   let jobController: AbortController | undefined;
   /** The raw meshes on layer 2, one per imported node: app-owned, kept for teardown (README D24). */
@@ -255,8 +247,6 @@ export function main(): void {
     cameraControl: () => ({
       selected: cameraControlSelected,
       mode: gizmoMode,
-      locked: cameraLocked,
-      follow: followCamera,
       playing: playback.playing,
       pathVisible: cameraPathVisible,
       pathAvailable: cameraKeyframePositions(project).length >= 2,
@@ -290,7 +280,6 @@ export function main(): void {
       setTimelineVisible,
       renameActive: applyRenameActive,
       reparentActive: applyReparent,
-      setCameraLock,
       setCameraFov,
       setCameraPose,
       toggleCameraControl,
@@ -298,7 +287,6 @@ export function main(): void {
       cameraToView,
       viewToCamera,
       setCameraPathVisible,
-      setFollowCamera,
     },
   };
   const timelineContext: TimelineContext = {
@@ -337,7 +325,7 @@ export function main(): void {
     session,
     picker,
     overlay,
-    getCamera: () => (cameraLocked ? mirror.camera : viewportCamera),
+    getCamera: () => viewportCamera,
     getGizmoBusy: () => controls.gizmoBusy(),
     callbacks: pointerCallbacks,
   });
@@ -559,20 +547,6 @@ export function main(): void {
   }
 
   /**
-   * Turns the camera lock on or off. Locked, `ViewportControls` navigates the **output** camera, so
-   * what the viewport shows is what an export captures; unlocked,
-   * navigation goes back to the app-owned viewport camera (D17). The flag is set before navigation is retargeted, so the
-   * retarget's own `change` event never writes authored data on the way out of the lock; the frame loop is what retargets
-   * it, because a run takes the output camera away from navigation for its length (see the loop, README D48).
-   */
-  function setCameraLock(enabled: boolean): void {
-    cameraLocked = enabled;
-    // The carrier's controls are meaningless while the viewport already is the output camera, and the path is hidden
-    // with the carrier then too, so both re-read the flag (README D46, D47).
-    refreshCameraPath();
-  }
-
-  /**
    * Writes the authored vertical FOV and applies it to the output camera at once: the projection
    * matrix is refreshed here because assigning `fov` alone leaves it stale. The locked viewport and
    * the next export then both show the authored value, and a `fov` keyframe records it instead of
@@ -649,7 +623,7 @@ export function main(): void {
     if (markers.length < 2) cameraPathVisible = false;
     cameraPath.setTrajectory(sampleCameraTrajectory(project));
     cameraPath.setMarkers(markers);
-    cameraPath.setVisible(cameraPathVisible && !cameraLocked);
+    cameraPath.setVisible(cameraPathVisible);
     panels.refresh();
   }
 
@@ -660,8 +634,7 @@ export function main(): void {
   }
 
   /**
-   * Starts a run: the viewport state is captured first, so whatever the run does to the view can be undone, and the
-   * camera lock is engaged to make the viewport follow the clip (README D48).
+   * Starts a run: the viewport state is captured first, so whatever the run does to the view can be undone.
    */
   function startPlayback(): void {
     if (playback.playing) return;
@@ -669,30 +642,21 @@ export function main(): void {
       position: viewportCamera.position.clone(),
       quaternion: viewportCamera.quaternion.clone(),
       target: controls.orbit.target.clone(),
-      locked: cameraLocked,
       time: playback.time,
     };
-    if (followCamera && !cameraLocked) setCameraLock(true);
     playback.play();
     panels.refresh();
   }
 
   /**
-   * Pauses a run. Handing the view over is what makes a paused frame editable: the editor camera takes the pose the
-   * clip stopped at and the lock is released, so the shot can be judged from there and flown on without the clip
-   * pulling it back — the authored data is untouched either way (README D48).
+   * Pauses a run. Handing the view over is what makes a paused frame editable: the editor camera takes the pose the clip
+   * stopped at, so the shot can be judged from there and flown on without the clip pulling it back — the authored data
+   * is untouched either way (README D48).
    */
-  function pausePlayback(handOver: boolean): void {
+  function pausePlayback(): void {
     if (!playback.playing) return;
-    // The lock the follow engaged is the one this pause gives back; a lock the user asked for stays.
-    const handedOver = handOver && followCamera && playbackView?.locked === false;
     playback.pause();
-    if (handedOver) {
-      // The orbit has to belong to the viewport camera before anything moves it: while the lock is on, the pose
-      // this hands over would otherwise be written into the output camera, which is authored data (D17).
-      setCameraLock(false);
-      controls.setViewFrom(mirror.camera.position, mirror.camera.quaternion);
-    }
+    controls.setViewFrom(mirror.camera.position, mirror.camera.quaternion);
     panels.refresh();
   }
 
@@ -705,29 +669,17 @@ export function main(): void {
     playbackView = undefined;
     playback.pause();
     if (restore !== undefined) {
-      // The playhead goes back as well, so the frame on screen is the one the run started from — which is also what
-      // restores the view when the output camera is the one drawing, since its pose comes from the clip.
+      // The playhead goes back as well, so the frame on screen is the one the run started from.
       playback.setTime(restore.time);
-      if (restore.locked) {
-        setCameraLock(true);
-      } else {
-        setCameraLock(false);
-        controls.setViewFrom(restore.position, restore.quaternion, restore.target);
-      }
+      controls.setViewFrom(restore.position, restore.quaternion, restore.target);
     }
     panels.refresh();
   }
 
   /** The transport toggle: the only entry point, so every run is saved and every pause can hand the view over. */
   function togglePlayback(): void {
-    if (playback.playing) pausePlayback(true);
+    if (playback.playing) pausePlayback();
     else startPlayback();
-  }
-
-  /** The `Follow camera` option. It applies to the next run, which is why the panel disables it while one runs. */
-  function setFollowCamera(enabled: boolean): void {
-    followCamera = enabled;
-    panels.refresh();
   }
 
   function toggleCameraControl(): void {
@@ -1012,15 +964,6 @@ export function main(): void {
   }
 
   // 6. Gizmo, camera lock, session, drop target, resize, and the render loop.
-  controls.onOrbitChange(() => {
-    // Only navigation while the lock is on describes the output camera, and only while the mixer is
-    // stopped: a running clip owns the camera, and writing its sampled pose back would drift the
-    // authored pose towards the animation on every frame.
-    if (cameraLocked && !playback.playing) {
-      project.camera.transform.position.copy(mirror.camera.position);
-      project.camera.transform.quaternion.copy(mirror.camera.quaternion);
-    }
-  });
   /**
    * Live drag feedback: the object follows the pointer through the mirror, not the document, so a gesture
    * that is abandoned or cancelled has written nothing. The document write happens once, on commit.
@@ -1097,37 +1040,11 @@ export function main(): void {
       bindingsDirty = false;
       if (!bindingsCurrent()) rebuildBindings();
     }
-    // Navigation may own the output camera only while the author can aim it. `OrbitControls.update()` ends with
-    // `object.lookAt(target)`, so a camera navigation owns is re-aimed at the editor's orbit pivot every frame — which
-    // overwrites the pose the mixer just applied, and the clip's camera animation is then never seen. A run hands
-    // navigation the viewport camera for its length, and the lock takes the output camera back when the run pauses
-    // (README D46, D48).
-    const navigationCamera = cameraLocked && !playback.playing ? mirror.camera : viewportCamera;
-    if (navigationCamera !== navigationTarget) {
-      controls.setOrbitTarget(navigationCamera);
-      navigationTarget = navigationCamera;
-    }
     controls.update();
-    const renderCamera = cameraLocked ? mirror.camera : viewportCamera;
-    if (cameraLocked) {
-      // The locked output camera draws the viewport too, so it needs the canvas' aspect: an export
-      // sets its own aspect for its frames, and a resize would otherwise leave the locked view
-      // stretched. Layer 1 stays off it, so no decoration can reach the locked view or an export.
-      const aspect = canvasAspect(viewport);
-      if (renderCamera.aspect !== aspect) {
-        renderCamera.aspect = aspect;
-        renderCamera.updateProjectionMatrix();
-      }
-    }
     // The carrier reports the output camera as it stands right now — the authored pose, or the sampled one while a
-    // clip runs — and it is drawn only while the viewport is a different camera, since a camera cannot see itself
-    // (README D46). A drag owns the pose until it commits, so the per-frame update stands back for it.
+    // clip runs — in one colour or the other, so the author can always see where that camera is (README D46). A drag
+    // owns the pose until it commits, so the per-frame update stands back for it.
     cameraControl.setSelected(cameraControlSelected);
-    // Drawn whether or not it is selected, in one colour or the other: the carrier shows where the output camera is, and
-    // that is worth seeing while the gizmo is on an object just as much as while it drives the camera (README D46). The
-    // selected carrier is the accent colour, the rest of the time the idle grey. The locked view is the export view,
-    // where no decoration belongs — and a camera cannot see itself there anyway.
-    cameraControl.setVisible(!cameraLocked);
     if (!(cameraControlSelected && controls.gizmoBusy())) {
       cameraControl.setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport));
     }
@@ -1136,16 +1053,15 @@ export function main(): void {
     // rings to a dot, and the orbit radius is the scene's own scale. The carrier needs none of this: its size is a fixed
     // world size, so it scales with the scene rather than with the view (README D46, D47).
     const viewingDistance = Math.max(
-      renderCamera.position.distanceTo(cameraControl.node.position),
+      viewportCamera.position.distanceTo(cameraControl.node.position),
       controls.orbit.object.position.distanceTo(controls.orbit.target),
     );
-    // The grid follows the camera that draws the viewport, so a locked output camera gets the same reference.
-    worldGrid.update(renderCamera);
+    // The grid follows the camera that draws the viewport.
+    worldGrid.update(viewportCamera);
     cameraPath.setScreenScale(viewingDistance);
-    renderer.render(mirror.scene, renderCamera);
+    renderer.render(mirror.scene, viewportCamera);
     // The outline goes over the finished frame in a pass of its own, so the selected object alone cuts it (README D50).
-    // The locked output camera draws the export view, where no decoration belongs — the same reason its layers hold 0 only.
-    if (!cameraLocked) mirror.renderSelectionOutline(renderer, renderCamera);
+    mirror.renderSelectionOutline(renderer, viewportCamera);
     timelinePanel.setTime(playback.time * 1000);
     hud.update(hudState());
   }

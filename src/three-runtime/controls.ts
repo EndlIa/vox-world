@@ -9,9 +9,8 @@
  * tool, and the gizmo reports a drag and its commit separately so one gesture writes the document
  * exactly once.
  *
- * Navigation follows the viewport camera by default; `setOrbitTarget` hands it to another camera
- * (the output camera, while the app's camera lock is on) and `onOrbitChange` reports every camera
- * move navigation caused, which is how the app learns where the user aimed the output camera.
+ * Navigation follows the viewport camera alone, and `onOrbitChange` reports every camera move it caused — which is
+ * how a caller can follow the editor's own view.
  */
 
 import * as THREE from 'three';
@@ -183,25 +182,6 @@ export class ViewportControls {
    */
   onOrbitChange(cb: () => void): void {
     this.orbitCallbacks.add(cb);
-  }
-
-  /**
-   * Hands navigation to another camera, so the composition root can point it at the output camera
-   * while the camera lock is on. The orbit pivot stays where it is, except when the new camera sits
-   * on it: a zero orbit radius can neither rotate nor dolly, and the output camera starts at the
-   * pivot, so the pivot then moves to the point that camera already looks at, at the distance the
-   * previous camera orbited from. That changes neither position nor orientation — `update()` rebuilds
-   * the same offset and looks at a point straight ahead — and it leaves the user able to aim the
-   * output camera.
-   */
-  setOrbitTarget(camera: THREE.PerspectiveCamera): void {
-    const orbit = this.orbit;
-    const radius = orbit.object.position.distanceTo(orbit.target);
-    orbit.object = camera;
-    if (radius > MIN_ORBIT_RADIUS && camera.position.distanceTo(orbit.target) <= MIN_ORBIT_RADIUS) {
-      orbit.target.copy(camera.position).addScaledVector(camera.getWorldDirection(_viewDirection), radius);
-    }
-    orbit.update();
   }
 
   /**
