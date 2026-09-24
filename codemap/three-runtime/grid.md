@@ -1,126 +1,104 @@
 # src/three-runtime/grid.ts
 
-Ring: 2 · Layer: three-runtime · Depends on: `./gridPlane.js`, `three`
+Ring: 2 · Layer: three-runtime · Depends on: `three`, `@pmndrs/vanilla/core/Grid`, `./shaderPatch.js`
 
 ## Responsibility
-The viewport's world grid: one of three displays, each a set of shader-drawn planes, chosen by the Grid group's
-`Display` field. They are the reference viewport's displays and they are mutually exclusive rather than additive
-(README D49):
+The viewport's world grid: **one** horizontal plane of shader-drawn lines on the world's ground, shown or hidden by the
+app's one `World grid` flag. It is the only grid — the vertical work planes (`volume`'s walls, the movable `multi`
+plane) and the second copy of the ground the volume display carried are gone, because vox-world places and aligns
+content on the world lattice itself (README D41, D42) and a wall of grid is a reference nothing here is built against.
+The active object's own lattice is gone as well (README D49). The look is the reference viewport's floor plane: one
+white line per world cell, a brighter one every `GRID_SECTION_SIZE` cells (README D35).
 
-- `floor` — one horizontal plane on the world's ground, the reference for building on it.
-- `volume` — that ground plus the two walls that close a work cube, so a model can be read in three dimensions while
-  it is being built rather than only from above.
-- `multi` — one plane the user aims at an axis and slides along it, for work that does not happen on the ground.
-- `off` — no grid at all.
-
-Every plane is a `GridPlane` (`./gridPlane.ts`), so the lines anti-alias and fade instead of dissolving into noise
-with distance, and every plane is anchored in phase to the world's cell boundaries: the camera moves the quad, never
-the lines. The whole display is decoration — layer 1, no depth write, no project data, outside `frameAll`'s
-measurement — so it is never picked, never exported, and can never widen the framing of an import (README D24, D35).
-
-The active object's own lattice is gone with the displays that replaced it (README D49): a lattice at a model's own
-subdivision, on the model's own plane, read as a sheet hanging in the air the moment the model left the ground, and a
-per-object grid is not what the reference viewport shows at all. What D43 decided about the **data** stands
-untouched — a model still carries its subdivision, its cells and its placement are still measured in its own cells,
-and the import dialog is unchanged — so this module no longer imports `../voxels/uniform/grid.js` at all: only the
-drawing went, and with it the base plane's line geometry, its hole cutting, and the footprint maths that drove it.
+The plane is `@pmndrs/vanilla`'s shader grid with three pure patches applied where the material compiles:
+three's logarithmic-depth chunks, the reference material's derivative-based line attenuation, and no distance fade.
+The whole thing is decoration: layer 1, so the picker's raycaster (layers 0 and 2) never hits it and no export frame
+contains it (README D24), and `depthWrite = false`, so it cannot occlude a voxel below the plane.
 
 ## Public interface
 ```ts
-const GRID_MODES = ['off', 'floor', 'volume', 'multi'] as const;
-type GridMode = 'off' | 'floor' | 'volume' | 'multi';
-const DEFAULT_GRID_MODE: GridMode = 'floor';
+const GRID_CELL_SIZE = 1;        // one cell is one world unit: the lines are the cell boundaries (README D41)
+const GRID_SECTION_SIZE = 20;    // the brighter line, the reference material's majorUnitFrequency
+const GRID_PLANE_EXTENT = 4096;  // side of the quad, in world units
+
+function withLogDepth(vertexShader: string, fragmentShader: string): { vertexShader: string; fragmentShader: string };
+function withAnisotropicAttenuation(fragmentShader: string): string;
+function withoutDistanceFade(fragmentShader: string): string;
 
 class WorldGrid {
   constructor();
-  readonly root: THREE.Group;   // `world-grid`: the five named planes; only the shown display's are visible
-  get gridMode(): GridMode;
-  get multiAxis(): GridAxis;
-  get multiOffset(): number;
-  setMode(mode: GridMode): void;
-  setMultiPlane(axis: GridAxis, offset: number): void;
-  update(camera: THREE.Camera): void;
+  readonly root: THREE.Group;   // the owner adds this to its scene
+  get visible(): boolean;
+  setVisible(visible: boolean): void;
+  update(camera: THREE.Camera): void;   // once a frame, after the camera itself has been settled
   dispose(): void;
 }
 ```
-Module-private: `GROUND_OFFSET = 0` (the world's ground, the bottom plane of cell row zero), `VOLUME_WALL_OFFSET =
--60` (the work cube's half side, so its walls sit there at negative `x` and `z`), and `DEFAULT_MULTI_AXIS = 'x'` (the
-moved plane opens vertical through the origin, where a centred model wants slicing).
 
 ## Internal logic
-1. Construction builds five planes — `new GridPlane('y', GROUND_OFFSET)` for `floor`;
-   `('y', GROUND_OFFSET)`, `('x', VOLUME_WALL_OFFSET)`, and `('z', VOLUME_WALL_OFFSET)` for `volume`; and
-   `(this.axis, this.offset)` for `multi` — names their meshes `world-grid-floor`, `world-grid-volume-ground`,
-   `world-grid-volume-wall-x`, `world-grid-volume-wall-z`, and `world-grid-multi`, and adds all five to one `Group`
-   named `world-grid`, which is `root`. The instance's `axis` and `offset` are the moved plane's state and start at
-   the constants above.
-2. `displays` is the map from a display to the planes it shows, and it partitions the five: `floor` holds the floor
-   plane, `volume` its own ground plus the two walls, `multi` the moved plane, and `off` nothing. No plane belongs to
-   two displays, so nothing is ever drawn twice and `dispose` can release each plane exactly once.
-3. `apply()` writes visibility for every plane from the current display's list, and is the only writer: `setMode`
-   calls it after storing the mode, and the constructor calls it once. A mode switch therefore leaves nothing of the
-   previous display on screen, and the visibility state of all five planes is always the map's answer.
-4. `setMode(mode)` throws a `RangeError` when the argument is not one of `GRID_MODES` — a stranger is a programming
-   error, not a value to ignore — and returns early when the mode is already the one on screen, so a repeated write
-   does no work.
-5. `setMultiPlane(axis, offset)` is the moved plane's writer: it throws a `RangeError` for an axis that is not in
-   `GRID_AXES` and another when the offset is not a whole world unit, then records both and hands them to the moved
-   plane's `setFacing`. It does not touch `apply`, because aiming or sliding a plane never changes which display is
-   on screen.
-6. `update(camera)` is the per-frame call: it walks the **current** display's planes and follows each, so the two
-   fixed displays and the hidden planes cost nothing, and the whole display moves on one camera in one pass.
-7. `dispose()` disposes every plane in `displays` and clears `root`, so the group is emptied as well as its children
-   released. A second call walks the same planes and re-runs the idempotent per-plane disposal on an already-empty
-   group; nothing is called twice by the app, and nothing fails.
+1. Constants: `OVERLAY_LAYER = 1` (README D24), `GRID_RENDER_ORDER = 0` (below the 1000 the box preview and the
+   camera path draw at), `GRID_CELL_SIZE = 1`, `GRID_SECTION_SIZE = 20`, `GRID_PLANE_EXTENT = 4096`,
+   `CELL_THICKNESS = 0.42`, `SECTION_THICKNESS = 0.55`, one white `GRID_LINE_COLOR = 0xffffff`.
+2. Construction builds the library's `Grid` with `args: [EXTENT, EXTENT]`, `cellSize`, `sectionSize`, the two
+   thicknesses, both colours white, `followCamera: false`, `infiniteGrid: false`, `side: THREE.DoubleSide`, names the
+   mesh `world-grid-plane`, leaves its quaternion the identity, gives it layer 1 and `GRID_RENDER_ORDER`, takes the
+   material's `depthWrite` off, and installs its `onBeforeCompile` patch. The mesh goes into a `Group` named
+   `world-grid`, which is what `root` is.
+3. **No rotation is applied, and that is the whole orientation story.** The library's vertex program swizzles the
+   geometry — `localPosition = position.xzy` — before the model matrix, so an unturned `PlaneGeometry` already lies in
+   the plane whose normal is the world's up. A mesh rotation here (which the first version of this port had) turns the
+   floor into a wall, and the app then draws no grid at all: it renders edge-on to the camera. `tests/grid.test.ts`
+   pins both halves of that — the swizzle in the program and the identity quaternion on the mesh.
+4. `setVisible` writes `root.visible`, which is what the app's checkbox reads back through `visible`. Nothing else in
+   the file touches visibility.
+5. `update(camera)` moves the quad to the camera's own cell — `x` and `z` rounded to whole cells, `y` left on the
+   world's ground — so the lines stay on the cell boundaries however far the viewport travels. Nothing else follows the
+   camera, and the library's own `update` (which only fed the distance fade) is not used, because the fade is patched
+   out.
+6. `withLogDepth` adds three's `<common>` and `<logdepthbuf_pars_vertex>` above `main` and `<logdepthbuf_vertex>` at the
+   end of it, and the two fragment chunks, because a custom shader without them writes a depth nothing else in the
+   scene can be compared against (README D40).
+7. `withAnisotropicAttenuation` rewrites the library's `return 1.0 - min(line, 1.0);` to multiply the line by
+   `clamp(1.0 / (length(vec2(dFdx(r.x), dFdy(r.x))) * 1.41421356 + 1.0) - 0.1, 0.0, 1.0)` — the reference grid
+   material's anisotropy clamp, in the cell-space derivative the library hands it. Without it a unit grid saturates at
+   the horizon and beats against the pixel grid.
+8. `withoutDistanceFade` rewrites `float d = 1.0 - min(dist / fadeDistance, 1.0);` to `float d = 1.0;`: the reference
+   grid does not fade with distance at all, and what thins its lines there is the clamp above.
+9. `dispose()` takes the plane out of the scene, disposes its geometry and material, and empties the root. It is
+   idempotent.
 
 ## Invariants
-- One display at a time, and only its planes are visible: `apply()` derives all five planes' `visible` from
-  `displays[mode]`, so the displays can never be additive and switching one off leaves nothing behind (README D49).
-- The floor and the volume's ground are two different planes, not one plane shown twice: a display's planes are its
-  own instances, so a mode switch never aliases the facing or the offset one display was given into another's.
-- The fixed displays are fixed: the ground sits at `0` on `y` and the work cube's walls at `-60` on `x` and `z`, whole
-  cells out, and only `update` moves them — and it moves the two coordinates each plane does not face, so its own
-  plane is untouched.
-- Per-frame work is the shown display's planes and nothing else: `update` reads the current display's list, so `off`
-  and every plane of the other displays are genuinely free.
-- Grid settings are the viewport's, never the document's: the three settings are the only state, the app reads them
-  for the panel through `gridMode` / `multiAxis` / `multiOffset`, and nothing here reads a `Project`, a session, or an
-  export.
-- `dispose()` releases every plane exactly once and empties `root`; afterwards nothing of the grid is in the scene,
-  and calling it again is harmless.
+- The grid is one plane: `root.children.length === 1` from construction, and no mode, axis, or offset exists to change
+  what is drawn — the app's `World grid` flag is the only state (README D35).
+- The plane lies in the world's ground plane: the library's program swizzles the quad into its local `xz` plane and
+  the mesh carries no rotation of its own, and `update` never moves it off `y = 0`.
+- The plane's `x`/`z` always sit on whole cells, so every line falls on a cell boundary.
+- The plane is on layer 1 with `depthWrite = false` and `GRID_RENDER_ORDER`, so a pick cannot reach it and it cannot
+  occlude what is below it (README D24).
+- The three patches are the only difference from the library's own shader, and each is a pure string transform, so each
+  is checked without a GPU (`tests/grid.test.ts`). The library's `followCamera` and `infiniteGrid` stay off: both move
+  the grid inside the shader, and the quad is moved instead so the mesh stays where the lines it draws are.
+- `dispose()` releases the plane's geometry and material and is safe twice.
 
 ## Errors
-- `RangeError` from `setMode` for a name that is not a display, naming the method and the value.
-- `RangeError` from `setMultiPlane` for an unknown axis, and another for an offset that is not a whole world unit:
-  a plane between two cells would put its lines between the world's own (README D49).
-- Everything else is total. The constructor builds only compile-time constants, so a plane can never be constructed
-  with a bad offset from here; `update` accepts any camera; `dispose()` is safe twice. Nothing here throws
-  `TypeError`.
+Nothing throws. `update` accepts any camera, `setVisible` any boolean, and `dispose` is safe twice. `GRID_PLANE_EXTENT`
+and `GRID_SECTION_SIZE` are module constants, not validated inputs.
 
 ## Dependencies
-- `./gridPlane.js` — `GridPlane`, the one plane, and `GRID_AXES`, so the axis check asks the module that defines the
-  axes rather than restating them; `GridAxis` is a type-only import for the same reason.
-- `three` — `Group` for `root` and the `Camera` type `update` takes. No project, editor, UI, document, or other
-  three-runtime module: the owner (`app/main.ts`) adds `root` to `mirror.scene` and calls `update` from the render
-  loop, exactly as it does for `Overlay`.
-- It no longer imports `../voxels/uniform/grid.js`: `UniformGrid`, `DEFAULT_GRID_MARGIN`, `showObjectLattice`, the
-  margin, the hole, and the footprint maths that existed to cut the base plane under a lattice are all gone with
-  D43's second layer.
+- `three` — `Group`, `Mesh`, `Vector3`, `Color`, `DoubleSide`, `ShaderMaterial`, `Camera`, `Scene` (by the caller).
+- `@pmndrs/vanilla/core/Grid` — the shader grid itself: its material, geometry, and uniform set.
+- `./shaderPatch.js` — `insertChunks`, the one transform the log-depth patch needs.
 
 ## Tests
-`tests/grid.test.ts` pins the displays and their mutual exclusivity, the default, the work cube's three planes staying
-on their own planes under a camera move, and the moved plane's aim, offset, facing, and refusal — in the node
-environment, no DOM and no GPU; see `codemap/tests/grid.md`. What needs a GPU stays app-verified (README §10): the
-display visible with its palette, the percentage of the view region it changes, the walls and the moved plane moving
-with the axis and the offset, nothing of the grid inside the model's silhouette, the fine lines fading before the
-coarse ones, and no hard edge where a plane ends.
+`tests/grid.test.ts` pins the one plane, its layer and depth behaviour, the cell and section spacing, the white lines,
+the floor orientation (the program's swizzle with no mesh rotation), the whole-cell follow, the visibility switch, the
+two dispose calls, and each of the three patches — including that the material's own `onBeforeCompile` hook applies
+them. What needs a GPU stays app-verified (README §10): the grid on screen, its lines on the cell boundaries, the
+coarser level every twenty cells, and its absence from a pick and from an exported frame.
 
 ## Open questions
-- The three displays are the reference's, and `multi` is one plane: a second movable plane, or planes the pointer
-  can pick and build on as a work surface, is a later slice (README D49).
-- The work cube's half side is fixed at 60 world units — the reference's 120-cell cube — so its walls are off screen
-  for a small model until the view is pulled back.
-- Offsets are whole world units: a plane between two cells is refused rather than rounded, so sub-cell work planes
-  are not offered.
-- The display is viewport state with no persistence, so a reload opens on `floor`; nothing in a project records which
-  grid the user was looking at.
+- `GRID_PLANE_EXTENT = 4096` is the answer to "the grid must not end in view" without a fade: the reference uses a disc
+  of radius 5100 for the same reason. If a view ever shows the quad's edge, the extent is the knob.
+- The reference's floor is a dark translucent surface (`mainColor` at `mesh.visibility = 0.1`) whose lines are white at
+  the same 10%. This grid has no fill and no overall alpha: over the viewport's slate background the fill would only
+  darken what is already there, and the two levels are told apart by line coverage instead of by two greys.

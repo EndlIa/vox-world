@@ -144,6 +144,9 @@ src/
     capture.ts        offscreen renderer at export resolution
     overlay.ts        box preview feedback
     cameraControl.ts  runtime-only carrier drawing the output camera: three's frustum and up marker
+    grid.ts           the viewport's one world grid: a shader plane on the world's ground
+    faceGrid.ts       the per-voxel face border the shared voxel material is patched with
+    shaderPatch.ts    the two string transforms every shader patch is built from
   editor/
     session.ts        active object, tool, selection
     ops.ts            edit operations over document state
@@ -557,6 +560,24 @@ framing of an import. The extent is a fixed 200 m and there is no visibility tog
 as open. **D49 replaced the drawing and closed both open items**: the grid is a shader grid from `@pmndrs/vanilla`
 now, in three mutually exclusive displays that the Grid group's `Display` field switches, and its quad is 512 world
 units wide and follows the camera.
+
+**Revised again — the single world grid, the reference's numbers, and the per-voxel border.** The user's call after
+using the three displays: the vertical ones are meaningless here, so `volume`'s walls and the movable `multi` plane are
+removed and the grid is **one** horizontal plane on the world's ground with a single `World grid` checkbox in the Grid
+group (on by default). The per-object lattice stays gone. The look is now the reference material's rather than this
+file's earlier compromise: **a line every world unit and a brighter one every 20 cells** (`majorUnitFrequency` — D35's
+original text said twenty, the rewrite had drawn ten), **white lines**, a **4096-unit** quad with **no distance fade**,
+and no fill colour and no overall plane alpha (the reference's is a dark translucent surface; over this viewport's
+slate background it would only darken what is already there). D32's objection was to white lines standing in for content
+in a viewport that showed nothing else; what the user asked for here is the reference look, so the greys go.
+`gridPlane.ts` is folded back into `grid.ts`, because one plane needs no wrapper, and the same change adds the
+**per-voxel face border** (`three-runtime/faceGrid.md`): every voxel face carries a one-pixel line at 22% of its own
+colour, which is the reference's default `Grid` texture and what makes a mass of cubes read as countable cells. The
+vertical displays the user had objected to were `volume`'s two walls and the movable `multi` plane, not the floor: the
+library swizzles the quad into the ground plane on its own, and the floor of the previous version was already correct.
+(The port's own first attempt at this revision added a rotation on top of that swizzle and stood the floor up as a
+wall; the app then drew no grid at all, which is how the mistake was caught and why the two halves are pinned by a test
+now.)
 
 **D36 — The box drag has no height override.** The Edit group used to carry a `Box height` field: a value
 above one forced the dragged box's third axis to `[anchor.y, anchor.y + height - 1]`, turning a surface drag
@@ -1137,11 +1158,10 @@ deferred is deferred deliberately, not forgotten.
 - Select and edit voxel objects: create, name, delete, hide, transform, reparent.
 - Voxels: drag a box (anchor, opposite corner) to select it, or to add, remove, paint, or
   detach it as a new object; a click is a 1×1×1 box.
-- Viewport grid: three mutually exclusive displays drawn as shader grids — one horizontal plane on the world's
-  ground, that ground plus the two walls of a work cube, and one plane the user aims at an axis and slides along it —
-  chosen in the Grid group's `Display` field, plus Off; the plane's axis and offset are live only for the movable one,
-  because the ground and the work cube are fixed (D35, D49). The whole display is decoration: layer 1, never picked,
-  never exported, and outside framing's measurement.
+- Viewport grid: one horizontal plane of shader-drawn lines on the world's ground, one white line per world unit and a
+  brighter one every twenty cells, switched by the Grid group's `World grid` box (D35). It is decoration: layer 1, never
+  picked, never exported, and outside framing's measurement. Every voxel face also carries a one-pixel border at 22% of
+  its own colour, which is what makes a mass of cubes read as countable cells (D35).
 - Subdivision: raise one object's own grid to a finer level (D43) from the Scene group, and have every
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
 - Timeline: a whole-millisecond duration and frame rate, keyframes on object transforms and on the output camera

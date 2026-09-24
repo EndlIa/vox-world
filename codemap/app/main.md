@@ -64,7 +64,7 @@ function main(): void;
    `new ModeBar(modebarRoot, { session })` — the viewport's two-button mode switch, a view of the session like the panels — and
    `new VoxelizeDialog(panelsRoot, () => defaults())` — the settings modal is mounted into the same element as the panels and, like them, receives only
    callbacks and no state — over the actions of
-   step 6, over `gridSettings`, the `WorldGrid` view the `Grid` group reads, over `timelineVisible`, the app's own timeline-bar flag, and over
+   step 6, over `gridVisible`, the `WorldGrid` flag the `Grid` group's one checkbox reads, over `timelineVisible`, the app's own timeline-bar flag, and over
    `cameraControl`, the view the `Camera` group's carrier controls read: `{ selected: cameraControlSelected, mode: gizmoMode, locked: cameraLocked,
    follow: followCamera, playing: playback.playing,
    pose, pathVisible: cameraPathVisible, pathAvailable: cameraKeyframePositions(project).length >= 2 }`, whose pose comes from
@@ -188,21 +188,12 @@ function main(): void;
      nothing else: the mirror owns the flag, applies it to its layer-2 meshes at once and again on the next `sync()`, and the panel reads it back through
      `sceneVisible: () => mirror.sourceVisible` — which is also why `main` implements `PanelContext.sceneVisible`, so the checkbox cannot drift from the
      mirror. No mark-dirty and no refresh are needed, and an export is unaffected either way because it renders layer 0 alone.
-   - Grid display — the `Grid` group's three controls are the viewport's own settings, so the actions and `gridSettings` go through the
-     `worldGrid` instance rather than through `app`: `Panels` refreshes inside its own constructor, and that first refresh runs before `app` is
-     built, so a context built out of `app` would read a variable that is not there yet, while the instance has existed since step 2.
-     `gridSettings: () => ({ mode: worldGrid.gridMode, axis: worldGrid.multiAxis, offset: worldGrid.multiOffset })` is the view the panel seeds
-     its three fields from. `setGridMode(mode)` hands the display to `worldGrid.setMode` and then calls `panels.refresh()`, which re-seeds the
-     `Display` select from that same view — the re-seed is what makes the field a view of the app's state rather than a forward-only control,
-     because a value the grid did not take would come back as the field showing what the grid holds — and it is also the refresh that re-derives
-     the disabled rule for the axis and the offset. `setGridAxis(axis)` calls `worldGrid.setMultiPlane(axis, worldGrid.multiOffset)` and
-     `setGridOffset(offset)` calls `worldGrid.setMultiPlane(worldGrid.multiAxis, offset)`, so each action writes one component and keeps the
-     other, and the two together are the whole of the moved plane's control. The offset action is the one that can arrive with
-     nothing usable: the field is a number input with `step 1`, so it accepts a fraction such as `0.5`, and `Number.isInteger`
-     refuses it — the action calls `panels.refresh()` and returns, so a non-integer never reaches the grid, which would refuse it
-     with a `RangeError` (README D49). Nothing here
-     re-aims a lattice any more: the per-object lattice and `refreshObjectGrid` left with D43's second layer, and its `objectGridKey` went with
-     them, so a commit and a session change now touch no grid at all.
+   - Grid — the `Grid` group's one control is the viewport's own flag, so the action and `gridVisible` go through the `worldGrid` instance rather than
+     through `app`: `Panels` refreshes inside its own constructor, and that first refresh runs before `app` is built, so a context built out of `app`
+     would read a variable that is not there yet, while the instance has existed since step 2. `gridVisible: () => worldGrid.visible` is the flag the
+     checkbox is seeded from, and `setGridVisible(visible)` calls `worldGrid.setVisible(visible)` and then `panels.refresh()` — the re-seed is what
+     makes the checkbox a view of the app's state rather than a forward-only control (README D35). The world grid holds no per-frame state beyond its
+     own position, so a commit and a session change now touch no grid at all.
    - Defaults: `defaults()` seeds the dialog from the retained import's `voxelizeBounds`: `extent` is that box's size per
      axis, which the dialog reads its count against to print the model's dimensions (README D29, D41). With no import, or when
      the box it would measure is empty, every axis falls back to `DEFAULT_EXTENT` — the count the prompt already opens at,
@@ -345,13 +336,12 @@ function main(): void;
   the payload the object is at the identity, after it at the payload's translation, and `applySources` re-derives each mesh's local matrix from it: the app
   never re-parents a mesh, never computes a placement, and never writes a mesh matrix itself. Whether they are shown is the mirror's flag and the panel's
   checkbox (`setSourceVisible` + `sceneVisible`) — `main` keeps no copy of it and never toggles `visible` on a mesh itself.
-- The `Grid` group's settings live on the viewport's grid and never in the document: `panelContext.gridSettings` reads `WorldGrid`'s `gridMode`,
-  `multiAxis`, and `multiOffset`, and the three grid actions write that one instance, so the panel and the grid it displays cannot disagree; no grid
-  flag ever reaches `project`, a timeline track, or an export.
-- The grid is put on the camera the frame is drawn through, and only the shown display is put there: the loop calls
-  `worldGrid.update(renderCamera)` once a frame, after `renderCamera` is chosen and before the render, so a locked output camera gets the same
-  reference as the editor camera while the two fixed displays and the hidden planes cost nothing (README D49). It is decoration on layer 1, which
-  `frameAll` does not measure — it reads layers 0 and 2 — so a 512-unit plane can never widen an import's framing, and the export camera's layer 0
+- The `Grid` group's flag lives on the viewport's grid and never in the document: `panelContext.gridVisible` reads `WorldGrid.visible` and
+  `setGridVisible` writes that one instance, so the panel and the grid it displays cannot disagree; no grid flag ever reaches `project`, a
+  timeline track, or an export.
+- The grid is put on the camera the frame is drawn through: the loop calls `worldGrid.update(renderCamera)` once a frame, after `renderCamera` is
+  chosen and before the render, so a locked output camera gets the same reference as the editor camera (README D35). It is decoration on layer 1, which
+  `frameAll` does not measure — it reads layers 0 and 2 — so its quad can never widen an import's framing, and the export camera's layer 0
   never sees it.
 - The timeline bar's visibility is the app's `timelineVisible` flag alone, and the bar is never shown or hidden without the canvas following:
   `index.html` carries the `hidden` attribute so the first paint is already collapsed, `setVisible` is the panel's only view of the flag and the
@@ -413,8 +403,7 @@ nothing to refuse (README D46).
 - `../voxels/uniform/grid.js` — `UniformGrid` for the demo cube's unit cells (README D41), and `HexColor`, `IntBox3` for the mask-color action
   and the selection text.
 - `../three-runtime/{scene,picking,controls,capture,overlay,grid}.js` — `SceneMirror`, `Picker`, `ViewportControls`, `Capture`,
-  `Overlay`, `WorldGrid`, and the `GridMode` type, plus `../three-runtime/gridPlane.js` for the `GridAxis` type — the two are imported as **types**
-  alone, because they are what the panel context's `gridSettings` view and its three grid actions are typed with (README D49); and
+  `Overlay`, and `WorldGrid`, whose `visible` flag and `setVisible` are the panel's one grid control (README D35); and
   `../three-runtime/cameraControl.js` — `CameraControl`, the runtime-only carrier the gizmo aims the output camera with
   (README D46); `../three-runtime/cameraPath.js` — `CameraPath`, the runtime-only drawing of the authored camera's trajectory, and
   `../animation/trajectory.js` — `sampleCameraTrajectory` and `cameraKeyframePositions`, the points it is handed (README D47); `../animation/playback.js` and `../export/job.js` — `Playback`, `ExportJob`.

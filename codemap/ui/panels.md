@@ -1,6 +1,6 @@
 # src/ui/panels.ts
 
-Ring: 4 · Layer: ui · Depends on: ./dom.js, ./floatingWindow.js, ../document/project.js, ../editor/session.js, ../voxels/uniform/grid.js, ../three-runtime/grid.js (type only), ../three-runtime/gridPlane.js (type only)
+Ring: 4 · Layer: ui · Depends on: ./dom.js, ./floatingWindow.js, ../document/project.js, ../editor/session.js, ../voxels/uniform/grid.js
 
 ## Responsibility
 The main control panel: import, edit, camera, export, and grid-display controls plus the project and session read-out. It renders state and forwards intent through
@@ -45,7 +45,7 @@ type CameraControlView = {          // what the carrier's controls read (README 
 type PanelContext = {
   project: Project; session: EditorSession;
   sceneVisible?(): boolean;    // the app's raw-mesh override; absent => forward-only checkbox
-  gridSettings?(): { mode: GridMode; axis: GridAxis; offset: number };  // the viewport's own grid display; absent => forward-only controls
+  gridVisible?(): boolean;     // the viewport's one world grid's flag; absent => forward-only checkbox
   timelineVisible?(): boolean;   // the app's timeline-bar flag; absent => the rail's `Animation` button is disabled
   cameraControl?(): CameraControlView;   // the carrier's state; absent => the carrier's controls are disabled
   actions: {
@@ -60,10 +60,7 @@ type PanelContext = {
     setActiveSubdivision(subdivision: number): void;    // raises the active object's own grid level; a coarser one is not offered
     detachSelection(): void;   // detaches the region the session selected; the app runs it through the pointer tool
     setSourceVisible(enabled: boolean): void;   // shows or hides every imported raw mesh
-    setGridMode(mode: GridMode): void;    // which of the three displays is on screen (README D49)
-    setGridAxis(axis: GridAxis): void;    // aims the plane the user moves at an axis; the app keeps its offset
-    setGridOffset(offset: number): void;  // slides that plane along its axis, in whole cells;
-                                          // the app drops a value that is not one
+    setGridVisible(visible: boolean): void;    // shows or hides the viewport's one world grid (README D35)
     setTimelineVisible(visible: boolean): void;     // shows or hides the timeline bar; the app owns the flag
     renameActive(name: string): void;           // renames the active object; the app trims and refuses ''
     reparentActive(parentId: ObjectId | null): void;
@@ -97,15 +94,9 @@ class Panels {
    number as both its value and its label, powers of two because a cell has to stay an exact binary fraction of the world unit and
    because the list is the UI's range rather than a rule of the grid (README D43) — and its `change` event forwards
    `Number(value)` through `setActiveSubdivision`. That divider is the group's only use of the
-   stylesheet's `hr` rule. The `Grid` group is the rail's last one and holds the viewport's own display settings (README D49): a
-   `Display` select built from the module constant `GRID_MODE_OPTIONS` — `Off`, `Floor`, `Volume`, and `Multi plane`, one per key of the
-   `GridMode` union, in the order the viewport offers them, whose `change` event forwards `value as GridMode` through `setGridMode` — a
-   `Plane axis` select built from `GRID_AXIS_OPTIONS = ['x', 'y', 'z']`, whose option labels are the axes uppercased and whose `change` event
-   forwards `value as GridAxis` through `setGridAxis`, and a `Plane offset (cells)` number input (`step 1`, no minimum, because the offset
-   slides either way from the origin) whose `input` event only sets the `touched.gridOffset` flag while its `change` event forwards
-   `Number(value)` through `setGridOffset` — the commit is the `change` event, so a half-typed offset never reaches the viewport. The two
-   option lists are the panel's own and are the only place the display and axis names are written; the two unions are imported as types, so
-   a renamed display is a compile error rather than a stale option. There is no voxelize group: the settings live in `ui/voxelizeDialog.ts` (README D26).
+   stylesheet's `hr` rule. The `Grid` group is the rail's last one and holds one control, the viewport's `World grid` checkbox
+   (README D35): its `change` event forwards `checked` through `setGridVisible(visible)` and nothing else, so the panel never touches
+   the grid, the scene, or a mesh. There is no voxelize group: the settings live in `ui/voxelizeDialog.ts` (README D26).
 2. Each group is one rail button plus one window, built together in the group order `Import`, `Edit`, `Camera`, `Render`,
    `Scene`, `Grid`: the button carries the group's name and toggles its window (the `Edit` one also calls `session.setMode('edit')` through the
    optional press hook `group()` takes, before it toggles), and the window is a `FloatingWindow`
@@ -153,8 +144,7 @@ class Panels {
 8. Project-changing intent leaves as callbacks: `pickImportFile()`, `exportMp4(options)`, `createGroup()`,
    `deleteObject(id)` from a row's trash, `setActiveMaskColor(hex)`, `setActiveVisible(checked)` from the visibility checkbox,
    `setActiveAlignToGrid(checked)` from the grid-align checkbox, `setActiveSubdivision(level)` from the subdivision select,
-   `setGridMode(value)` from the `Display` select, `setGridAxis(value)` from the `Plane axis` select, and `setGridOffset(value)`
-   from the `Plane offset (cells)` field, `detachSelection()` from the `detach` button,
+   `setGridVisible(checked)` from the `World grid` checkbox, `detachSelection()` from the `detach` button,
    `renameActive(value)` from the `Name` field,
    `reparentActive(parentId | null)` from the parent select, `setCameraLock(checked)` from the camera-lock checkbox — the panel forwards the checkbox's own state and
    never tracks the lock itself, so the app stays the only owner of the flag — the carrier's four actions and its pose write
@@ -215,15 +205,10 @@ class Panels {
   it then displays that value on every `refresh()` and holds no copy of its own, so the mirror and the checkbox cannot disagree. With no `sceneVisible()`
   in the context the checkbox is forward-only and `refresh()` leaves it alone — the panel then displays the user's last click, and the app is the only
   thing that knows the real state. Either way no mesh, scene, layer, or mirror is touched here.
-- The `Grid` group's controls are the viewport's own display settings, not document state (README D35, D49): while `context.gridSettings()` exists,
-  `refresh()` writes that view back into all three — the `Display` select, the `Plane axis` select, and the offset field — so a display or an axis the
-  app did not take returns as the field showing what the grid holds rather than what was picked, and the panel invents no state of its own. None of
-  them needs an active object, and the axis and the offset are `disabled` exactly while the display on screen is not `multi`, because the ground and
-  the work cube are fixed and those two fields would otherwise pretend to do something. Only the offset field is left alone while
-  `touched.gridOffset` is set, since its `change` event is what commits it — which is also why a fraction the app refused can still sit in that field
-  until the user types another one. With no `gridSettings()` in the context the three are plain forward-only controls `refresh()` never rewrites,
-  exactly like `Show raw meshes` without `sceneVisible()` — and the two gated fields are then disabled, because nothing told the panel that a movable
-  plane exists.
+- The `Grid` group's one control is the viewport's own flag, not document state (README D35): while `context.gridVisible()` exists, `refresh()` writes
+  it back into the checkbox, so the panel invents no state of its own and holds none, and it needs no active object. With no `gridVisible()` in the
+  context the checkbox is forward-only and `refresh()` never rewrites it, exactly like `Show raw meshes` without `sceneVisible()` — the panel then shows
+  the user's last click and the app is the only thing that knows the real state.
 - The `FOV (deg)` input is the panel's view of the output camera's projection — the seven carrier fields are the pose half of the same view (README D46): it displays `project.camera.fov` while untouched, forwards the parsed number, and keeps no camera, no lock state, and no clamped copy of its own.
 - The `Visible` checkbox is a view of `object.visible` and the `Name` field a view of `object.name`: neither holds document state, neither writes
   anything itself, and both are `disabled` while nothing is active. The `Name` field forwards only on `change`, so no keystroke of a name half-typed
@@ -296,10 +281,8 @@ never sees a value it would refuse (README D49).
   that `main` implements with
   `editor/ops.ts`, `three-runtime/controls.ts`, `three-runtime/scene.ts`, and the project camera; this file imports neither `editor/ops.js` nor anything from `app/`. No
   outer-ring import and no Three.js use. `sceneVisible` is a plain callback, so exposing it costs the app one closure and gives
-  the panel no import it did not already have; the `Grid` group's display settings and their three actions arrive the same way — a `gridSettings`
-  closure and three callbacks over the viewport's grid — so the panel holds no grid state either, and the only import they cost it is the two unions
-  as **types** (`GridMode` from `../three-runtime/grid.js`, `GridAxis` from `../three-runtime/gridPlane.js`), which erase at compile time and let the
-  option lists be written without restating a display or an axis name the viewport could rename (README D49); the timeline bar's flag and its toggle arrive the
+  the panel no import it did not already have; the world grid's flag and its one action arrive the same way — a `gridVisible` closure and one callback —
+  so the panel holds no grid state and imports nothing from `three-runtime` at all (README D35); the timeline bar's flag and its toggle arrive the
   same way, a `timelineVisible` closure and `setTimelineVisible`, so the rail's `Animation` button costs the panel no import either (README D44);
   the settings themselves are the dialog's, not the
   panel's, which is why neither `defaults` nor a voxelize target crosses this boundary any more, and why the panel holds no voxelize-related member at all.

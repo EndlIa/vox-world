@@ -23,8 +23,6 @@ import { FloatingWindow } from './floatingWindow.js';
 import type { ObjectId, Project, SceneObject } from '../document/project.js';
 import type { ActiveTool, EditResolution, EditorSession, SelectionShape } from '../editor/session.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
-import type { GridMode } from '../three-runtime/grid.js';
-import type { GridAxis } from '../three-runtime/gridPlane.js';
 
 /** One authored camera pose: the carrier's fields, and the value a numeric field writes back (README D46). */
 export type CameraPose = {
@@ -57,11 +55,10 @@ export type PanelContext = {
    */
   sceneVisible?: () => boolean;
   /**
-   * The grid display settings, if the app exposes them (`WorldGrid`): which of the three grids is on screen and
-   * where the plane the user moves sits. When present the Grid group's controls are a view of them and
-   * `refresh()` seeds them; when absent they are forward-only (README D49).
+   * Whether the world grid is drawn, if the app exposes the flag (`WorldGrid`). When present the Grid group's
+   * checkbox is a view of it and `refresh()` seeds it; when absent the checkbox is forward-only (README D35).
    */
-  gridSettings?: () => { mode: GridMode; axis: GridAxis; offset: number };
+  gridVisible?: () => boolean;
   /**
    * Whether the timeline bar is on screen, if the app exposes the flag. When present the rail's `Animation` button
    * is a toggle over it and `refresh()` seeds its state; when absent that button is disabled. The button opens no
@@ -92,9 +89,7 @@ export type PanelContext = {
     setActiveSubdivision(subdivision: number): void;
     detachSelection(): void;
     setSourceVisible(enabled: boolean): void;
-    setGridMode(mode: GridMode): void;
-    setGridAxis(axis: GridAxis): void;
-    setGridOffset(offset: number): void;
+    setGridVisible(visible: boolean): void;
     setTimelineVisible(visible: boolean): void;
     renameActive(name: string): void;
     reparentActive(parentId: ObjectId | null): void;
@@ -117,20 +112,6 @@ const TOOLS: readonly ActiveTool[] = ['select', 'paint', 'add', 'remove'];
  * cell has to stay an exact binary fraction of the world unit; the list is the UI's range, not a rule of the grid.
  */
 const SUBDIVISIONS: readonly number[] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
-
-/**
- * The Grid group's display choices, in the order they are offered. The keys are the viewport's own display names
- * and are only ever written here: the union type makes a rename a compile error rather than a stale option.
- */
-const GRID_MODE_OPTIONS: readonly { readonly value: GridMode; readonly label: string }[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'floor', label: 'Floor' },
-  { value: 'volume', label: 'Volume' },
-  { value: 'multi', label: 'Multi plane' },
-];
-
-/** The axes the moved plane can face, in the order they are offered. */
-const GRID_AXIS_OPTIONS: readonly GridAxis[] = ['x', 'y', 'z'];
 
 /** The shapes the select tool offers; one so far, and the list it will grow into. */
 const SELECTION_SHAPES: readonly SelectionShape[] = ['box'];
@@ -205,9 +186,7 @@ export class Panels {
   private readonly visibleInput: HTMLInputElement;
   private readonly alignToGridInput: HTMLInputElement;
   private readonly subdivisionSelect: HTMLSelectElement;
-  private readonly gridModeSelect: HTMLSelectElement;
-  private readonly gridAxisSelect: HTMLSelectElement;
-  private readonly gridOffsetInput: HTMLInputElement;
+  private readonly worldGridInput: HTMLInputElement;
   /** The rail's `Edit` button: it also selects the edit mode, so `refresh()` gates it on the active object. */
   private readonly editGroupButton: HTMLButtonElement;
   /** The rail's `Animation` button: it opens no window, it toggles the timeline bar (README D44). */
@@ -409,28 +388,11 @@ export class Panels {
       { on: { change: () => context.actions.setActiveSubdivision(Number(this.subdivisionSelect.value)) } },
       SUBDIVISIONS.map((level) => el('option', { value: String(level), text: String(level) })),
     );
-    // The Grid group: which of the three displays is on screen, and where the plane the user moves sits
-    // (README D49). They are the viewport's own settings, not document state, so the app owns them and
-    // `refresh()` only reads them back; the axis and the offset mean nothing to the two fixed displays.
-    this.gridModeSelect = el(
-      'select',
-      { on: { change: () => context.actions.setGridMode(this.gridModeSelect.value as GridMode) } },
-      GRID_MODE_OPTIONS.map((option) => el('option', { value: option.value, text: option.label })),
-    );
-    this.gridAxisSelect = el(
-      'select',
-      { on: { change: () => context.actions.setGridAxis(this.gridAxisSelect.value as GridAxis) } },
-      GRID_AXIS_OPTIONS.map((axis) => el('option', { value: axis, text: axis.toUpperCase() })),
-    );
-    this.gridOffsetInput = el('input', {
-      type: 'number',
-      step: '1',
-      on: {
-        input: () => {
-          this.touched.gridOffset = true;
-        },
-        change: () => context.actions.setGridOffset(Number(this.gridOffsetInput.value)),
-      },
+    // The Grid group: one world grid, and one switch over it. It is the viewport's own flag rather than document
+    // state, so the app owns it and `refresh()` only reads it back (README D35).
+    this.worldGridInput = el('input', {
+      type: 'checkbox',
+      on: { change: () => context.actions.setGridVisible(this.worldGridInput.checked) },
     });
     this.objectList = el('div');
     // The rail: one button per group, in the order the groups are built, and nothing else — no heading and
@@ -556,11 +518,7 @@ export class Panels {
       this.field('Subdivision', this.subdivisionSelect),
     ]);
 
-    group('Grid', [
-      this.field('Display', this.gridModeSelect),
-      this.field('Plane axis', this.gridAxisSelect),
-      this.field('Plane offset (cells)', this.gridOffsetInput),
-    ]);
+    group('Grid', [this.field('World grid', this.worldGridInput)]);
 
     // The one rail entry that opens nothing: the timeline is a bar along the bottom of the page rather than a
     // floating window, so this button is a plain toggle over the app's flag. It takes no `index`, which is why
@@ -596,19 +554,9 @@ export class Panels {
     // without `sceneVisible()` owns the state itself, so `refresh()` leaves the box alone.
     const sceneVisible = this.context.sceneVisible;
     if (sceneVisible !== undefined) this.sourceVisibleInput.checked = sceneVisible();
-    // Same rule for the Grid group: with a settings source these are a view of the viewport's own flags; the
-    // offset field is left alone while the user is typing in it, because `change` is what commits it.
-    const gridSettings = this.context.gridSettings?.();
-    if (gridSettings !== undefined) {
-      this.gridModeSelect.value = gridSettings.mode;
-      this.gridAxisSelect.value = gridSettings.axis;
-      if (!this.touched.gridOffset) this.gridOffsetInput.value = String(gridSettings.offset);
-    }
-    // Only the plane the user moves has an axis and an offset: the ground and the work cube are fixed, so their
-    // fields wait rather than pretending to do something, and a context without a settings source gates them too.
-    const movablePlane = gridSettings?.mode === 'multi';
-    this.gridAxisSelect.disabled = !movablePlane;
-    this.gridOffsetInput.disabled = !movablePlane;
+    // Same rule for the Grid group: with a source the checkbox is a view of the viewport's own flag.
+    const gridVisible = this.context.gridVisible?.();
+    if (gridVisible !== undefined) this.worldGridInput.checked = gridVisible;
 
     const cameraControl = this.context.cameraControl?.();
     if (cameraControl !== undefined) {

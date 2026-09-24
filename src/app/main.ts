@@ -36,8 +36,6 @@ import { ViewportControls } from '../three-runtime/controls.js';
 import { Capture } from '../three-runtime/capture.js';
 import { Overlay } from '../three-runtime/overlay.js';
 import { WorldGrid } from '../three-runtime/grid.js';
-import type { GridMode } from '../three-runtime/grid.js';
-import type { GridAxis } from '../three-runtime/gridPlane.js';
 import { CameraControl } from '../three-runtime/cameraControl.js';
 import { CameraPath } from '../three-runtime/cameraPath.js';
 import { cameraKeyframePositions, sampleCameraTrajectory } from '../animation/trajectory.js';
@@ -244,11 +242,7 @@ export function main(): void {
     project,
     session,
     sceneVisible: () => mirror.sourceVisible,
-    gridSettings: () => ({
-      mode: worldGrid.gridMode,
-      axis: worldGrid.multiAxis,
-      offset: worldGrid.multiOffset,
-    }),
+    gridVisible: () => worldGrid.visible,
     timelineVisible: () => timelineVisible,
     // The carrier's controls are a view of the app's own flags and of the authored camera, never of the carrier
     // node: what the fields show is what a keyframe would record (README D46).
@@ -286,9 +280,7 @@ export function main(): void {
       setActiveAlignToGrid: applySetActiveAlignToGrid,
       setActiveSubdivision: applySetActiveSubdivision,
       setSourceVisible,
-      setGridMode,
-      setGridAxis,
-      setGridOffset,
+      setGridVisible,
       setTimelineVisible,
       renameActive: applyRenameActive,
       reparentActive: applyReparent,
@@ -902,25 +894,9 @@ export function main(): void {
     timelinePanel.refresh();
   }
 
-  /** Grid group: which of the three displays is on screen (README D49). */
-  function setGridMode(mode: GridMode): void {
-    worldGrid.setMode(mode);
-    panels.refresh();
-  }
-
-  /** Grid group: the axis the moved plane faces; the plane keeps its offset, which the mode gates anyway. */
-  function setGridAxis(axis: GridAxis): void {
-    worldGrid.setMultiPlane(axis, worldGrid.multiOffset);
-    panels.refresh();
-  }
-
-  /** Grid group: where the moved plane sits along its axis. A value that is not a whole cell is dropped. */
-  function setGridOffset(offset: number): void {
-    if (!Number.isInteger(offset)) {
-      panels.refresh();
-      return;
-    }
-    worldGrid.setMultiPlane(worldGrid.multiAxis, offset);
+  /** Grid group: whether the world grid is drawn (README D35). */
+  function setGridVisible(visible: boolean): void {
+    worldGrid.setVisible(visible);
     panels.refresh();
   }
 
