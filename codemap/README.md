@@ -406,7 +406,8 @@ so that a rotated or scaled ancestor cannot silently misplace a detached child l
 
 **D24 — Camera layers separate what is edited, what is only shown, and what is exported.** Layer 0 is
 scene content: the voxel instances and the output camera, and it is the only layer an export renders.
-Layer 1 is viewport feedback — the box preview — which is never picked and never exported. Layer 2 is the imported source mesh, kept for the raw-mesh versus
+Layer 1 is viewport feedback — the box preview — which is never picked and never exported. Layer 3 is the selection outline's own layer, drawn in
+a pass of its own over the finished frame so the selected object alone cuts its rim (D50), and never picked or exported for the same reasons. Layer 2 is the imported source mesh, kept for the raw-mesh versus
 voxel comparison: the viewport camera enables 0, 1, and 2; the raycaster tests 0 and 2; the export
 camera and `Capture` use 0 alone, which is what keeps an un-voxelized source mesh out of an exported
 frame (SRS forbids exporting the mesh and its voxels together). `frameAll` measures 0 and 2 so an
@@ -1143,6 +1144,35 @@ displays rewritten), `ui/panels.md` (the three fields, the seeding, the disabled
 provider, the three actions, the frame loop's update, the removed lattice refresh and its key), D43's display clause,
 D35's drawing, and this file's §3, §4, and §9.
 
+### D50. The selection outline is drawn in its own pass, and the selected object alone cuts it
+
+**Decided.** The outline is an inverted hull over the selected object's own instances, and a hull is only a rim where the depth test lets it
+through: in the main pass the whole scene shares one depth buffer, so any geometry standing in front of the rim — a neighbour touching the object,
+or anything between the camera and it — clips the rim away, and the outline's shape ends up decided by what the object happens to be next to. That
+is wrong for this affordance: the outline says *which object the gizmo is on*, so the object has to decide its own rim and nothing else may.
+
+- **Its own layer and its own pass (D24).** The hull and a depth-only copy of the object's instances live on layer 3, apart from the layer-1
+  decorations, and `SceneMirror.renderSelectionOutline(renderer, camera)` keeps the colour, clears the depth, restricts the camera to that layer,
+  and renders — so the pass holds one object's silhouette and its hull and nothing else. The camera's layer mask, the auto-clear flag, and the
+  scene's background are restored in a `finally`; the background has to be unset for the pass, because three forces a full clear for a `Color`
+  background however `autoClear` is set.
+- **A depth-only copy of the object, not the object (D4).** The copy shares the mesh's `instanceMatrix`, so it is the same instances drawn with
+  `colorWrite: false`: no per-instance work, no second geometry, and the depth that cuts the hull is exactly the object's own. It is shown and
+  hidden with the hull, so no second object's depth can enter the pass.
+- **Drawn over everything, deliberately.** "Only the object may cut it" comes with "nothing may hide it": the rim stays visible while the object is
+  behind something. That is the semantics that was asked for, and it is the one the alternative cannot give — one depth buffer cannot both let
+  front geometry hide the outline and stop front geometry from notching it.
+- **Not in the locked view, and never in an export.** `app/main.ts` calls the pass beside `renderer.render` and skips it while the view is locked
+  to the output camera, which draws the export view and no decoration (D46); `Capture` never calls it at all, so no frame of an MP4 contains it.
+
+Verified against two objects built from the same mesh in a throwaway page driving the real `SceneMirror` on a real context, the first one selected.
+With the second sitting on the selected object's front face, the hull drawn in the main pass — the commit before this one — leaves **0** outline
+pixels, and the pass leaves **640**, with **0** other pixels changed in the frame. (A neighbour beside the object need not change anything: only
+where it stands in front of the rim does.)
+
+Affected contracts: `three-runtime/scene.md` (the layer, the depth copy, the pass, the invariants), `tests/scene.md`, `app/main.md` (the render
+loop), D24's layer list, and this file's §9.
+
 ## 9. Demo slice
 
 The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
@@ -1156,8 +1186,8 @@ deferred is deferred deliberately, not forgotten.
   cancel and a budget guard, and cancel leaves the raw model visible.
 - Toggle the raw mesh against the voxel result; assign one mask color per object.
 - Select and edit voxel objects: create, name, delete, hide, transform, reparent. In `Object` mode the object the gizmo is on is wrapped in a
-  yellow outline (`@pmndrs/vanilla`'s `Outlines` over that object's own instances), which comes and goes with the gizmo: it is decoration on
-  layer 1, so it is never picked, never exported, and never widens a framing (D39, D24).
+  yellow outline (`@pmndrs/vanilla`'s `Outlines` over that object's own instances), which comes and goes with the gizmo and is drawn in a pass of its
+  own over the finished frame, so the object alone cuts the rim (D39, D50): it is never picked, never exported, and never widens a framing.
 - Voxels: drag a box (anchor, opposite corner) to select it, or to add, remove, paint, or
   detach it as a new object; a click is a 1×1×1 box.
 - Viewport grid: one horizontal plane of shader-drawn lines on the world's ground, one white line per world unit and a

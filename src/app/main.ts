@@ -1108,9 +1108,6 @@ export function main(): void {
     // clip runs — and it is drawn only while the viewport is a different camera, since a camera cannot see itself
     // (README D46). A drag owns the pose until it commits, so the per-frame update stands back for it.
     cameraControl.setSelected(cameraControlSelected);
-    // Drawn while it is selected, and — with the follow option off — for the length of a run as well, so a run that
-    // leaves the editor camera alone still shows the camera moving along the clip. That display is temporary and
-    // selects nothing: a camera cannot see itself, so the follow case hides it like the locked case does (D46, D48).
     const observing = playback.playing && !followCamera;
     cameraControl.setVisible((cameraControlSelected || observing) && !cameraLocked);
     if (!(cameraControlSelected && controls.gizmoBusy())) {
@@ -1128,6 +1125,9 @@ export function main(): void {
     cameraControl.setScreenScale(viewingDistance);
     cameraPath.setScreenScale(viewingDistance);
     renderer.render(mirror.scene, renderCamera);
+    // The outline goes over the finished frame in a pass of its own, so the selected object alone cuts it (README D50).
+    // The locked output camera draws the export view, where no decoration belongs — the same reason its layers hold 0 only.
+    if (!cameraLocked) mirror.renderSelectionOutline(renderer, renderCamera);
     timelinePanel.setTime(playback.time * 1000);
     hud.update(hudState());
   }

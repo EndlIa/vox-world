@@ -57,9 +57,9 @@ No DOM and no GPU: the suite runs in the node environment.
 This file *is* the test, run by `npm test` in the node environment. It is the only coverage that constructs a
 real `SceneMirror` — `tests/timeline.test.ts` binds a stand-in root shaped like it, and nothing else in `tests/`
 imports the class — and it pins the two derived values a subdivision moves — the drawn cube and the content
-center — plus the selection outline: that a uniform object carries one hidden, that its hull is instanced through
-the mesh's own `instanceMatrix` and sits on the decoration layer, that `setSelected` shows exactly one object's
-outline and re-shows it after a rebuild, and that a transform-only object has none. The grid level and its derived
+center — plus the selection outline: that a uniform object carries one hidden, with a depth-only copy of its own instances beside it, that the hull is
+instanced through the mesh's own `instanceMatrix` and that both sit on the outline's own layer 3, that `setSelected` shows exactly one object's
+outline and copy — and re-shows them after a rebuild — and that a transform-only object has neither. The grid level and its derived
 `cellSize` are pinned in `tests/uniform.test.ts`; mask mode, the instance-to-cell lookup and picking through it, the
 layer-2 source meshes, `frameAll`, and material and lighting appearance are verified by running the application
 (README §10).

@@ -24,11 +24,12 @@ import { applyFaceBorder } from './faceGrid.js';
 /** The imported-source-mesh layer (README D24); `picking.ts` enables it on its raycaster too. */
 const SOURCE_LAYER = 2;
 /**
- * The viewport decoration layer (README D24): the selection outline lives here, so a pick cannot reach it and no
- * export frame contains it. It is the same number `grid.ts`, `overlay.ts`, `controls.ts`, and `cameraControl.ts`
- * use, and it is why wrapping the selected object in an outline cannot change what a click or an export sees.
+ * The selection outline's own layer (README D24, D50): the hull and the depth-only copy of the selected object's
+ * instances that cuts it to a rim live here, apart from the layer-1 decorations, because the outline is drawn in a pass
+ * of its own that must contain nothing else. A pick's raycaster and the export camera never test it, so an outline
+ * cannot change what a click or an export sees either.
  */
-const OVERLAY_LAYER = 1;
+const OUTLINE_LAYER = 3;
 /** The selected object's outline: yellow, which nothing else in the scene uses. */
 const SELECTION_COLOR = 0xffd400;
 /**
@@ -77,6 +78,12 @@ type MirrorEntry = {
    * node, so it follows the object's transform without any per-frame work.
    */
   outline: THREE.Group | undefined;
+  /**
+   * The depth the outline is cut against, present exactly when `outline` is: the object's own instances drawn with
+   * `colorWrite: false`, so the outline's pass sees this object's silhouette and nothing else (README D50). It shares
+   * the mesh's `instanceMatrix` — the same instances, not a copy — and is shown and hidden with `outline`.
+   */
+  outlineDepth: THREE.InstancedMesh | undefined;
 };
 
 /**
@@ -102,6 +109,8 @@ export class SceneMirror {
 
   private readonly project: Project;
   private readonly shadingMaterial: THREE.MeshLambertMaterial;
+  /** The outline pass's depth-only material, one instance shared by every object's silhouette copy (README D50). */
+  private readonly outlineDepthMaterial: THREE.MeshBasicMaterial;
   private readonly entries = new Map<ObjectId, MirrorEntry>();
   private readonly dirty = new Set<ObjectId>();
   private maskMode = false;
@@ -133,6 +142,9 @@ export class SceneMirror {
     // the mask pass swaps in a material of its own, so the border never reaches an identity frame (README D11).
     this.shadingMaterial = new THREE.MeshLambertMaterial();
     applyFaceBorder(this.shadingMaterial);
+
+    // No colour at all and no transparent tricks: this exists to leave depth, which is what cuts the hull to a rim.
+    this.outlineDepthMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true });
 
     const settings = project.camera;
     this.camera = new THREE.PerspectiveCamera(settings.fov, 1, settings.near, settings.far);
@@ -275,6 +287,37 @@ export class SceneMirror {
   }
 
   /**
+   * Draws the selected object's outline over the frame the caller has already rendered, and returns whether it drew.
+   *
+   * The outline has to be cut by the selected object's own silhouette and by nothing else (README D50). In the main pass
+   * the whole scene shares one depth buffer, so anything standing in front of the rim — a neighbour touching the object,
+   * or any geometry between the camera and it — clips the rim away. The pass therefore keeps the colour, clears the
+   * depth, and renders `OUTLINE_LAYER` alone, where the object's own depth copy and its hull are the only things that
+   * exist: the hull is then cut by that object and by nothing else, and stands over everything in front of it. The
+   * camera's layers, the auto-clear flag, and the scene's background are all restored before it returns.
+   */
+  renderSelectionOutline(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera): boolean {
+    const outline = this.selectedId === null ? undefined : this.entries.get(this.selectedId)?.outline;
+    if (outline === undefined || !outline.visible) return false;
+    const layers = camera.layers.mask;
+    const autoClear = renderer.autoClear;
+    const background = this.scene.background;
+    // A `Color` background forces a full clear even with `autoClear` off, which would wipe the frame this draws over.
+    this.scene.background = null;
+    camera.layers.set(OUTLINE_LAYER);
+    renderer.autoClear = false;
+    try {
+      renderer.clearDepth();
+      renderer.render(this.scene, camera);
+    } finally {
+      renderer.autoClear = autoClear;
+      camera.layers.mask = layers;
+      this.scene.background = background;
+    }
+    return true;
+  }
+
+  /**
    * Marks one object as the selected one: its outline is drawn and every other object's is hidden.
    *
    * The outline says which object the edit gizmo is on, so it belongs to object mode: the app clears it in edit mode
@@ -285,7 +328,9 @@ export class SceneMirror {
   setSelected(id: ObjectId | null): void {
     this.selectedId = id;
     for (const [objectId, entry] of this.entries) {
-      if (entry.outline !== undefined) entry.outline.visible = objectId === id;
+      const selected = objectId === id;
+      if (entry.outline !== undefined) entry.outline.visible = selected;
+      if (entry.outlineDepth !== undefined) entry.outlineDepth.visible = selected;
     }
   }
 
@@ -409,6 +454,7 @@ export class SceneMirror {
     this.maskMode = false;
     this.sourceVisibility = false;
     this.shadingMaterial.dispose();
+    this.outlineDepthMaterial.dispose();
   }
 
   /**
@@ -457,7 +503,7 @@ export class SceneMirror {
       const node = new THREE.Group();
       node.name = id;
       node.userData['objectId'] = id;
-      entry = { node, meshes: [], lookup: undefined, outline: undefined };
+      entry = { node, meshes: [], lookup: undefined, outline: undefined, outlineDepth: undefined };
     }
 
     this.entries.set(id, entry);
@@ -511,15 +557,27 @@ export class SceneMirror {
     mesh.add(outline.group);
     outline.generate();
     outline.group.traverse((child) => {
-      child.layers.set(OVERLAY_LAYER);
+      child.layers.set(OUTLINE_LAYER);
     });
     outline.group.visible = this.selectedId === id;
+
+    // The depth the outline's pass cuts the hull against (README D50): the object's own instances with colour off, so
+    // the hull is clipped by this object's silhouette alone — no other object's depth is in that pass, which is what
+    // keeps the rim whole along a shared boundary. Sharing the instance matrix makes it the same instances, not a copy,
+    // and the hull draws after it (its render order 1 against this 0), so the depth it leaves is already there.
+    const outlineDepth = new THREE.InstancedMesh(geometry, this.outlineDepthMaterial, grid.size);
+    outlineDepth.instanceMatrix = mesh.instanceMatrix;
+    outlineDepth.frustumCulled = false;
+    outlineDepth.layers.set(OUTLINE_LAYER);
+    outlineDepth.visible = this.selectedId === id;
+    mesh.add(outlineDepth);
 
     return {
       node: mesh,
       meshes: [{ mesh, instanceColor: null, maskMaterial: null }],
       lookup: cells.length === 0 ? undefined : { objectId: id, cells, colors },
       outline: outline.group,
+      outlineDepth,
     };
   }
 
@@ -564,6 +622,8 @@ export class SceneMirror {
     entry.meshes = [];
     entry.lookup = undefined;
     entry.outline = undefined;
+    // The depth copy shares the mesh's geometry and the mirror's material, so it owns nothing to release.
+    entry.outlineDepth = undefined;
     entry.node.removeFromParent();
   }
 }
