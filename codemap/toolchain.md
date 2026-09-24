@@ -75,8 +75,10 @@ pieces of chrome the panel overlay is built from, because they are layout rather
 positioned 112 px box at the top-left of the window which takes no space from `#viewport` — that is what keeps the canvas at
 the full window width — and it is `pointer-events: none` with `pointer-events: auto` on its children, so only the rail
 buttons and the status boxes take a press and the rest reaches the canvas; `.rail` is ordered first inside it, which is what
-puts the buttons above the status line `main.ts` appended before the panel existed; `.window` is the fixed-position
-floating window (`z-index: 15`, above `#hud` at 10) with a draggable title bar and a scrolling body whose `hr` is drawn as a
+puts the buttons above the status line `main.ts` appended before the panel existed, and `.rail` also carries `z-index: 30`, above
+every window: a window opens over the same corner the rail occupies, and a covered rail button cannot be pressed at all, so the
+rail is the one surface the windows may never take. `.window` is the fixed-position
+floating window (`z-index: 15`, above `#hud` at 10, raised on a press and on being opened) with a draggable title bar and a scrolling body whose `hr` is drawn as a
 `--line` rule, which is how a group divides what acts on every object from what acts on the selected one; and
 `dialog`/`dialog::backdrop` are the voxelize modal's, and only its look: the reset that drops
 the platform's border, padding, background, and color, so the `section` the dialog builds is the card, and the translucent

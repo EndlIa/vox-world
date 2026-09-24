@@ -107,6 +107,9 @@ export class FloatingWindow {
     if (this.opened === open) return;
     this.opened = open;
     this.root.hidden = !open;
+    // A window that comes on screen comes to the front: the windows overlap by design (they are staggered around the
+    // same corner), so one opened under another could not be pressed at all until the user dragged the top one away.
+    if (open) this.raise();
     this.onVisibilityChange(open);
   }
 

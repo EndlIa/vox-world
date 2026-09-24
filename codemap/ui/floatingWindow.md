@@ -38,8 +38,11 @@ class FloatingWindow {
    `pointerdown` on the root raises the window, and `click` on the close button closes it. A press on the close button is inside the title bar,
    so `beginDrag` returns early for it instead of cancelling it — cancelling that pointer event would swallow the click that does the closing.
 3. `open()`, `close()`, and `toggle()` all end in `setOpen(open)`: an unchanged state returns immediately, otherwise it stores the flag, writes
-   `root.hidden = !open`, and calls `onVisibilityChange(open)`. Visibility is the `hidden` attribute alone: no node is created, removed, emptied,
-   or re-parented, and the position is untouched, so the window's rectangle is the same when it is shown again.
+   `root.hidden = !open`, **raises the window when it is being shown**, and calls `onVisibilityChange(open)`. The raise is what makes a window
+   usable at all: the windows are staggered around one corner and therefore overlap, so a window shown under another could not be pressed — its
+   buttons would receive nothing while the covering window took the press — until the user dragged the top one away. Visibility is the `hidden`
+   attribute alone: no node is created, removed, emptied, or re-parented, and the position is untouched, so the window's rectangle is the same when
+   it is shown again.
 4. `beginDrag(event)` ignores anything that is not a primary-button `PointerEvent`, then cancels the pointer event (so the browser starts no text
    selection drag instead of the window move), ends any drag still in flight, raises the window, and remembers `event.clientX/clientY` together
    with the root's `getBoundingClientRect()` left and top. `pointermove` and `pointerup` go on `window` — never on the canvas, and no pointer

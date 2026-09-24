@@ -41,7 +41,10 @@
       /* The rail is the overlay's first row whatever order the app added nodes in: the app appends its status
          line to this element before the panel is constructed, so document order alone would put that text
          above the buttons. */
-      .rail { order: -1; display: flex; flex-direction: column; gap: 4px; }
+      /* The rail is the one control surface that must never be covered: a window opens over the same corner it does, and
+         a window's ladder stops at 20, so the rail sits above it. The modal is a native `dialog` in the top layer and is
+         above both whatever these numbers are. */
+      .rail { order: -1; display: flex; flex-direction: column; gap: 4px; position: relative; z-index: 30; }
       .rail button { width: 100%; text-align: left; }
       /* The status text, the progress row, and the error line are read over the canvas, so each carries its
          own translucent ground — the same treatment `#hud` gets. An empty one is not shown at all: the
