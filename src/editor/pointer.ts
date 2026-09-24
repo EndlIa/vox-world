@@ -4,6 +4,7 @@ import { addBox, detachSelection, paintBox, removeBox } from './ops.js';
 import type { OpResult } from './ops.js';
 import type { PickHit, Picker } from '../three-runtime/picking.js';
 import type { Overlay } from '../three-runtime/overlay.js';
+import type { IntBox3 } from '../voxels/uniform/grid.js';
 import { KEY_MAX, KEY_MIN, normalizeBox } from '../voxels/uniform/grid.js';
 import { Matrix3, Matrix4, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
@@ -43,6 +44,10 @@ type DragState = {
   cell: number;
   anchorCell: [number, number, number];
   cornerCell: [number, number, number];
+  /** The one cell a press steps out of the pressed face, `[0, 0, 0]` for the tools that take the seen cell. */
+  outer: [number, number, number];
+  /** Whether a tracked move happened: it is what arms the add wall, so a click stays a point edit. */
+  dragging: boolean;
   plane: Plane;
   /** The pressed face's normal in the object's own frame, or none when the raycast reported no face. */
   normal: Vector3 | undefined;
@@ -50,11 +55,61 @@ type DragState = {
   toLocal: Matrix4;
 };
 
-/** The cell a local point addresses: min-corner convention (README D20), floored after dividing by the cell size,
- *  and held inside the packed key space, the only range a cell may come from at all (README D41, D43). */
+/** Holds one cell inside the packed key space, the only range a cell may come from at all (README D41, D43). */
+function holdCell(value: number): number {
+  return Math.min(KEY_MAX, Math.max(KEY_MIN, value));
+}
+
+/** The cell a local point addresses: min-corner convention (README D20), floored after dividing by the cell size. */
 function cellOfLocal(pointLocal: Vector3, cell: number): [number, number, number] {
-  const hold = (value: number): number => Math.min(KEY_MAX, Math.max(KEY_MIN, Math.floor(value / cell)));
-  return [hold(pointLocal.x), hold(pointLocal.y), hold(pointLocal.z)];
+  return [
+    holdCell(Math.floor(pointLocal.x / cell)),
+    holdCell(Math.floor(pointLocal.y / cell)),
+    holdCell(Math.floor(pointLocal.z / cell)),
+  ];
+}
+
+/**
+ * The cell the `add` tool steps out of the pressed face: the face normal's dominant axis, one cell out
+ * (shithill's `posNorm`). Every other tool takes the cell the pick named, so `paint` and `remove` address what
+ * the user sees while `add` writes the empty layer in front of it — a press on a face of a solid adds a cell
+ * instead of repainting one. A hit whose raycast reported no face has no outward direction to step in, so the
+ * offset is `[0, 0, 0]` and the press takes the cell it named.
+ */
+function outerCell(tool: ActiveTool, normal: Vector3 | undefined): [number, number, number] {
+  if (tool !== 'add' || normal === undefined) return [0, 0, 0];
+  const axis = Math.abs(normal.x) >= Math.abs(normal.y) && Math.abs(normal.x) >= Math.abs(normal.z) ? 0
+    : Math.abs(normal.y) >= Math.abs(normal.z) ? 1
+      : 2;
+  const step: [number, number, number] = [0, 0, 0];
+  step[axis] = normal.getComponent(axis) < 0 ? -1 : 1;
+  return step;
+}
+
+/**
+ * The box a press commits: the cells the pick named, stepped out of the pressed face by `outer`, and — for a
+ * tracked drag with `height > 1` — stretched along that same axis to `height` cells (README D19: the add wall).
+ * A click (`tracked` false) is one cell whatever the height says, so point editing needs no second mode.
+ */
+function dragBox(
+  anchor: readonly [number, number, number],
+  corner: readonly [number, number, number],
+  outer: readonly [number, number, number],
+  tracked: boolean,
+  height: number,
+): IntBox3 {
+  const step = (cell: readonly [number, number, number]): [number, number, number] => [
+    holdCell(cell[0] + outer[0]),
+    holdCell(cell[1] + outer[1]),
+    holdCell(cell[2] + outer[2]),
+  ];
+  const box = normalizeBox(step(anchor), step(corner));
+  if (!tracked || height <= 1) return box;
+  const max: [number, number, number] = [box.max[0], box.max[1], box.max[2]];
+  if (outer[0] !== 0) max[0] = holdCell(box.min[0] + height - 1);
+  else if (outer[1] !== 0) max[1] = holdCell(box.min[1] + height - 1);
+  else if (outer[2] !== 0) max[2] = holdCell(box.min[2] + height - 1);
+  return { min: box.min, max };
 }
 
 /** Scratch, so a pointer move allocates nothing: the drag's ray, its plane hit, that point in cell space, and the
@@ -155,13 +210,14 @@ export class PointerTool {
       return;
     }
     // The shape the select tool is set to is what the press selects; the region is one cell until a drag
-    // extends it.
+    // extends it, and `add` steps that cell out of the pressed face so its press writes empty space (README D19).
+    const outer = outerCell(this.session.activeTool, hit.normal);
     this.session.setSelection({
       kind: this.session.selectionShape,
       objectId: hit.objectId,
-      box: normalizeBox(hit.cell, hit.cell),
+      box: dragBox(hit.cell, hit.cell, outer, false, this.session.addHeight),
     });
-    this.armDrag(event.pointerId, hit);
+    this.armDrag(event.pointerId, hit, outer);
     this.paintSelection();
     this.callbacks.onSessionChange();
   };
@@ -178,7 +234,7 @@ export class PointerTool {
     if (!this.pressActive) return;
     this.pressActive = false;
     if (drag !== null) {
-      const box = normalizeBox(drag.anchorCell, drag.cornerCell);
+      const box = dragBox(drag.anchorCell, drag.cornerCell, drag.outer, drag.dragging, this.session.addHeight);
       this.session.setSelection({ kind: 'box', objectId: drag.objectId, box });
     }
     this.commit();
@@ -201,14 +257,14 @@ export class PointerTool {
   }
 
   /** Arms a box drag only in edit mode, for a box-dragging tool, on a uniform object; otherwise the click stands. */
-  private armDrag(pointerId: number, hit: Extract<PickHit, { kind: 'cell' }>): void {
+  private armDrag(pointerId: number, hit: Extract<PickHit, { kind: 'cell' }>, outer: [number, number, number]): void {
     if (this.session.mode !== 'edit' || !BOX_TOOLS[this.session.activeTool]) return;
     // Only a uniform object has cells to address; a group or a fresh import has nothing to drag over.
     const grid = this.project.get(hit.objectId)?.uniform;
     if (grid === undefined) return;
     // The anchor is the cell the instance lookup named, so a press on a face addresses the cell the user sees
     // rather than its neighbour: a face hit reports a point on that face's own plane, and flooring such a point
-    // names the cell past the face (README D20).
+    // names the cell past the face (README D20). `outer` is what `dragBox` steps that box out with for `add`.
     const worldMatrix = this.project.worldMatrix(hit.objectId);
     const worldNormal =
       hit.normal === undefined
@@ -220,6 +276,8 @@ export class PointerTool {
       cell: grid.cellSize,
       anchorCell: [hit.cell[0], hit.cell[1], hit.cell[2]],
       cornerCell: [hit.cell[0], hit.cell[1], hit.cell[2]],
+      outer,
+      dragging: false,
       plane: new Plane().setFromNormalAndCoplanarPoint(worldNormal, hit.point),
       normal: hit.normal?.clone(),
       toLocal: worldMatrix.invert(),
@@ -246,8 +304,11 @@ export class PointerTool {
         drag.cornerCell = cellOfLocal(_localHit, drag.cell);
       }
     }
-    // The box the drag has drawn so far: inclusive on both corners, in the anchor object's cells (D19).
-    const box = normalizeBox(drag.anchorCell, drag.cornerCell);
+    // The box the drag has drawn so far: inclusive on both corners, in the anchor object's cells, stepped out of
+    // the pressed face when the tool is `add` and stretched to the session's wall height once a move happened
+    // (D19).
+    drag.dragging = true;
+    const box = dragBox(drag.anchorCell, drag.cornerCell, drag.outer, drag.dragging, this.session.addHeight);
     this.overlay.showBox(box, this.project.worldMatrix(drag.objectId), drag.cell);
   }
 

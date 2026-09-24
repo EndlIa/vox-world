@@ -238,7 +238,11 @@ SceneObject {
 - **Uniform region selection is an axis-aligned integer box**, as in shithill's Box tool: the anchor
   is taken where the pointer goes down, the opposite corner follows the pointer, and both resolve to
   integer cell coordinates in the object's local grid, inclusive on both corners and one cell deep on the
-  axis the drag runs along, so what the pointer draws is what commits (D19, D36). A single click is the
+  axis the drag runs along, so what the pointer draws is what commits for the tools that take the seen cells (D19, D36). `add`'s box is that region
+  stepped one cell out of the pressed face — its anchor is the empty cell the face opens onto, which is
+  shithill's `posNorm` — and a tracked drag with the Edit group's `Add wall` field above one builds it that
+  many cells deep along the same face normal (D19), while `select`, `paint`, and `remove` take the cells the
+  pointer named, so a press on a face edits what the user sees. A single click is the
   degenerate 1×1×1 box, so point editing needs no separate tool. In edit mode `select` consumes that box as the selection
   and writes nothing; `add`, `paint`, and `remove` apply an operation to it, and the box volume is checked against the
   budget before anything is written. Detaching that region is a command on it rather than a fourth mode — the Edit
@@ -372,7 +376,15 @@ and none is built for the demo. Repainting an occupied cell simply replaces its 
 integer box in the object's local grid: anchor at pointer-down, opposite corner following the
 pointer (shithill's Box tool: `box_add`/`box_remove` take `startBox` on pointer-down and `boxShape`
 derives the integer min/max corners; a drag that exceeds `MAX_VOXELS_DRAW` is abandoned rather than
-clamped). Its fixed-height field is not carried over — that override is gone (D36). The `select` tool drags the same
+clamped). **Revised — `add`'s box is the one in front of the pressed face.** `add` anchors on the empty
+cell the pressed face opens onto, which is shithill's `posNorm` (`addNoHelper(this.posNorm)`), so a press
+on a face of a solid adds a cell there instead of repainting the cell the pick named — the regression the
+user reported: with the anchor on the seen cell the whole box lay in the pressed cell's layer, so `add` on
+a surface only recolored. The Edit group's `Add wall` field is back with it, as the add tool's own
+thickness (D36): a tracked drag whose height is above one builds that many cells deep along the same face
+normal, and a click stays one cell at any height. The field is scoped to `add` alone, so the objection D36
+recorded — a drag committing something other than what the pointer described — does not return for
+`select`, `paint`, or `remove`, whose boxes remain exactly the cells the pointer named. The `select` tool drags the same
 region and keeps it as the selection, writing nothing; add, remove, paint, and detach consume it as the operands of an
 edit; and a click is the degenerate 1×1×1 box. Deliberately excluded: screen-space marquee selection with a surface-only
 versus all-depth policy (shithill's `rect_*`), and flood-fill or connected-component picking. Both
@@ -584,7 +596,7 @@ library swizzles the quad into the ground plane on its own, and the floor of the
 wall; the app then drew no grid at all, which is how the mistake was caught and why the two halves are pinned by a test
 now.)
 
-**D36 — The box drag has no height override.** The Edit group used to carry a `Box height` field: a value
+**D36 — The box drag has no height override, except the `add` tool's wall.** The Edit group used to carry a `Box height` field: a value
 above one forced the dragged box's third axis to `[anchor.y, anchor.y + height - 1]`, turning a surface drag
 into a slab of a chosen thickness. The user asked for it to go — it was the one control in that group whose
 meaning was not self-evident, and the only reason a drag could commit something other than what the pointer
@@ -592,6 +604,18 @@ described. A drag now always commits exactly the box it drew, one cell deep on t
 column of a chosen height is built by dragging in the plane that spans it, or by repeating the box. The field
 left `EditorSession` with it, and so did `DragState.dragging`, whose only reader was the override — the
 degenerate 1×1×1 click falls out of the corner cell never leaving the anchor cell.
+
+**Revised — the field is back, as the `add` tool's own.** The user asked for it again once `add` anchored
+in the empty layer in front of the pressed face (D19): there, a thickness is what turns a surface drag into
+a wall instead of a single layer. It returns as `EditorSession.addHeight` — `setAddHeight`, whole cells at
+least one, `1` meaning the one layer the face opens onto and no override at all — rendered by the Edit
+group's `Add wall` field, and the flag that arms it returns with it as `DragState.dragging`, again set by a
+tracked move. What does not return is its reach: `paint`, `remove`, and `select` still commit exactly the
+box the pointer drew, one cell deep, so the objection this decision recorded is answered by scoping the
+override to the one tool whose purpose is to add cells. The height runs along the pressed face's normal
+rather than the world's +y as shithill's `fixedHeight` did, because the anchor is that face's own front
+layer and the wall should stand out of the face the user pressed, whichever it is.
+
 **D38 — No message area: the app has no status line, no progress row, and no error line.** The editor kept three
 text rows in the left overlay — the app's status line (`importing …`, `imported N nodes`, `voxelized N cells`,
 `rendered N frames`, `moving <object>`), the panel's progress row (`voxelizing 67%`, `frame 3/300`) and its error
@@ -1216,7 +1240,9 @@ deferred is deferred deliberately, not forgotten.
   yellow outline (`@pmndrs/vanilla`'s `Outlines` over that object's own instances), which comes and goes with the gizmo and is drawn in a pass of its
   own over the finished frame, so the object alone cuts the rim (D39, D50): it is never picked, never exported, and never widens a framing.
 - Voxels: drag a box (anchor, opposite corner) to select it, or to add, remove, paint, or
-  detach it as a new object; a click is a 1×1×1 box.
+  detach it as a new object; a click is a 1×1×1 box. `add` writes the box in front of the face it pressed —
+  one cell on a click, and a wall `Add wall` cells deep on a drag — while `select`, `paint`, and `remove`
+  take the cells the pointer names (D19, D36).
 - Viewport grid: one horizontal plane of shader-drawn lines on the world's ground, one white line per world unit and a
   brighter one every twenty cells, switched by the Grid group's `World grid` box (D35). It is decoration: layer 1, never
   picked, never exported, and outside framing's measurement. Every voxel face also carries a one-pixel border at 22% of

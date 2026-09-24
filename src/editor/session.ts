@@ -52,6 +52,8 @@ export class EditorSession {
   selection: Selection;
   /** Add and paint color, the appearance channel (never `SceneObject.maskColor`). */
   editColor: HexColor;
+  /** How many cells deep an `add` drag builds out of the pressed face; `1` is that face's one empty layer. */
+  addHeight: number;
 
   private readonly project: Project;
   private readonly listeners = new Set<() => void>();
@@ -64,6 +66,7 @@ export class EditorSession {
     this.selectionShape = 'box';
     this.selection = { kind: 'none' };
     this.editColor = WHITE;
+    this.addHeight = 1;
   }
 
   /** Reads the project on every call, so the reported resolution cannot go stale. */
@@ -149,6 +152,18 @@ export class EditorSession {
       throw new RangeError(`edit color out of range: ${color}`);
     }
     this.editColor = color;
+    this.notify();
+  }
+
+  /**
+   * How deep an `add` drag builds. `1` is the box every drag draws — the one layer in front of the pressed face —
+   * so it is the value that means no override: only a field above one makes the drag commit a wall (README D19).
+   */
+  setAddHeight(height: number): void {
+    if (!Number.isInteger(height) || height < 1) {
+      throw new RangeError(`add height is not a whole number of cells: ${height}`);
+    }
+    this.addHeight = height;
     this.notify();
   }
 

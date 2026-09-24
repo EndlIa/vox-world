@@ -83,7 +83,7 @@ class Panels {
 ## Internal logic
 1. The constructor builds every control once through `el` and places each group's controls in that group's own window: the
    import group (an import button, a dim line saying a `.glb` can be dropped on the viewport, and a `Show raw meshes`
-   checkbox), the edit group (a `row` of the four `ActiveTool` tool buttons the `edit` mode uses, the `detachButton` in a `row` of its own directly under them — a plain button that is never a tool: its click is `context.actions.detachSelection()` and nothing else, no click writes a tool, and `refresh()` never gives it the `on` class — then the `Select` field — the shapes a press can select, `box` alone so far — and the `Color` field), the camera group (the the carrier's controls checkbox with a dim line saying what it does, the the carrier's controls checkbox directly after that hint and ahead of the `hr`, then a `row` of the carrier's `Select`/`Deselect` and mode buttons, a `row` of `Camera -> View` and `View -> Camera`, the `Show camera path` checkbox, a `row` of `X`, `Y`, and `Z` fields, a `row` of `QX`, `QY`, `QZ`, and `QW` fields, and the `FOV (deg)` number input), the export group shown as `Render` (a
+   checkbox), the edit group (a `row` of the four `ActiveTool` tool buttons the `edit` mode uses, the `detachButton` in a `row` of its own directly under them — a plain button that is never a tool: its click is `context.actions.detachSelection()` and nothing else, no click writes a tool, and `refresh()` never gives it the `on` class — then the `Select` field — the shapes a press can select, `box` alone so far — the `Add wall` field — the add tool's own thickness in cells, a number input seeded from `session.addHeight` — and the `Color` field), the camera group (the the carrier's controls checkbox with a dim line saying what it does, the the carrier's controls checkbox directly after that hint and ahead of the `hr`, then a `row` of the carrier's `Select`/`Deselect` and mode buttons, a `row` of `Camera -> View` and `View -> Camera`, the `Show camera path` checkbox, a `row` of `X`, `Y`, and `Z` fields, a `row` of `QX`, `QY`, `QZ`, and `QW` fields, and the `FOV (deg)` number input), the export group shown as `Render` (a
    resolution select, fps, `from`, and `to` inputs, a beauty/mask mode select, and its `Render MP4` button), and the objects group
    shown as `Scene`, which is two halves in one window: above a plain `hr`, the `Create group` button and the object list — the
    part that chooses among every object — and below it the active object's `Mask color`, `Parent`, `Name`, `Visible`, `Grid align`, and `Subdivision` fields,
@@ -125,7 +125,7 @@ class Panels {
    reopened window shows the current state.
 5. `refresh()` re-reads `project` and `session` and rewrites text, `value`, and `disabled` state: object rows from `project.roots()` and
    `childrenOf()` with `session.activeObjectId` marked and its row carrying the trash button that deletes it, representation from `object.representation`, resolution from `session.resolutionOf(id)`,
-   pressed state from `session.activeTool`, and `disabled` in the tool area for `detachButton` alone — `disabled` exactly while `session.selection.kind === 'none'`, because the region it commands is the one the `Select` tool already chose, so with no selection there is nothing for it to detach, while the tool buttons are never disabled — as well as for the rail's `Edit` button, which needs an active object for the mode it selects; the `Select` field from `session.selectionShape`, colors from `session.editColor` and `object.maskColor`, the parent
+   pressed state from `session.activeTool`, and `disabled` in the tool area for `detachButton` alone — `disabled` exactly while `session.selection.kind === 'none'`, because the region it commands is the one the `Select` tool already chose, so with no selection there is nothing for it to detach, while the tool buttons are never disabled — as well as for the rail's `Edit` button, which needs an active object for the mode it selects; the `Select` field from `session.selectionShape`, colors from `session.editColor` and `object.maskColor`, the `Add wall` field from `session.addHeight`, the parent
    select from `object.parentId`, and the `Subdivision` select from that same resolution: `refresh()` writes
    `resolution.subdivision` into it and disables the select whenever the resolution carries none, because an object with no uniform
    grid has no cell to subdivide, and it disables every option below the level the object holds, so the select can only offer that
@@ -139,8 +139,8 @@ class Panels {
    `refresh()` clears that flag whenever the active object is not the one the field is showing, so a re-selection always re-seeds instead of leaving
    the previous object's text behind, and it is emptied while nothing is active.
 7. The only direct writes are `session` setters driven by user input: object rows call `session.setActiveObject(id)`, tool buttons call
-   `session.setTool(tool)`, the `Select` field calls `session.setSelectionShape(shape)` once its value is matched back against the shape list, and the `Color` field calls `session.setEditColor(hex)` with `parseInt(value.slice(1,
-   16)`. The `detach` button writes no session state at all: its click is `context.actions.detachSelection()` and nothing else, because that
+   `session.setTool(tool)`, the `Select` field calls `session.setSelectionShape(shape)` once its value is matched back against the shape list, the `Color` field calls `session.setEditColor(hex)` with `parseInt(value.slice(1,
+   16)`, and the `Add wall` field calls `session.setAddHeight(height)` with a `Number` that is a whole number at least one — a blank, fractional, or negative field is ignored so the session keeps the height it had while the field is retyped, which is why the setter's own `RangeError` is unreachable from here. The `detach` button writes no session state at all: its click is `context.actions.detachSelection()` and nothing else, because that
    button is a command on the region the `Select` tool already chose rather than a tool choice (README D19, D23), so pressing it runs the
    operation and leaves no mode behind. No `project` mutator and no `editor/ops.ts` function is called here.
 8. Project-changing intent leaves as callbacks: `pickImportFile()`, `saveProject()`, `openProject()`, `exportMp4(options)`, `createGroup()`,
@@ -187,7 +187,7 @@ class Panels {
 
 ## Invariants
 - The panel calls no `Project` mutator and no `editor/ops.ts` operation: after any interaction the project is exactly what the app left it; its only
-  direct mutations are `EditorSession` setters driven by user input (`setActiveObject`, `setTool`, `setEditColor`).
+  direct mutations are `EditorSession` setters driven by user input (`setActiveObject`, `setTool`, `setSelectionShape`, `setEditColor`, `setAddHeight`).
 - No voxelize setting is reachable from the panel, and neither is the dialog (README D26): it has no representation, voxel size, cell size, root size,
   or max depth control, and no button, checkbox, or field that opens the settings modal. The panel never builds a `VoxelizeTarget`, never decides how
   much of the scene to voxelize, and never starts or cancels a job — all of that is the dialog's answer and the app's reaction to it, and the dialog
@@ -275,7 +275,7 @@ never sees a value it would refuse (README D49).
   visibility itself.
 - `../document/project.js` — `Project`, `ObjectId` for the object read-out and the reparent target.
 - `../editor/session.js` — `EditorSession`, `ActiveTool`; the non-project state the panel reads and writes through its setters, including the
-  `editColor` shared with the add and paint tools, and `EditResolution` for the cells a row reports (README D41) and the level the subdivision select shows.
+  `editColor` shared with the add and paint tools, the `addHeight` the add tool's drag reads (README D19, D36), and `EditResolution` for the cells a row reports (README D41) and the level the subdivision select shows.
 - `../voxels/uniform/grid.js` — `HexColor` for the color inputs and the mask-color action. The panel no longer names `VoxelizeTarget`, so
   `../voxels/voxelize/voxelize.js` is no longer imported here.
 - Mask color, the name, visibility, reparenting, the FOV, and the raw-mesh override arrive as `PanelContext` callbacks

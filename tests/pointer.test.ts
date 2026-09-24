@@ -116,7 +116,7 @@ describe('box drag', () => {
     scene.pointer.dispose();
   });
 
-  it('carries the box through empty space when the pointer leaves the model', () => {
+  it('carries an add drag through empty space one layer out of the pressed face', () => {
     const scene = fixture();
     scene.session.setTool('add');
     scene.session.setEditColor(0xff0000);
@@ -129,16 +129,90 @@ describe('box drag', () => {
     scene.up(0.5);
 
     const grid = scene.project.get(scene.objectId)!.uniform!;
-    // The far corner is the cell the ray's plane hit landed in, one cell past the 2 x 2 x 2 block, and the two axes
-    // the drag did not travel stay on the pressed cell rather than drifting one past the face.
-    expect(grid.getColor(2, 0, 0)).toBe(0xff0000);
-    expect(grid.getColor(1, 0, 0)).toBe(0xff0000);
-    // Cells of the block that the box did not cover keep their own color, so the box stayed one cell deep on the two
-    // axes the drag did not travel.
+    // The box is the cells the pick named stepped one cell out of the pressed `+z` face: the far corner is the cell
+    // the ray's plane hit landed in, and the two axes the drag did not travel stay on the pressed cell.
+    expect(grid.getColor(2, 0, 1)).toBe(0xff0000);
+    expect(grid.getColor(0, 0, 1)).toBe(0xff0000);
+    // The pressed cell itself is untouched, and so is the rest of the block: `add` wrote the empty layer in front of
+    // the face rather than repainting the cells the pointer crossed.
+    expect(grid.getColor(0, 0, 0)).toBe(0x3366ff);
+    expect(grid.getColor(1, 0, 0)).toBe(0x3366ff);
     expect(grid.getColor(1, 1, 0)).toBe(0x3366ff);
-    expect(grid.getColor(1, 0, 1)).toBe(0x3366ff);
-    // Exactly one cell was created, the far corner past the block's face.
+    // Exactly one cell was created, at the far corner of that layer.
     expect(grid.size).toBe(9);
+    scene.pointer.dispose();
+  });
+
+  it('adds one cell out of the pressed face on a click, instead of repainting the cell it hit', () => {
+    const scene = fixture();
+    scene.session.setTool('add');
+    scene.session.setEditColor(0xff0000);
+    scene.setHit(faceHit([1, 1, 1]));
+    scene.down(0);
+    scene.up(0);
+
+    const grid = scene.project.get(scene.objectId)!.uniform!;
+    // The click is the degenerate 1x1x1 box, stepped out of the `+z` face: the cell the user sees keeps its color
+    // and the empty cell in front of it is what `add` writes.
+    expect(grid.getColor(1, 1, 2)).toBe(0xff0000);
+    expect(grid.getColor(1, 1, 1)).toBe(0x3366ff);
+    expect(grid.size).toBe(9);
+    expect(scene.session.selection).toEqual({
+      kind: 'box',
+      objectId: scene.objectId,
+      box: { min: [1, 1, 2], max: [1, 1, 2] },
+    });
+    scene.pointer.dispose();
+  });
+
+  it('paints the cell the pick named, with no step out of the face', () => {
+    const scene = fixture();
+    scene.session.setTool('paint');
+    scene.session.setEditColor(0xff0000);
+    scene.setHit(faceHit([1, 1, 1]));
+    scene.down(0);
+    scene.setHit(undefined);
+    scene.move(0.5);
+    scene.up(0.5);
+
+    const grid = scene.project.get(scene.objectId)!.uniform!;
+    // Only the cells the box covered are recolored, and the box is the seen cells: a paint drag creates nothing, so
+    // the two cells of the block it crossed change color and the empty ones the plane reached stay empty.
+    expect(grid.getColor(1, 1, 1)).toBe(0xff0000);
+    expect(grid.getColor(1, 0, 1)).toBe(0xff0000);
+    expect(grid.getColor(2, 1, 1)).toBeUndefined();
+    expect(grid.getColor(2, 0, 1)).toBeUndefined();
+    expect(grid.size).toBe(8);
+    scene.pointer.dispose();
+  });
+
+  it('builds the wall height along the pressed face normal on a tracked drag, and not on a click', () => {
+    const scene = fixture();
+    scene.session.setTool('add');
+    scene.session.setEditColor(0xff0000);
+    scene.session.setAddHeight(3);
+    // A click stays one cell at any height...
+    scene.setHit(faceHit([1, 1, 0]));
+    scene.down(0);
+    scene.up(0);
+    const grid = scene.project.get(scene.objectId)!.uniform!;
+    expect(grid.getColor(1, 1, 1)).toBe(0xff0000);
+    expect(grid.getColor(1, 1, 2)).toBeUndefined();
+
+    // ...while a drag whose pick never leaves the anchor cell builds three cells out of the face.
+    scene.setHit(faceHit([0, 0, 0]));
+    scene.down(0);
+    scene.setHit(faceHit([0, 0, 0]));
+    scene.move(0.1);
+    scene.up(0.1);
+    expect(scene.session.selection).toEqual({
+      kind: 'box',
+      objectId: scene.objectId,
+      box: { min: [0, 0, 1], max: [0, 0, 3] },
+    });
+    expect(grid.getColor(0, 0, 2)).toBe(0xff0000);
+    expect(grid.getColor(0, 0, 3)).toBe(0xff0000);
+    expect(grid.size).toBe(10);
     scene.pointer.dispose();
   });
 });

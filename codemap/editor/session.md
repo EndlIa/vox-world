@@ -26,6 +26,7 @@ class EditorSession {
   selectionShape: SelectionShape;
   selection: Selection;
   editColor: HexColor;                                 // paint/box color, set from the UI
+  addHeight: number;                                   // cells deep an add drag builds out of the face it pressed
   resolutionOf(objectId: ObjectId): EditResolution | undefined;
   setActiveObject(id: ObjectId | null): void;
   setMode(mode: EditorMode): void;
@@ -33,13 +34,14 @@ class EditorSession {
   setSelectionShape(shape: SelectionShape): void;
   setSelection(selection: Selection): void;
   setEditColor(color: HexColor): void;
+  setAddHeight(height: number): void;
   subscribe(listener: () => void): () => void;
   notify(): void;
 }
 ```
 
 ## Internal logic
-1. Construction keeps the `Project` and initializes `activeObjectId = null`, `activeTool = 'select'`, `selection = { kind: 'none' }`, `editColor = 0xffffff`, `listeners = new Set<() => void>()`.
+1. Construction keeps the `Project` and initializes `activeObjectId = null`, `activeTool = 'select'`, `selection = { kind: 'none' }`, `editColor = 0xffffff`, `addHeight = 1`, `listeners = new Set<() => void>()`.
 2. `notify()` iterates a copy of the set, so a listener that subscribes or unsubscribes during the fan-out cannot corrupt the iteration or skip a sibling. It is synchronous, and every mutator calls it exactly once after the new state is fully assigned.
 3. `setActiveObject(null)` clears the active object, the selection, and the mode: it assigns `mode = 'object'` as well, because the edit mode
    edits one object's voxels and has nothing to do without one — which is what lets the UI disable both ways into it while nothing is active
@@ -50,8 +52,9 @@ class EditorSession {
 6. `setTool` only assigns and notifies. It does not clear the selection, because the box tools — `select`, `add`, `paint` and `remove` — all share the same region; a detach is a command on the selected region rather than a tool, so it is not in the union at all (README D19).
 7. `setSelectionShape(shape)` only assigns and notifies, like `setTool`: the shapes are a closed union, so there is nothing to validate. The shape is what `pointer.ts` builds a selection as when a press hits an object, which is why `box` is the only value and the only variant `Selection` has (README D19).
 8. `setEditColor(color)` assigns and notifies. The color is the *appearance* channel the add and paint operations write (`HexColor`, `0xRRGGBB`, README D14) and has nothing to do with `SceneObject.maskColor`, which is the identity channel (README D11). The session stores it so the paint tool has no hidden constant: `pointer.ts` reads `session.editColor` at commit time.
-9. `resolutionOf` reads the project on every call, so the reported resolution cannot go stale: `undefined` for an unknown id; `{ representation: 'empty' }` for a node whose representation carries no payload — a transform-only node, or a uniform object whose grid has not been attached yet; and for a uniform object that has a grid, `{ representation: 'uniform', subdivision: grid.subdivision }`, because the subdivision is a property of the grid and is reported whenever one is attached, occupied or not (README D43). `cells` is added on top of that, derived from `grid.bounds()` as `bounds.max[i] - bounds.min[i] + 1` per axis, while the grid holds at least one occupied cell, and there is no `cells` while it holds none — the counts need an occupied cell to have a size at all. A cell is `1 / subdivision` of the world unit (README D41, D43), so `cells` is a per-axis count of the active object's own cells and the subdivision is what says how much world each of them spans. This value is what the HUD shows.
-10. `subscribe` adds to the set and returns an unsubscribe closure; calling that closure twice is a no-op.
+9. `setAddHeight(height)` validates and assigns: a whole number of cells at least one, or a `RangeError`. `1` is the width of the add tool's box — the single layer the pressed face opens onto — so it is the value that means "no override" rather than a separate flag, and the height is that tool's own thickness: `pointer.ts` reads `session.addHeight` when it builds a drag's box and only ever stretches the box for `add` (README D19, D36).
+10. `resolutionOf` reads the project on every call, so the reported resolution cannot go stale: `undefined` for an unknown id; `{ representation: 'empty' }` for a node whose representation carries no payload — a transform-only node, or a uniform object whose grid has not been attached yet; and for a uniform object that has a grid, `{ representation: 'uniform', subdivision: grid.subdivision }`, because the subdivision is a property of the grid and is reported whenever one is attached, occupied or not (README D43). `cells` is added on top of that, derived from `grid.bounds()` as `bounds.max[i] - bounds.min[i] + 1` per axis, while the grid holds at least one occupied cell, and there is no `cells` while it holds none — the counts need an occupied cell to have a size at all. A cell is `1 / subdivision` of the world unit (README D41, D43), so `cells` is a per-axis count of the active object's own cells and the subdivision is what says how much world each of them spans. This value is what the HUD shows.
+11. `subscribe` adds to the set and returns an unsubscribe closure; calling that closure twice is a no-op.
 
 ## Invariants
 - `selection.objectId` resolves in `project` at the time it is set, and its kind matches the representation: `'box'` only on a uniform object.
@@ -61,6 +64,7 @@ class EditorSession {
 - A selection never survives a change of active object.
 - Every public mutator calls `notify()` exactly once, synchronously, after the state change.
 - `editColor` is always a valid `0xRRGGBB` value and is the appearance channel only; it is never written to `SceneObject.maskColor`.
+- `addHeight` is always a whole number of cells at least one, and it is read only by the `add` tool's box builder — no other tool's box, and no `Selection` variant, depends on it (README D19).
 - `resolutionOf` is pure, and the session holds no mesh, matrix, or derived render state: the resolution is recomputed on every read from `representation`, the payload's presence, `grid.subdivision`, and `grid.bounds()`, and `cells` carries three numbers only while the grid actually holds an occupied cell.
 
 - The session leaves `edit` mode when its active object is cleared: `setActiveObject(null)` assigns `mode = 'object'` as well as dropping the selection, so no UI path — both of whose entries are disabled while nothing is active — reaches a mode there is nothing to edit in (README D39). `setMode` itself validates nothing, like `setTool`, so a caller that bypasses the UI can still select `edit` with no active object; the session does not refuse it.
@@ -69,6 +73,7 @@ class EditorSession {
 - `setActiveObject(id)` with an id that does not resolve → `RangeError`; state unchanged.
 - `setSelection` with an unknown object, or a box on an object whose representation is not `uniform` → `RangeError`; previous selection preserved.
 - `setEditColor(color)` with a non-finite value, a negative value, or one above `0xFFFFFF` → `RangeError`; the previous color is preserved.
+- `setAddHeight(height)` with a non-integer or a value below `1` → `RangeError`; the previous height is preserved. It throws rather than clamping, because the UI field is what reads the user's text and a bad value there is a caller error.
 - `subscribe` with a non-function → `TypeError`.
 - There is no `Result` union here: the session has no user-facing failure mode, and nothing throws for a merely unusual but legal selection.
 
@@ -78,4 +83,4 @@ class EditorSession {
 No `three` and no `three-runtime` import: being DOM- and renderer-free is what lets `ui/hud.ts` and `app/main.ts` read the session without owning a canvas.
 
 ## Tests
-No `tests/*.test.ts` covers this file in the demo slice; README section 10 verifies editing by running the application. A later `tests/editor.test.ts` (node environment — the session needs no DOM) should pin: a box selection refused on an object that is not uniform, a selection cleared by a change of active object, `setEditColor` refusing an out-of-range value without changing the color, and `resolutionOf` reporting the per-axis `cells` of a uniform object's bounds and `empty` for one whose payload is not attached.
+No `tests/*.test.ts` covers this file in the demo slice; README section 10 verifies editing by running the application. A later `tests/editor.test.ts` (node environment — the session needs no DOM) should pin: a box selection refused on an object that is not uniform, a selection cleared by a change of active object, `setEditColor` refusing an out-of-range value without changing the color, `setAddHeight` refusing a zero, a fraction, or a non-number the same way, and `resolutionOf` reporting the per-axis `cells` of a uniform object's bounds and `empty` for one whose payload is not attached.

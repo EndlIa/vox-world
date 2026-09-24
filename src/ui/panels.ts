@@ -178,6 +178,7 @@ export class Panels {
   /** Not a tool: a command on the region the selection already holds, so it is disabled without one. */
   private readonly detachButton: HTMLButtonElement;
   private readonly editColorInput: HTMLInputElement;
+  private readonly addHeightInput: HTMLInputElement;
   private readonly maskColorInput: HTMLInputElement;
   private readonly parentSelect: HTMLSelectElement;
   private readonly nameInput: HTMLInputElement;
@@ -277,6 +278,15 @@ export class Panels {
     this.editColorInput = el('input', {
       type: 'color',
       on: { input: () => context.session.setEditColor(parseInt(this.editColorInput.value.slice(1), 16)) },
+    });
+    // The add tool's own option: how many cells deep its drag builds. It is the tool's parameter, so it sits under
+    // the tool row like the select tool's shape rather than in a group of its own.
+    this.addHeightInput = el('input', {
+      type: 'number',
+      min: '1',
+      step: '1',
+      title: 'how many cells deep the add tool builds out of the face it presses',
+      on: { input: () => this.writeAddHeight() },
     });
 
     // The authored vertical FOV of the output camera; a cleared field parses to NaN and the app
@@ -429,6 +439,7 @@ export class Panels {
         toolRow,
         el('div', { class: 'row' }, [this.detachButton]),
         this.field('Select', this.selectionShapeSelect),
+        this.field('Add wall', this.addHeightInput),
         this.field('Color', this.editColorInput),
       ],
       () => context.session.setMode('edit'),
@@ -593,6 +604,7 @@ export class Panels {
     // do. The tools stay live: a press is what creates the region they work on.
     this.detachButton.disabled = session.selection.kind === 'none';
     this.editColorInput.value = hexInputValue(session.editColor);
+    this.addHeightInput.value = String(session.addHeight);
     this.maskColorInput.disabled = active === undefined;
     if (active !== undefined) this.maskColorInput.value = hexInputValue(active.maskColor);
     this.visibleInput.disabled = active === undefined;
@@ -733,5 +745,16 @@ export class Panels {
   private writeMaskColor(): void {
     if (this.context.session.activeObjectId === null) return;
     this.context.actions.setActiveMaskColor(parseInt(this.maskColorInput.value.slice(1), 16));
+  }
+
+  /**
+   * The add wall field: a whole number of cells at least one. Anything else — a blank field, a fraction, a
+   * negative — leaves the session's value alone, so the field can be cleared and retyped without the drag
+   * losing the height it had.
+   */
+  private writeAddHeight(): void {
+    const height = Number(this.addHeightInput.value);
+    if (!Number.isInteger(height) || height < 1) return;
+    this.context.session.setAddHeight(height);
   }
 }

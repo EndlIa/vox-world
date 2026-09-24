@@ -5,17 +5,21 @@ Ring: 3 · Layer: tests (node, no GPU) · Depends on: `../src/document/project.j
 `../src/voxels/uniform/grid.js`, `three`, `vitest`
 
 ## Responsibility
-Pins the two ends of the box drag in `editor/pointer.ts`: which cell a face hit names, and what a box
-does when the pointer leaves the model — it continues in the plane of the face the press landed on, into
-cells the object does not have yet (README D19, D20, D41, D43). It drives the tool's real listeners with
-pointer events and answers picks from a variable, against a real `Project`, `EditorSession`, and a
-2×2×2 block. Real raycasting, the overlay, the mirror's instanced meshes, pointer capture, and
-`detachSelection` are not tested here.
+Pins both ends of the box drag in `editor/pointer.ts` — which cell a face hit names, and what a box
+does when the pointer leaves the model — plus what each tool makes of that box: `select` and `paint`
+take the cells the pick named, while `add` writes the layer in front of the pressed face and, at a
+height above one, a wall that many cells deep (README D19, D20, D36, D41, D43). It drives the tool's
+real listeners with pointer events and answers picks from a variable, against a real `Project`,
+`EditorSession`, and a 2×2×2 block. Real raycasting, the overlay, the mirror's instanced meshes,
+pointer capture, and `detachSelection` are not tested here.
 
 ## Public interface
 `describe` / `it` names are this file's observable surface:
 - `box drag` — `takes the cells the picker named, on both corners`,
-  `carries the box through empty space when the pointer leaves the model`
+  `carries an add drag through empty space one layer out of the pressed face`,
+  `adds one cell out of the pressed face on a click, instead of repainting the cell it hit`,
+  `paints the cell the pick named, with no step out of the face`,
+  `builds the wall height along the pressed face normal on a tracked drag, and not on a click`
 
 ## Internal logic
 1. `listeners` is the module's one sink for every listener the tool registers: the element stub and the
@@ -28,7 +32,7 @@ pointer events and answers picks from a variable, against a real `Project`, `Edi
 3. `fixture()` builds one case: a fresh `Project`, a `UniformGrid` with all eight cells of the origin
    2 × 2 × 2 block set to `0x3366ff`, `createVoxelObject({ name: 'cube', maskColor: 0x112233,
    payload: { kind: 'uniform', grid }, position: new Vector3(0, 0, 0) })`, and an `EditorSession` in
-   `edit` mode with that object active. The picker is a stand-in `{ pick: () => hit }` reading the
+   `edit` mode with that object active, its `addHeight` at the constructor's `1` unless a case sets it. The picker is a stand-in `{ pick: () => hit }` reading the
    variable `setHit` writes, and the overlay is no-ops; the camera is a `PerspectiveCamera(50, 1, 0.1,
    100)` at `(0, 0, 10)`, `updateMatrixWorld()`ed, and `getCamera` returns it.
 4. `event(type, ndcX)` is the pointer event the listeners are called with: button 0, `buttons` 1 while
@@ -48,15 +52,24 @@ pointer events and answers picks from a variable, against a real `Project`, `Edi
   `{ kind: 'box', objectId, box: { min: [1, 1, 0], max: [1, 1, 1] } }`: the box is exactly the two cells
   the lookup named, so a hit on the far `+z` face addresses that cell and not the one past it.
 - With the `add` tool and `editColor` red, a press on `(0, 0, 0)` and a *missed* move at NDC x 0.5
-  create `(2, 0, 0)` in red: one cell past the block's `+z` face, so the box left the object's
-  occupancy — which is how `add` grows a model — with the cell size and frame it captured at the press.
-- In that same drag `(1, 0, 0)` is red, because the box covered it, while `(1, 1, 0)` and `(1, 0, 1)`
-  keep `0x3366ff`: the box stayed one cell deep on the two axes the drag did not travel, so the half-cell
-  nudge back along the face normal did not drift the pressed cell.
-- `grid.size` is 9 — the block's eight cells plus the one created — so exactly one cell is new; the
-  repainted `(1, 0, 0)` does not change the count.
-- Only the session's selection and the grid's cell colors and `size` are read: no overlay call is
-  asserted, and the commit results, the mirror, and the object's transform are not consulted.
+  write the layer in front of the block's `+z` face: `(0, 0, 1)` and `(2, 0, 1)` are red, the pressed
+  `(0, 0, 0)` and the cells of the block the box crossed keep `0x3366ff`, and `grid.size` is 9 — the
+  block's eight cells plus the one the box created at the far corner of that layer. The step is the face
+  normal's axis and the box keeps the cell size and frame it captured at the press.
+- A click — a press with no tracked move — with the same tool and hit writes exactly one cell, the empty
+  neighbour in front of the face: `(1, 1, 2)` is red, `(1, 1, 1)` keeps its color, `grid.size` is 9, and
+  the selection is the degenerate `{ min: [1, 1, 2], max: [1, 1, 2] }`. This is the case that used to
+  repaint the cell the pick named.
+- `paint` gets the cells the pick named and nothing else: the same press and missed move with `paint`
+  recolor `(1, 1, 1)` and `(1, 0, 1)` — the occupied cells of the box — create nothing, and leave
+  `grid.size` at 8. No tool but `add` steps out of the face.
+- `session.setAddHeight(3)` stretches only a tracked drag: a click on `(1, 1, 0)`'s face still writes the
+  single cell `(1, 1, 1)`, while a drag whose pick never leaves `(0, 0, 0)` commits
+  `{ min: [0, 0, 1], max: [0, 0, 3] }` and leaves `(0, 0, 2)` and `(0, 0, 3)` red — three cells along the
+  pressed face's normal — for a `grid.size` of 10.
+- Only the session's selection, `editColor`/`addHeight`, and the grid's cell colors and `size` are read:
+  no overlay call is asserted, and the commit results, the mirror, and the object's transform are not
+  consulted.
 
 ## Errors
 - The picker answers a variable, so no `RangeError`, `TypeError`, or op refusal literal is reachable
@@ -79,6 +92,6 @@ This file *is* the test, run by `npm test` in the node environment. It is the co
 grid math the drag's cell arithmetic divides by is pinned separately in `tests/uniform.test.ts`. Not
 covered here: real raycasting (the picker answers a variable), the overlay preview, the three.js
 instanced meshes a hit would come from, the pointer capture and the gizmo claim (`getGizmoBusy` is
-always false), `detachSelection`, the `paint` and `remove` commits, and the object-mode and no-hit press
-paths. What needs a viewport — the preview drawing the box the commit stores, the gizmo handoff, and the
+always false), `detachSelection`, the `remove` commit, the `Add wall` field's own parsing, and the
+object-mode and no-hit press paths. What needs a viewport — the preview drawing the box the commit stores, the gizmo handoff, and the
 raw-mesh walk — is verified by running the application (README §10).
