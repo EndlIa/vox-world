@@ -9,8 +9,8 @@
  * tool, and the gizmo reports a drag and its commit separately so one gesture writes the document
  * exactly once.
  *
- * Navigation follows the viewport camera alone, and `onOrbitChange` reports every camera move it caused — which is
- * how a caller can follow the editor's own view.
+ * Navigation follows the viewport camera alone and writes nothing: looking around is the editor's own business, and the
+ * authored camera is moved by explicit commands instead (`Camera -> View`, the pose fields, a carrier drag).
  */
 
 import * as THREE from 'three';
@@ -49,7 +49,6 @@ export class ViewportControls {
   private readonly nodeMatrix = new THREE.Matrix4();
   private changeCallback: ((matrix: THREE.Matrix4) => void) | null = null;
   private commitCallback: ((matrix: THREE.Matrix4) => void) | null = null;
-  private readonly orbitCallbacks = new Set<() => void>();
 
   constructor(domElement: HTMLElement, camera: THREE.PerspectiveCamera) {
     this.domElement = domElement;
@@ -58,7 +57,6 @@ export class ViewportControls {
     this.orbit = new OrbitControls(camera, domElement);
     this.orbit.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
     this.orbit.enableDamping = true;
-    this.orbit.addEventListener('change', this.handleOrbitChange);
   }
 
   /**
@@ -172,17 +170,6 @@ export class ViewportControls {
     this.commitCallback = cb;
   }
 
-  /**
-   * Registers one navigation callback. Every registration is kept — the last one does not win, unlike
-   * the gizmo slots — and `dispose()` drops them all.
-   *
-   * The callback fires on `OrbitControls`' own `change` event, which the controls dispatch only when
-   * the camera actually moved, so the per-frame `update()` calls that damping requires never fire it
-   * on their own; it stays silent for a frame in which nothing was orbited, panned, or zoomed.
-   */
-  onOrbitChange(cb: () => void): void {
-    this.orbitCallbacks.add(cb);
-  }
 
   /**
    * Points the viewport at a pose, which is what `View -> Camera` means: the editor then looks at what the output
@@ -225,14 +212,9 @@ export class ViewportControls {
       this.pivot = null;
       this.attached = null;
     }
-    this.orbit.removeEventListener('change', this.handleOrbitChange);
-    this.orbitCallbacks.clear();
     this.orbit.dispose();
   }
 
-  private readonly handleOrbitChange = (): void => {
-    for (const callback of this.orbitCallbacks) callback();
-  };
 
   /**
    * Maps the pivot's world-space delta onto the node: what the pointer did to the pivot, applied to the
