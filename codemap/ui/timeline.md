@@ -14,7 +14,6 @@ type TimelineContext = {
   project: Project; playback: Playback; session: EditorSession;
   onScrub(timeMs: number): void;   // seeks to an absolute millisecond time; the app converts it to the clip's seconds
   onEdited(): void;
-  adoptViewAsCamera?(): void;   // a camera key records the pose the author is aiming (README D46)          // keyframes changed: rebuild the clip
   onTransport(): void;       // starts or pauses the run; the app owns the transport because a run moves the viewport (D48)
 };
 class TimelinePanel {
