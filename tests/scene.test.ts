@@ -195,3 +195,62 @@ describe('derived voxel geometry', () => {
     expect(fineMirror.contentCenterOf(fine.id).toArray()).toEqual([0.25, 0.25, 0.25]);
   });
 });
+
+describe('project reload support', () => {
+  it('forgets source meshes so a reused id cannot resurrect one', () => {
+    const project = new Project();
+    const placeholder = project.createObject({ name: 'placeholder', representation: 'empty' });
+    const mirror = new SceneMirror(project);
+    const mesh = new THREE.Mesh();
+    mirror.attachSourceObject(placeholder.id, mesh, new THREE.Matrix4());
+    mirror.sync();
+    expect(mesh.parent).toBe(mirror.objectOf(placeholder.id));
+
+    // What a load does: the app detaches the meshes it owns, the mirror forgets their records under the id the
+    // loaded project reuses, and the next sync must not adopt them again.
+    mesh.removeFromParent();
+    mirror.clearSources();
+    mirror.sync();
+
+    expect(mesh.parent).toBeNull();
+    expect(mirror.objectOf(placeholder.id)?.children ?? []).toEqual([]);
+  });
+
+  it('re-reads the project settings into the scene', () => {
+    const project = new Project();
+    const mirror = new SceneMirror(project);
+    const ambient = mirror.scene.children.find((child) => child instanceof THREE.AmbientLight);
+    if (!(ambient instanceof THREE.AmbientLight)) throw new TypeError('expected the ambient light');
+
+    project.settings.background = 0x123456;
+    project.settings.ambientIntensity = 0.25;
+    mirror.applySettings();
+
+    const background = mirror.scene.background;
+    if (!(background instanceof THREE.Color)) throw new TypeError('expected a background colour');
+    expect(background.getHex()).toBe(0x123456);
+    expect(ambient.intensity).toBe(0.25);
+  });
+
+  it('re-reads the authored camera into the output camera', () => {
+    const project = new Project();
+    const mirror = new SceneMirror(project);
+
+    project.camera.fov = 65;
+    project.camera.near = 0.5;
+    project.camera.far = 120;
+    project.camera.transform.position.set(3, 4, 5);
+    project.camera.transform.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 3);
+    project.camera.transform.scale.set(1, 1, 1);
+    mirror.applyCamera();
+
+    expect(mirror.camera.fov).toBe(65);
+    expect(mirror.camera.near).toBe(0.5);
+    expect(mirror.camera.far).toBe(120);
+    expect(mirror.camera.position.toArray()).toEqual([3, 4, 5]);
+    expect(mirror.camera.quaternion.toArray()).toEqual(project.camera.transform.quaternion.toArray());
+    // The projection is what an export renders through, so a matrix left on the old field of view would show.
+    const expected = new THREE.PerspectiveCamera(65, 1, 0.5, 120);
+    expect(mirror.camera.projectionMatrix.elements).toEqual(expected.projectionMatrix.elements);
+  });
+});

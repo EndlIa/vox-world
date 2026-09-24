@@ -126,13 +126,19 @@ export class SceneMirror {
   private sourceVisibility = false;
   /** Scratch for `applySources`: one placement at a time, never held across a call. */
   private readonly sourcePlacement = new THREE.Matrix4();
+  /** The scene's one ambient light, held so `applySettings` can rewrite the project's ambient term. */
+  private readonly ambientLight: THREE.AmbientLight;
 
   constructor(project: Project, opts?: { background?: HexColor; ambientIntensity?: number }) {
     this.project = project;
 
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(opts?.background ?? project.settings.background);
-    this.scene.add(new THREE.AmbientLight(0xffffff, opts?.ambientIntensity ?? project.settings.ambientIntensity));
+    this.ambientLight = new THREE.AmbientLight(
+      0xffffff,
+      opts?.ambientIntensity ?? project.settings.ambientIntensity,
+    );
+    this.scene.add(this.ambientLight);
 
     const sun = new THREE.DirectionalLight(0xffffff, DIRECTIONAL_INTENSITY);
     sun.position.set(4, 8, 6);
@@ -405,6 +411,43 @@ export class SceneMirror {
 
   get sourceVisible(): boolean {
     return this.sourceVisibility;
+  }
+
+  /**
+   * Forgets every raw-mesh record without touching the meshes: they belong to the app, which detaches them.
+   * A source is keyed by object id, and `sync()` runs the raw-mesh pass for every recorded id, so a record
+   * that outlives its project would re-parent the previous project's mesh under an object that reuses that
+   * id — which is exactly what a load does (README D51).
+   */
+  clearSources(): void {
+    this.sources.clear();
+  }
+
+  /**
+   * Re-reads the project settings into the scene: the background the renderer clears to and the ambient term.
+   * A load replaces both without rebuilding the mirror (README D51), and `sync()` never touches either, so
+   * nothing else would publish them.
+   */
+  applySettings(): void {
+    const settings = this.project.settings;
+    this.scene.background = new THREE.Color(settings.background);
+    this.ambientLight.intensity = settings.ambientIntensity;
+  }
+
+  /**
+   * Re-reads the authored camera into the output camera: pose, field of view, and the near/far range, with the
+   * projection refreshed. `sync()` never writes the camera node because the timeline owns it (README D22), so a
+   * load says so explicitly here; `app/main.ts`'s `setCameraFov` is the other writer of the same state.
+   */
+  applyCamera(): void {
+    const settings = this.project.camera;
+    this.camera.fov = settings.fov;
+    this.camera.near = settings.near;
+    this.camera.far = settings.far;
+    this.camera.position.copy(settings.transform.position);
+    this.camera.quaternion.copy(settings.transform.quaternion);
+    this.camera.scale.copy(settings.transform.scale);
+    this.camera.updateProjectionMatrix();
   }
 
   /**

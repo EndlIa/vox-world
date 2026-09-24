@@ -71,6 +71,8 @@ export type PanelContext = {
   cameraControl?: () => CameraControlView;
   actions: {
     pickImportFile(): void;
+    saveProject(): void;
+    openProject(): void;
     exportMp4(options: {
       width: number;
       height: number;
@@ -500,6 +502,24 @@ export class Panels {
     ]);
 
     group('Grid', [this.field('World grid', this.worldGridInput)]);
+
+    // The project file: the whole truth as one JSON document, written and read back by `document/serialize.ts`
+    // (README D51). The group sits last, so adding it left every other window at the staggered position it had.
+    group('Project', [
+      el('div', { class: 'row' }, [
+        el('button', {
+          text: 'Save project\u2026',
+          title: 'write the whole project to one JSON file',
+          on: { click: () => context.actions.saveProject() },
+        }),
+        el('button', {
+          text: 'Open project\u2026',
+          title: 'load a project file, replacing what is open',
+          on: { click: () => context.actions.openProject() },
+        }),
+      ]),
+      el('div', { class: 'dim', text: 'or drop a .json onto the viewport' }),
+    ]);
 
     // The one rail entry that opens nothing: the timeline is a bar along the bottom of the page rather than a
     // floating window, so this button is a plain toggle over the app's flag. It takes no `index`, which is why

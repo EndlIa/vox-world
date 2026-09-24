@@ -7,7 +7,8 @@
 import { Mesh, PerspectiveCamera, Vector3, WebGLRenderer } from 'three';
 import type { Box3, Matrix4, Object3D, Quaternion } from 'three';
 import { Project } from '../document/project.js';
-import type { ObjectId } from '../document/project.js';
+import type { ObjectId, ProjectData } from '../document/project.js';
+import { readJson, toJson } from '../document/serialize.js';
 import { EditorSession } from '../editor/session.js';
 import type { EditResolution } from '../editor/session.js';
 import {
@@ -52,7 +53,7 @@ import { Hud } from '../ui/hud.js';
 import { ModeBar } from '../ui/modeBar.js';
 import type { HudState } from '../ui/hud.js';
 import { el } from '../ui/dom.js';
-import { pickGlbFile, saveMp4, wireDropTarget } from './files.js';
+import { pickGlbFile, pickProjectFile, saveJson, saveMp4, wireDropTarget } from './files.js';
 
 export type AppContext = {
   project: Project;
@@ -84,6 +85,8 @@ const VIEWPORT_FAR = 5000;
 const DEFAULT_EXPORT_WIDTH = 1280;
 const DEFAULT_EXPORT_HEIGHT = 720;
 const EXPORT_FILENAME = 'vox-world.mp4';
+/** The project file's default name: one JSON document holding the whole truth (README D51). */
+const PROJECT_FILENAME = 'vox-world-project.json';
 /** The carrier pivots about its own origin, which is the camera position (README D46). */
 const CAMERA_CONTROL_PIVOT = new Vector3(0, 0, 0);
 /** Clip length before the author edits it, in the authoring unit: whole milliseconds (README D45). */
@@ -264,6 +267,8 @@ export function main(): void {
     }),
     actions: {
       pickImportFile: openImportDialog,
+      saveProject,
+      openProject: openProjectDialog,
       exportMp4: runExport,
       createGroup: applyCreateGroup,
       deleteObject: applyDeleteObject,
@@ -488,6 +493,83 @@ export function main(): void {
     bindingsDirty = true;
     commitDirty();
     mirror.frameAll(viewportCamera);
+  }
+
+  /** Writes the whole project — objects, cells, camera, settings, timeline — to one JSON download (D51). */
+  function saveProject(): void {
+    saveJson(toJson(project), PROJECT_FILENAME);
+  }
+
+  /** The rail's `Open project` button: the file dialog, then the same load a dropped file goes through. */
+  function openProjectDialog(): void {
+    void pickProjectFile().then((file) => {
+      if (file !== undefined) void openProject(file);
+    });
+  }
+
+  /**
+   * Reads a project file and loads it. Nothing is written until the file has passed every check, so a
+   * refused file leaves the editor exactly as it was (README D51).
+   */
+  async function openProject(file: File): Promise<void> {
+    const result = readJson(await file.text());
+    if (!result.ok) {
+      reportFailure(result);
+      return;
+    }
+    loadProject(result.data);
+  }
+
+  /**
+   * Loads validated project data in place (README D51). The project instance, the mirror, the mixer, and the
+   * session all survive, so this is what the previous project left behind has to be reset in: the job, the
+   * transport, the camera lock, the raw-mesh layer, the gizmo, the selection, and finally the derived state
+   * that no `sync()` writes.
+   */
+  function loadProject(data: ProjectData): void {
+    // 1. Nothing may be in flight: a superseded job must not attach its payloads to the new project, and a
+    //    run's saved view belongs to the project that started it.
+    jobController?.abort();
+    jobController = undefined;
+    playback.pause();
+    playbackView = undefined;
+    // 2. The view: the carrier and the camera path are views of the previous project, so both are released.
+    //    Navigation needs no reset of its own: the viewport renders through the output camera only while a run
+    //    is playing (README D48), and the transport is paused above.
+    cameraControlSelected = false;
+    cameraPathVisible = false;
+    // 3. The raw-mesh layer goes. A source is recorded under an object id, so the records have to be dropped
+    //    before ids are reused: the mirror's own pass would otherwise re-parent the previous import's meshes
+    //    under a loaded object. The meshes themselves are the app's, and it detaches them.
+    for (const mesh of sourceMeshes) mesh.removeFromParent();
+    sourceMeshes.length = 0;
+    lastImport = undefined;
+    mirror.clearSources();
+    mirror.setSourceVisible(false);
+    // 4. The session, before the objects: its setters validate against the project, so it must not see the
+    //    load half-applied. This also drops the selection and leaves the edit mode.
+    session.setActiveObject(null);
+    // 5. The truth, and the two things `sync()` never publishes: the scene's settings and the output camera.
+    project.restore(data);
+    mirror.applySettings();
+    mirror.applyCamera();
+    // 6. Every loaded object is rebuilt. `sync()` keeps the node of an id it already has, and a load normally
+    //    reuses ids, so without a dirty mark the previous project's geometry would stay on screen.
+    for (const id of project.objects.keys()) dirtyIds.add(id);
+    bindingsDirty = true;
+    commitDirty();
+    // 7. `frameAll` syncs, so the rebuild happens here rather than on the next frame: the rebinding below has
+    //    to see the nodes the load just made.
+    mirror.frameAll(viewportCamera);
+    // 8. The mixer is still bound to the nodes step 6 released, and `bindingsCurrent()` only compares id sets —
+    //    which a load that reuses ids satisfies — so the frame loop would never rebind on its own.
+    rebuildBindings();
+    playback.setTime(0);
+    // 9. The views of the loaded project.
+    refreshCameraPath();
+    refreshReadouts();
+    panels.refresh();
+    timelinePanel.refresh();
   }
 
   /**
@@ -1018,8 +1100,10 @@ export function main(): void {
   });
 
   const unsubscribeSession = session.subscribe(sessionChanged);
-  const detachDrop = wireDropTarget(viewport, (file) => {
-    void importFile(file);
+  const detachDrop = wireDropTarget(viewport, ['.glb', '.json'], (file) => {
+    // One drop target, two meanings; the composition root is the only place that knows which is which (D51).
+    if (file.name.toLowerCase().endsWith('.json')) void openProject(file);
+    else void importFile(file);
   });
 
   function handleResize(): void {

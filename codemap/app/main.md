@@ -221,7 +221,19 @@ function main(): void;
      `saveMp4(blob, 'vox-world.mp4')`; failure → `reportFailure(result)`. The slot is released and the gizmo re-attached in a `finally`, so a run
      that fails or stalls cannot leave the button refusing to start another for the rest of the session — which is exactly what a stalled encoder
      did before the release moved there.
-   - Drop: `wireDropTarget(viewport, file => { void importFile(file); })`.
+   - Save / open project — `saveProject()` is `saveJson(toJson(project), PROJECT_FILENAME)`: one call, no state of its own, and the bytes are
+     `document/serialize.ts`'s. `openProject(file)` reads the text and hands it to `readJson`; a refusal goes to `reportFailure(result)` with the
+     file's own literal and detail and writes nothing, and a file that passes goes to `loadProject(data)` (README D51).
+   - The load sequence, `loadProject(data)`, is the one mutation that replaces the whole truth: the `Project` instance, the mirror, the mixer, and the
+     session all survive it, and the previous project is reset in this order — abort the job (`jobController?.abort()`, then undefined), pause the
+     transport and drop `playbackView`, release the carrier and the path (`cameraControlSelected = false`, `cameraPathVisible = false`), drop the
+     raw-mesh layer (each `sourceMeshes` mesh out of its parent, `sourceMeshes.length = 0`, `lastImport = undefined`, `mirror.clearSources()`,
+     `mirror.setSourceVisible(false)`), reset the session (`session.setActiveObject(null)`), write the truth (`project.restore(data)`), publish what
+     `sync()` never writes (`mirror.applySettings()`, `mirror.applyCamera()`), mark every loaded id dirty and `commitDirty()`, force the rebuild with
+     `mirror.frameAll(viewportCamera)`, rebind the mixer with `rebuildBindings()`, `playback.setTime(0)`, and refresh the views
+     (`refreshCameraPath()`, `refreshReadouts()`, `panels.refresh()`, `timelinePanel.refresh()`).
+   - Drop: `wireDropTarget(viewport, ['.glb', '.json'], file => ...)`: a dropped `.json` goes to `openProject(file)`, anything else to
+     `importFile(file)` — one target, two meanings, decided here because this file is the only place that knows both.
    - Timeline bar — `setTimelineVisible(visible)`, the rail's `Animation` toggle, is a view-only write: it sets `timelineVisible` and calls
      `timelinePanel.setVisible(visible)`, so the app's flag stays the only state and the panel is told what to show rather than asked; the bar keeps
      its contents while hidden, because the render loop goes on writing the playhead into it. Beside the window-resize wiring — the `resize`
@@ -275,6 +287,11 @@ function main(): void;
   user is about to answer the dialog about, and a confirmed prompt fits again through `runVoxelizeJob`, whose success path fits after
   `applyVoxelizeResult` and `commitDirty()`, because a payload can only be measured once it is attached. No other path moves the camera, and the output
   camera is never framed.
+- A project load is the app's own sequence rather than a new `Project` (README D51), and it is safe only because of what it resets: the raw-mesh
+  records before any id can be reused, the session before the objects, a dirty mark for every loaded id (`sync()` keeps the node of an id it already
+  has), an explicit `rebuildBindings()` (the loop's own `bindingsCurrent()` compares id sets, which reusing ids satisfies), and
+  `mirror.applySettings()`/`applyCamera()` for the two things no `sync()` publishes. `readJson` runs first, so a refused file leaves the editor as it
+  was.
 - Importing and voxelizing are two steps, and the second one is the user's (README D26): a successful import ends with the model adopted, displayed as
   raw meshes, fitted, and listed, and with the settings dialog open — never with a job. Only `{ kind: 'run', cellsAcross }` starts one, through the one job body
   `runVoxelizeJob`, so a cancelled dialog is a state the app supports rather than a failure: the object stays `'empty'` with its source meshes
@@ -391,11 +408,16 @@ nothing to refuse (README D46).
   `../animation/trajectory.js` — `sampleCameraTrajectory` and `cameraKeyframePositions`, the points it is handed (README D47); `../animation/playback.js` and `../export/job.js` — `Playback`, `ExportJob`.
 - `../ui/{panels,timeline,hud,dom}.js` — `Panels`, `TimelinePanel`, `Hud`, `el`, and the `CameraPose` type its `setCameraPose` action takes;
   `../ui/voxelizeDialog.js` — `VoxelizeDialog`,
-  `DEFAULT_VOXELS_ACROSS` (the count an arriving import is scaled to) and its `VoxelizeDialogDefaults` seed type; `./files.js` — `pickGlbFile`, `wireDropTarget`, `saveMp4`;
+  `DEFAULT_VOXELS_ACROSS` (the count an arriving import is scaled to) and its `VoxelizeDialogDefaults` seed type; `./files.js` — `pickGlbFile`,
+  `pickProjectFile`, `saveJson`, `saveMp4`, `wireDropTarget`; `../document/serialize.js` — `toJson` and `readJson`, the project file's whole boundary
+  (README D51);
   `three` — `WebGLRenderer`, `PerspectiveCamera`, and the `Matrix4` type `applyCameraMatrix` takes. Nothing may import this file: the dependency direction stops here.
 
 ## Tests
 None of its own: it is the smoke target of the slice, verified by `npm run dev` plus a walk through Scenario A and Scenario B (README section 9).
+Saving and loading is part of that walk (README D51): rename an object, press `Save project…`, reload the page, drop the downloaded `.json` back onto
+the viewport, and the object with its cells, mask color, and placement plus the timeline (duration, fps, and any keyframe rows) must come back, with the
+demo object gone, the panel showing one row, and nothing on the console.
 Importing is now the first assertion of every walk (README D26): dropping a GLB must first show the model itself — `imported <scene name> (N
 with the one imported object listed as `empty`, its node meshes attached and visible, and the camera fitted to the raw meshes, all of them scaled onto
 the unit lattice so the model's longest axis is `DEFAULT_VOXELS_ACROSS` cells (README D41) — and then open the

@@ -478,3 +478,130 @@ describe('nextMaskColor', () => {
     expect(new Set(firstWalk).size).toBeGreaterThan(1);
   });
 });
+
+describe('snapshot / restore', () => {
+  it('copies records so a later write cannot reach the snapshot', () => {
+    const project = new Project();
+    const grid = UniformGrid.create(2);
+    grid.set(0, 0, 0, 0x112233);
+    const car = project.createVoxelObject({
+      name: 'car',
+      maskColor: 0x445566,
+      payload: { kind: 'uniform', grid },
+      position: new Vector3(1, 0, 0),
+    });
+    const data = project.snapshot();
+
+    car.transform.position.set(9, 9, 9);
+    car.name = 'renamed';
+    project.timeline.durationMs = 5000;
+
+    const copied = data.objects[0];
+    expect(copied?.name).toBe('car');
+    expect(copied?.transform.position.toArray()).toEqual([1, 0, 0]);
+    expect(data.timeline.durationMs).toBe(0);
+    // The payload is the one thing shared: a grid is read-only where the file is concerned (README D51).
+    expect(copied?.uniform).toBe(grid);
+  });
+
+  it('restores the loaded objects in order and keeps the camera, the settings, and the timeline objects', () => {
+    const source = new Project();
+    const group = source.createObject({ name: 'group', representation: 'empty' });
+    const grid = UniformGrid.create(4);
+    grid.set(-1, 0, 2, 0x00ff00);
+    source.createVoxelObject({
+      name: 'part',
+      parentId: group.id,
+      maskColor: 0x123456,
+      payload: { kind: 'uniform', grid },
+      position: new Vector3(2, 0, 0),
+    });
+    source.camera.fov = 60;
+    source.camera.transform.position.set(1, 2, 3);
+    source.settings.background = 0x101010;
+    source.settings.ambientIntensity = 0.5;
+    source.timeline.durationMs = 4000;
+    source.timeline.fps = 24;
+    addKeyframe(source.timeline, objectTarget(group.id), 'position', 1000, [1, 2, 3]);
+
+    const target = new Project();
+    target.createObject({ name: 'stale', representation: 'empty' });
+    const camera = target.camera;
+    const settings = target.settings;
+    const timeline = target.timeline;
+    const tracks = timeline.tracks;
+    const idsWritten = [...source.objects.keys()];
+
+    target.restore(source.snapshot());
+
+    expect([...target.objects.keys()]).toEqual(idsWritten);
+    const part = target.objects.get(idsWritten[1] ?? '');
+    expect(part?.name).toBe('part');
+    expect(part?.parentId).toBe(group.id);
+    expect(part?.maskColor).toBe(0x123456);
+    expect(part?.representation).toBe('uniform');
+    expect(part?.uniform?.subdivision).toBe(4);
+    expect(part?.uniform?.getColor(-1, 0, 2)).toBe(0x00ff00);
+    expect(target.objects.get(idsWritten[0] ?? '')?.representation).toBe('empty');
+    // Instance identity: a load is invisible to the mirror, the mixer, and the panels, which hold these.
+    expect(target.camera).toBe(camera);
+    expect(target.settings).toBe(settings);
+    expect(target.timeline).toBe(timeline);
+    expect(target.timeline.tracks).toBe(tracks);
+    expect(camera.fov).toBe(60);
+    expect(camera.transform.position.toArray()).toEqual([1, 2, 3]);
+    expect(settings.background).toBe(0x101010);
+    expect(settings.ambientIntensity).toBe(0.5);
+    expect(timeline.durationMs).toBe(4000);
+    expect(timeline.fps).toBe(24);
+    const keyframe = findTrack(timeline, objectTarget(group.id), 'position')?.keyframes[0];
+    expect(keyframe?.timeMs).toBe(1000);
+    expect(keyframe?.value).toEqual([1, 2, 3]);
+    expect(keyframe?.id).toBe(source.timeline.tracks[0]?.keyframes[0]?.id);
+  });
+
+  it('floors the id counter above the ids the loaded file carries', () => {
+    const source = new Project();
+    source.createObject({ name: 'a', representation: 'empty' });
+    source.createObject({ name: 'b', representation: 'empty' });
+    const data = source.snapshot();
+    // A file whose counter claims the next id is free although `obj-0` and `obj-1` are already taken: trusting
+    // it would overwrite a loaded object on the next creation.
+    data.counters.nextId = 0;
+
+    const target = new Project();
+    target.restore(data);
+    // The palette walk resumes where the file left it, so mask colors stay stable across a load (D11): the two
+    // loaded objects already consumed the first two entries.
+    const fresh = new Project();
+    fresh.nextMaskColor();
+    fresh.nextMaskColor();
+    expect(target.nextMaskColor()).toBe(fresh.nextMaskColor());
+
+    const minted = target.createObject({ name: 'c', representation: 'empty' });
+
+    expect(minted.id).toBe('obj-2');
+    expect([...target.objects.keys()]).toEqual(['obj-0', 'obj-1', 'obj-2']);
+  });
+
+  it('refuses a duplicate id, an unknown parent, a cycle, and a foreign id without writing', () => {
+    const project = new Project();
+    const only = project.createObject({ name: 'only', representation: 'empty' });
+    const before = project.snapshot();
+
+    const duplicate = project.snapshot();
+    duplicate.objects.push({ ...only });
+    const missing = project.snapshot();
+    missing.objects.push({ ...only, id: 'obj-7', parentId: 'obj-99' });
+    const cycle = project.snapshot();
+    cycle.objects.push({ ...only, id: 'obj-8', parentId: 'obj-9' });
+    cycle.objects.push({ ...only, id: 'obj-9', parentId: 'obj-8' });
+    const foreign = project.snapshot();
+    foreign.objects.push({ ...only, id: 'thing' });
+
+    for (const data of [duplicate, missing, cycle, foreign]) {
+      expect(() => project.restore(data)).toThrow(RangeError);
+      expect(project.snapshot()).toEqual(before);
+    }
+  });
+});

@@ -1,7 +1,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { CELL_SIZE } from '../voxels/uniform/grid.js';
 import type { HexColor, UniformGrid } from '../voxels/uniform/grid.js';
-import { removeTracksFor, type Timeline, type TrackTarget } from './timeline.js';
+import { adoptKeyframeIds, removeTracksFor, type Timeline, type TrackTarget } from './timeline.js';
 
 export type ObjectId = string;
 export type Transform = {
@@ -34,6 +34,31 @@ export type CameraSettings = {
   transform: Transform;
 };
 export type ProjectSettings = { background: HexColor; ambientIntensity: number };
+/**
+ * The minters, saved so a restore re-mints nothing (README D51): `nextId` is the counter `allocateId` reads and
+ * `maskCursor` the palette walk's position.
+ */
+export type ProjectCounters = { nextId: number; maskCursor: number };
+/**
+ * The project as plain data — what a file carries of it and what `restore` takes back (README D51). Payload grids
+ * are shared by reference: they are read-only where a file is concerned, and copying millions of cells to answer a
+ * read is not worth it.
+ */
+export type ProjectData = {
+  objects: SceneObject[];
+  camera: CameraSettings;
+  settings: ProjectSettings;
+  timeline: Timeline;
+  counters: ProjectCounters;
+};
+
+/** The only id shape this file mints, so a restore can tell a loaded id from a foreign one (README D51). */
+const OBJECT_ID_PATTERN = /^obj-(\d+)$/;
+
+/** True for the one id shape this file mints: the reader's half of the same rule `restore` enforces. */
+export function isObjectId(value: unknown): value is ObjectId {
+  return typeof value === 'string' && OBJECT_ID_PATTERN.test(value);
+}
 
 /** Deterministic mask-color walk: 12 distinct `0xRRGGBB` values, in a fixed order. */
 const PALETTE: readonly HexColor[] = Object.freeze([
@@ -71,6 +96,48 @@ function identityTransform(): Transform {
     position: new Vector3(0, 0, 0),
     quaternion: new Quaternion(),
     scale: new Vector3(1, 1, 1),
+  };
+}
+
+/** A copy of one object record: fresh transform values, payload by reference (README D51). */
+function copySceneObject(object: SceneObject): SceneObject {
+  const copy: SceneObject = {
+    id: object.id,
+    name: object.name,
+    parentId: object.parentId,
+    transform: {
+      position: object.transform.position.clone(),
+      quaternion: object.transform.quaternion.clone(),
+      scale: object.transform.scale.clone(),
+    },
+    representation: object.representation,
+    maskColor: object.maskColor,
+    visible: object.visible,
+    alignToGrid: object.alignToGrid,
+  };
+  if (object.uniform !== undefined) copy.uniform = object.uniform;
+  return copy;
+}
+
+/** A copy of a timeline: one fresh track and keyframe per entry, so a snapshot cannot be written through. */
+function copyTimeline(timeline: Timeline): Timeline {
+  return {
+    durationMs: timeline.durationMs,
+    fps: timeline.fps,
+    tracks: timeline.tracks.map((track) => {
+      const target: TrackTarget =
+        track.target.kind === 'camera' ? { kind: 'camera' } : { kind: 'object', objectId: track.target.objectId };
+      return {
+        target,
+        channel: track.channel,
+        interpolation: track.interpolation,
+        keyframes: track.keyframes.map((keyframe) => ({
+          id: keyframe.id,
+          timeMs: keyframe.timeMs,
+          value: [...keyframe.value],
+        })),
+      };
+    }),
   };
 }
 
@@ -294,6 +361,94 @@ export class Project {
   nextMaskColor(): HexColor {
     // The cursor is reduced modulo the palette length, so the index is always in range.
     return PALETTE[this.maskCursor++ % PALETTE.length]!;
+  }
+
+  /**
+   * The project as plain data (README D51): one copied record per object in `objects` order, the camera and the
+   * settings copied by the same rule, and the timeline as one copied record. Payload grids are shared, so the
+   * result must not be written to; the file boundary reads it and encodes what it finds.
+   */
+  snapshot(): ProjectData {
+    return {
+      objects: [...this.objects.values()].map(copySceneObject),
+      camera: {
+        fov: this.camera.fov,
+        near: this.camera.near,
+        far: this.camera.far,
+        transform: {
+          position: this.camera.transform.position.clone(),
+          quaternion: this.camera.transform.quaternion.clone(),
+          scale: this.camera.transform.scale.clone(),
+        },
+      },
+      settings: { background: this.settings.background, ambientIntensity: this.settings.ambientIntensity },
+      timeline: copyTimeline(this.timeline),
+      counters: { nextId: this.nextId, maskCursor: this.maskCursor },
+    };
+  }
+
+  /**
+   * Replaces the truth in place (README D51). Like `setPayload`, it validates before it writes, so a rejected
+   * restore leaves the project exactly as it was; and it keeps instance identity — the `objects` map, `camera`,
+   * `settings`, `timeline`, and `timeline.tracks` are the objects every holder already has — because the mirror,
+   * the mixer, and the editor hold this project rather than a copy of it.
+   */
+  restore(data: ProjectData): void {
+    const loaded = new Map<ObjectId, SceneObject>();
+    let highestId = -1;
+    for (const object of data.objects) {
+      const match = OBJECT_ID_PATTERN.exec(object.id);
+      if (match === null) {
+        throw new RangeError(`restore: object id is not obj-<n>: ${object.id}`);
+      }
+      if (loaded.has(object.id)) {
+        throw new RangeError(`restore: duplicate object id: ${object.id}`);
+      }
+      loaded.set(object.id, object);
+      highestId = Math.max(highestId, Number(match[1]));
+    }
+    for (const object of loaded.values()) {
+      if (object.parentId !== null && !loaded.has(object.parentId)) {
+        throw new RangeError(`restore: unknown parent ${object.parentId} for ${object.id}`);
+      }
+    }
+    // A cycle is a parent walk that never reaches a root: with at most one parent per object, a chain longer
+    // than the object count has closed on itself.
+    for (const object of loaded.values()) {
+      let steps = 0;
+      let current: SceneObject | undefined = object;
+      while (current !== undefined && current.parentId !== null) {
+        steps += 1;
+        if (steps > loaded.size) {
+          throw new RangeError(`restore: parent cycle at ${object.id}`);
+        }
+        current = loaded.get(current.parentId);
+      }
+    }
+
+    // Records are copied and payloads are not; the camera, the settings, the timeline, and its `tracks` array
+    // keep their identity, which is what makes a load invisible to every holder of this project.
+    this.objects.clear();
+    for (const object of data.objects) {
+      this.objects.set(object.id, copySceneObject(object));
+    }
+    this.camera.fov = data.camera.fov;
+    this.camera.near = data.camera.near;
+    this.camera.far = data.camera.far;
+    this.camera.transform.position.copy(data.camera.transform.position);
+    this.camera.transform.quaternion.copy(data.camera.transform.quaternion);
+    this.camera.transform.scale.copy(data.camera.transform.scale);
+    this.settings.background = data.settings.background;
+    this.settings.ambientIntensity = data.settings.ambientIntensity;
+    const timeline = copyTimeline(data.timeline);
+    this.timeline.durationMs = timeline.durationMs;
+    this.timeline.fps = timeline.fps;
+    this.timeline.tracks.splice(0, this.timeline.tracks.length, ...timeline.tracks);
+    // The floor is what keeps identity unique in both directions: above every loaded id, and never below the
+    // counter the file recorded (README D51). The keyframe minter gets the same treatment.
+    this.nextId = Math.max(data.counters.nextId, highestId + 1);
+    this.maskCursor = data.counters.maskCursor;
+    adoptKeyframeIds(this.timeline);
   }
 
   private requireParent(parentId: ObjectId | null): void {

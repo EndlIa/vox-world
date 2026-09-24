@@ -11,7 +11,7 @@ at all.
 
 The panel is an overlay on the canvas, not a reserved column: it is anchored to the top-left of the window at
 `width: 112px` and takes no space from the viewport, which keeps the whole window width. It is a rail of group
-buttons — `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`, in that order, full width — with the `Animation`
+buttons — `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`, `Project`, in that order, full width — with the `Animation`
 toggle at its foot, and behind each group button that group's controls in a floating window
 (`./floatingWindow.ts`): no group is expanded
 until its button is pressed, several windows can be open at once, each is moved by dragging its title bar, and
@@ -49,6 +49,8 @@ type PanelContext = {
   cameraControl?(): CameraControlView;   // the carrier's state; absent => the carrier's controls are disabled
   actions: {
     pickImportFile(): void;      // opens the file dialog from app/files.ts; ui never imports app
+    saveProject(): void;         // writes the whole project to one JSON download (README D51)
+    openProject(): void;         // opens a project file, replacing what is open (README D51)
     exportMp4(options: { width: number; height: number; fps: number; from: number; to: number;
       mode: 'beauty' | 'mask' }): void;
     createGroup(): void;
@@ -94,17 +96,20 @@ class Panels {
    stylesheet's `hr` rule. The `Grid` group is the rail's last one and holds one control, the viewport's `World grid` checkbox
    (README D35): its `change` event forwards `checked` through `setGridVisible(visible)` and nothing else, so the panel never touches
    the grid, the scene, or a mesh. There is no voxelize group: the settings live in `ui/voxelizeDialog.ts` (README D26).
+   The `Project` group is the rail's last one and holds two plain forwards — `Save project…` and `Open project…`, in one row — over `saveProject()`
+   and `openProject()`, plus the hint that a `.json` can be dropped on the viewport as well (README D51). It reads no state and shows none: what a
+   project file is belongs to `document/serialize.ts` and to the app.
 2. Each group is one rail button plus one window, built together in the group order `Import`, `Edit`, `Camera`, `Render`,
-   `Scene`, `Grid`: the button carries the group's name and toggles its window (the `Edit` one also calls `session.setMode('edit')` through the
+   `Scene`, `Grid`, `Project`: the button carries the group's name and toggles its window (the `Edit` one also calls `session.setMode('edit')` through the
    optional press hook `group()` takes, before it toggles), and the window is a `FloatingWindow`
    (`./floatingWindow.ts`) whose `body` is the group's content container — the group's controls are appended to
    `window.body` and are not copied, re-created, or re-parented anywhere else. A window opens at `128 + 28 · index` px left
    and `8 + 28 · index` px top, one step per group, so two windows opened at once never sit exactly on top of each other; it
    is moved by its title bar, closed by its `×`, and its `onVisibilityChange` puts the `on` class on its button for exactly
-   as long as the window is open. The rail and the six windows go into `root`, and nothing else: `index.html` gives the rail
-   `order: -1`, so it is the overlay's first row whatever order the nodes arrived in. One more button follows the six groups, `Animation`: the
+   as long as the window is open. The rail and the seven windows go into `root`, and nothing else: `index.html` gives the rail
+   `order: -1`, so it is the overlay's first row whatever order the nodes arrived in. One more button follows the seven groups, `Animation`: the
    rail's one entry that opens no window, since the timeline is a bar along the bottom of the page rather than a group. It is built without an
-   `index` — which is why adding it left the six group windows at the staggered positions they had — and its click is a plain toggle over the app's
+   `index` — which is why adding it left the group windows at the staggered positions they had — and its click is a plain toggle over the app's
    flag: it reads `context.timelineVisible()`, hands the opposite to `setTimelineVisible(visible)`, and puts its own `on` class in step, because no
    window's visibility can mark it. The panel appends nothing else to the element it is handed, and since D38 there is nothing else to append;
    `index.html`'s `#viewport { min-height: 0 }` is what keeps the canvas' row from flooring the column — a canvas carries an intrinsic size taken
@@ -138,7 +143,7 @@ class Panels {
    16)`. The `detach` button writes no session state at all: its click is `context.actions.detachSelection()` and nothing else, because that
    button is a command on the region the `Select` tool already chose rather than a tool choice (README D19, D23), so pressing it runs the
    operation and leaves no mode behind. No `project` mutator and no `editor/ops.ts` function is called here.
-8. Project-changing intent leaves as callbacks: `pickImportFile()`, `exportMp4(options)`, `createGroup()`,
+8. Project-changing intent leaves as callbacks: `pickImportFile()`, `saveProject()`, `openProject()`, `exportMp4(options)`, `createGroup()`,
    `deleteObject(id)` from a row's trash, `setActiveMaskColor(hex)`, `setActiveVisible(checked)` from the visibility checkbox,
    `setActiveAlignToGrid(checked)` from the grid-align checkbox, `setActiveSubdivision(level)` from the subdivision select,
    `setGridVisible(checked)` from the `World grid` checkbox, `detachSelection()` from the `detach` button,
@@ -305,7 +310,7 @@ draw the white polyline through the trajectory with one ring per keyframe and un
 camera keyframes it must be disabled and unchecked and nothing must be drawn; ticking the carrier's controls must hide the path along with the
 carrier, and an export must contain no part of it. The follow option is on the same group (README D48): with follow on — its default — pressing play must take the viewport with the clip and disable the box for the length of the run, pausing must stop the transport, release the lock, and leave the viewport on the frame the clip stopped at, and letting a non-looping run reach its end must stop the transport, put the playhead back to the run's start value, and return the view to the one the run started from; with follow off, the box must be enabled again on the next run and a run must leave the editor camera where it was — the transport's own overlay is the only change — while the carrier shows the camera moving along the clip.
 
-The rail and window walk is the same run: the overlay must show exactly the six group buttons `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`
+The rail and window walk is the same run: the overlay must show exactly the seven group buttons `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`, `Project`
 plus the `Animation` toggle, and no
 group control at all until one is pressed; with nothing selected `Edit` must be disabled and unpressable, and pressing it with an object selected must open one window
 titled `Edit` holding that group's controls, mark the button `on`, and put the session in edit mode — the viewport mode switch must
@@ -317,5 +322,5 @@ press and a committed offset in cells must move that one plane onto the axis and
 `on`, and pressing it again must hide the bar — leaving the keyframes it held intact when it is shown again — with the canvas' box and its drawing
 buffer still in step (README D44); a drag far past an edge must park
 the window against it with its title bar still reachable; a press below the rail must reach the viewport rather than the overlay; a second import
-must still open the voxelize modal over every window with its fields and `Voxelize` working; and the overlay must hold the six group buttons, the
+must still open the voxelize modal over every window with its fields and `Voxelize` working; and the overlay must hold the seven group buttons, the
 `Animation` toggle, and the open windows and nothing else — no progress row, no message row, no error line — however many windows are open (D38).

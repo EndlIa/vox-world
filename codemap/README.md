@@ -133,6 +133,7 @@ src/
     project.ts        project truth: objects, hierarchy, transforms, mask colors, camera
     timeline.ts       keyframe authoring data
     detach.ts         cross-representation detach
+    serialize.ts      project <-> one JSON file: cell codec, assembly, validation
   animation/
     compile.ts        authoring keyframes -> THREE.AnimationClip
     playback.ts       AnimationMixer wrapper, frame-exact setTime
@@ -314,6 +315,9 @@ added to this list with a reason.
 as pure functions over document state with an explicit apply step, so a command and undo layer can
 wrap them without rewriting them, and voxelization takes nothing but geometry, a world matrix, and
 options, so it can move into a worker unchanged. See section 9.
+
+Revision history: project persistence has since landed (D51) — the omission now stands for undo and for
+the worker only.
 
 **D10 — Object hierarchy is the runtime truth, and no voxel container holds object structure.** SRS
 requires this split. Its second half — that octree operations stay independent of scene editing — is
@@ -1159,6 +1163,43 @@ where it stands in front of the rim does.)
 Affected contracts: `three-runtime/scene.md` (the layer, the depth copy, the pass, the invariants), `tests/scene.md`, `app/main.md` (the render
 loop), D24's layer list, and this file's §9.
 
+### D51. The project is one JSON file, and a load restores it in place
+
+**Decided.** `document/serialize.ts` writes the whole project truth — objects with their names, hierarchy,
+transforms, representation, mask colors, `visible` and `alignToGrid`; every uniform grid's subdivision and
+occupied cells; the camera settings and pose; the project settings; and the timeline with its tracks and
+keyframes — into one versioned JSON document, and reads it back. Derived state is never written: no mirror
+node, mesh, instance buffer, lookup, outline, overlay, grid drawing, carrier, path, clip, mixer, or frame;
+session and view state (active object, mode, tool, selection, gizmo, camera lock, playback flags, panel
+fields) is not project truth either and is reset by the composition root on load instead.
+
+The file also carries the three minters the truth does not otherwise hold — `Project.nextId`,
+`Project.maskCursor`, and the timeline's `nextKeyframeId` (D45) — because a restored project that re-mints
+an id it already uses overwrites a loaded object, and because a reloaded keyframe id is what the timeline
+widget addresses a row by. A load floors `nextId` and `nextKeyframeId` above everything in the file, so an
+older or hand-edited file cannot reintroduce a collision.
+
+A load is an **in-place restore**, not a rebuilt composition root: `SceneMirror` holds the project,
+`Playback` holds the mirror's output camera, and `EditorSession`, `PointerTool`, and the panels each hold
+the project too, so replacing those instances would rewrite every wiring in `app/main.ts` for no gain.
+`Project.restore` is the one writer of a restore, and the app marks every loaded object dirty so the mirror
+rebuilds its nodes instead of keeping the previous project's geometry under a reused id; it also drops the
+mirror's raw-mesh records, because a source mesh is keyed by object id and would otherwise reappear under a
+loaded object that reuses one.
+
+Cells are the file's bulk and are stored as sorted packed keys, delta-encoded as varints, plus a color
+palette and one palette index per cell, base64-encoded. The codec is named inside each payload, so a second
+one can be added without breaking a version. The reading side is a full validator: format, version,
+structure, hierarchy legality, cell ranges and key-space bounds, keyframe widths and times, and the voxel
+budget (D12) are all checked before anything is written, so a bad file leaves the open project untouched
+rather than half-replaced. A violation is data — `parse-failed`, `unsupported-format`,
+`unsupported-version`, `bad-structure`, `bad-hierarchy`, `bad-cell`, `bad-keyframe`,
+`budget-exceeded` — and never a throw; schema evolution is by `version`, which a reader either knows or
+refuses.
+
+Not persisted, deliberately (D3's cost, unchanged): the imported GLB source. A loaded project has no raw
+mesh layer and cannot be re-voxelized; the voxel data is the truth, and it is what the file carries.
+
 ## 9. Demo slice
 
 The first runnable version must demonstrate the acceptance scenario end to end. Everything listed as
@@ -1192,6 +1233,8 @@ deferred is deferred deliberately, not forgotten.
   editor camera alone for a run and shows the carrier moving along the clip instead (D48).
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range,
   with cancel; a failure reaches the console (D38).
+- Save the whole project to one JSON file and open it back, in place: every object with its cells,
+  hierarchy, mask color, and placement, plus the camera, the settings, and the timeline (D51).
 
 ### Acceptance flows
 
@@ -1210,7 +1253,6 @@ What it asserts is unchanged: the node structure above is the only requirement a
 | Deferred | Why it is safe to defer |
 | --- | --- |
 | Undo and redo, command transactions | Edit operations are pure; the wrapper does not change them (D9). |
-| Project save and load, schema versioning | `document` stays plain records; serialization is additive. |
 | Voxelization worker | Voxelization touches no scene state and is driven by a chunked loop with progress and cancel (D9). |
 | Depth and object-id frame export | The mask pass already proves the second pass path; the MP4 is the required deliverable. |
 | Base color texture sampling | Demo assets use material base color and vertex colors; sampling will go through `THREE.Color` and the geometry attributes. |
@@ -1241,6 +1283,8 @@ Per-file contracts live in this directory, mirroring `src/` (D15):
 ```
 codemap/voxels/uniform/grid.md      -> src/voxels/uniform/grid.ts
 codemap/document/project.md         -> src/document/project.ts
+codemap/document/serialize.md       -> src/document/serialize.ts
+codemap/tests/serialize.md          -> tests/serialize.test.ts
 codemap/editor/pointer.md           -> src/editor/pointer.ts
 codemap/animation/playback.md       -> src/animation/playback.ts
 codemap/tests/detach.md             -> tests/detach.test.ts
