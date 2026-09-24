@@ -194,9 +194,6 @@ export function main(): void {
   // aimed from third person instead of by flying the viewport (README D46). It is decoration like the grid, so it
   // lives on layer 1 and no export frame contains it.
   const cameraControl = new CameraControl(mirror.scene);
-  // The carrier is drawn from the first frame: it is the only thing that shows where the output camera is, and a run
-  // moves that camera whether or not the author is aiming it (README D46).
-  cameraControl.setVisible(true);
   // The camera path: the trajectory of the authored camera, drawn as a polyline with one ring per keyframe (D47).
   const cameraPath = new CameraPath(mirror.scene);
   const capture = new Capture({ width: DEFAULT_EXPORT_WIDTH, height: DEFAULT_EXPORT_HEIGHT });
@@ -304,6 +301,9 @@ export function main(): void {
       // A keyframe edit is what changes the camera's trajectory, so the path is redrawn here (README D47).
       refreshCameraPath();
     },
+    // A camera key records the view the author is aiming, which is how the reference product's camera animation reads
+    // it too (README D46).
+    adoptViewAsCamera: captureViewAsCamera,
   };
 
   const panels = new Panels(panelsRoot, panelContext);
@@ -583,6 +583,8 @@ export function main(): void {
     transform.quaternion.normalize();
     mirror.camera.position.copy(transform.position);
     mirror.camera.quaternion.copy(transform.quaternion);
+    // The editor view follows, so the next camera keyframe captures the pose the drag just committed (README D46).
+    controls.setViewFrom(transform.position, transform.quaternion);
     panels.refresh();
   }
 
@@ -606,6 +608,9 @@ export function main(): void {
     setCameraFov(pose.fov);
     mirror.camera.position.copy(transform.position);
     mirror.camera.quaternion.copy(transform.quaternion);
+    // The editor view follows the authored pose, so a camera keyframe — which captures that view — records the pose
+    // the author typed rather than overwriting it with wherever they happened to be looking (README D46).
+    controls.setViewFrom(transform.position, transform.quaternion);
     panels.refresh();
   }
 
@@ -696,16 +701,29 @@ export function main(): void {
   }
 
   /**
-   * `Camera -> View`: the authored camera adopts the editor's current view, which is how a shot is started without
-   * aiming the carrier from scratch. It selects the carrier, because aiming it is what the user came here to do.
+   * Captures the editor's current view as the authored camera pose, which is what a camera keyframe records: the
+   * viewport is what the author aims with, and the reference product's camera animation works the same way — a key
+   * takes the view, it does not read a stale document pose. The authored `fov` is left alone, because the shot's field
+   * of view is its own value and not the viewport's (README D46). Skipped while a clip runs: the view is not what the
+   * author is aiming then, and the clip owns the output camera's pose for the length of the run.
    */
-  function cameraToView(): void {
+  function captureViewAsCamera(): void {
+    if (playback.playing) return;
     const { position, quaternion } = viewportCamera;
     const transform = project.camera.transform;
     transform.position.copy(position);
     transform.quaternion.copy(quaternion);
     mirror.camera.position.copy(position);
     mirror.camera.quaternion.copy(quaternion);
+    panels.refresh();
+  }
+
+  /**
+   * `Camera -> View`: the authored camera adopts the editor's current view, which is how a shot is started without
+   * aiming the carrier from scratch. It selects the carrier, because aiming it is what the user came here to do.
+   */
+  function cameraToView(): void {
+    captureViewAsCamera();
     refreshCameraPath();
     cameraControlSelected = true;
     syncGizmo();
@@ -1042,10 +1060,27 @@ export function main(): void {
       if (!bindingsCurrent()) rebuildBindings();
     }
     controls.update();
+    // While a clip runs the viewport *is* the shot, which is what makes a camera animation visible at all: the loop
+    // renders through the output camera and hands navigation nothing but the editor camera, so nothing can re-aim the
+    // pose the mixer just applied — the failure the removed camera lock had, where `OrbitControls.update()` ended with
+    // `object.lookAt(target)` on the very camera the clip owned (README D46, D48).
+    const previewing = playback.playing;
+    const renderCamera = previewing ? mirror.camera : viewportCamera;
+    if (previewing) {
+      // The preview camera draws the viewport too, so it needs the canvas' aspect: an export sets its own aspect for
+      // its frames, and a resize would otherwise leave the preview stretched.
+      const aspect = canvasAspect(viewport);
+      if (renderCamera.aspect !== aspect) {
+        renderCamera.aspect = aspect;
+        renderCamera.updateProjectionMatrix();
+      }
+    }
     // The carrier reports the output camera as it stands right now — the authored pose, or the sampled one while a
     // clip runs — in one colour or the other, so the author can always see where that camera is (README D46). A drag
     // owns the pose until it commits, so the per-frame update stands back for it.
     cameraControl.setSelected(cameraControlSelected);
+    // A camera cannot see itself: the carrier and the outline are viewport decoration, and the preview draws the shot.
+    cameraControl.setVisible(!previewing);
     if (!(cameraControlSelected && controls.gizmoBusy())) {
       cameraControl.setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport));
     }
@@ -1058,11 +1093,12 @@ export function main(): void {
       controls.orbit.object.position.distanceTo(controls.orbit.target),
     );
     // The grid follows the camera that draws the viewport.
-    worldGrid.update(viewportCamera);
+    worldGrid.update(renderCamera);
     cameraPath.setScreenScale(viewingDistance);
-    renderer.render(mirror.scene, viewportCamera);
+    renderer.render(mirror.scene, renderCamera);
     // The outline goes over the finished frame in a pass of its own, so the selected object alone cuts it (README D50).
-    mirror.renderSelectionOutline(renderer, viewportCamera);
+    // It is viewport decoration like the carrier, so the shot never contains it.
+    if (!previewing) mirror.renderSelectionOutline(renderer, renderCamera);
     timelinePanel.setTime(playback.time * 1000);
     hud.update(hudState());
   }
