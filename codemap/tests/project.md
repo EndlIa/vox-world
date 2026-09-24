@@ -9,7 +9,7 @@ Pins the project's identity, hierarchy, and representation rules: id allocation 
 `reparent` refusal, `remove` child reparenting plus track cleanup, `setPayload` as the only
 representation transition, `worldMatrix` composition, the grid-alignment rule — the placement a new
 object inherits and the cell it is measured in, the nearest-own-cell rounding, the placement a keyframe
-may store, and the local-frame world-matrix snap — and the deterministic mask-color walk.
+may store, and the local-frame world-matrix snap — and the deterministic mask-color walk. It also pins `snapshot`/`restore`: the copies a snapshot hands out, the instance identity a restore keeps, the counter floor, and the refusals that make a bad file a no-op.
 
 ## Public interface
 `describe` / `it` names are this file's observable surface:
@@ -29,6 +29,10 @@ may store, and the local-frame world-matrix snap — and the deterministic mask-
   the object's own frame, without touching the argument`
 - `nextMaskColor` — `walks the palette deterministically and repeats after a full cycle`, `gives two
   fresh projects the same sequence`
+- `snapshot / restore` — `copies records so a later write cannot reach the snapshot`, `restores the loaded
+  objects in order and keeps the camera, the settings, and the timeline objects`, `floors the id counter
+  above the ids the loaded file carries`, `refuses a duplicate id, an unknown parent, a cycle, and a foreign
+  id without writing`
 
 ## Internal logic
 1. Each test builds a fresh `Project` and creates its hierarchy through `createObject`/
@@ -82,6 +86,14 @@ may store, and the local-frame world-matrix snap — and the deterministic mask-
   matrix whose translation is the object's own, fraction included.
 - `nextMaskColor()` is deterministic: two fresh projects give the same sequence, the values inside one
   `PALETTE.length` cycle are distinct, and the walk repeats after a full cycle.
+- `snapshot()` is a copy: writing to the project afterwards leaves the taken snapshot unchanged, and the
+  payload grid is the one thing shared by reference.
+- `restore(...)` replaces membership in the data's order, keeps the `camera`, `settings`, and `timeline`
+  objects — and the `timeline.tracks` array — identical, floors the id counter above every loaded id, and
+  resumes the palette walk at the cursor the data carried.
+- A refused `restore` writes nothing: a duplicate id, an unknown parent, a cycle, and an id that is not
+  `obj-<n>` each throw, and each attempt leaves the project field-for-field as `snapshot()` reported it
+  before.
 
 ## Errors
 - `reparent` returns `{ ok: false, error: 'missing' }` for an unknown id or non-null parent and

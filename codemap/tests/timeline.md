@@ -31,6 +31,7 @@ test the timeline widget, scrubbing, or MP4 export.
   camera track camera.fov`, `skips objects that own no tracks and takes the duration from the timeline`
 - `playback sampling` — `reproduces each keyframe value exactly at its keyframe time`, `keeps the
   current time when the clip is rebuilt after an edit`
+- `adoptKeyframeIds` — `floors the minter above the ids a loaded timeline already holds`
 
 ## Internal logic
 1. Fixtures author in milliseconds: `oneProject()` builds a `Project` with two objects and sets `fps` 10 and
@@ -82,6 +83,8 @@ test the timeline widget, scrubbing, or MP4 export.
   track holds no time, so another track's latest becomes the answer.
 - `sortKeyframes` and `removeTracksFor` mutate `timeline.tracks` in place, so a holder of the array keeps a
   live reference.
+- `adoptKeyframeIds` raises the minting counter above every `keyframe-<n>` the timeline already holds, so
+  the next added keyframe cannot reuse a loaded id, and the adopted ids keep their spelling and order.
 - Compilation yields one `KeyframeTrack` per non-empty track, `step`/`linear`/`smooth` mapping to
   `InterpolateDiscrete`/`InterpolateLinear`/`InterpolateSmooth`, with `clip.duration` equal to
   `timeline.durationMs / 1000`; track names are `PropertyBinding` names, the target's binding name joined
@@ -103,9 +106,9 @@ test the timeline widget, scrubbing, or MP4 export.
   user state.
 
 ## Dependencies
-`../src/document/timeline.js` for `addKeyframe`, `ensureTrack`, `findTrack`, `maxKeyframeTime`,
-`moveKeyframe`, `removeKeyframe`, `removeTracksFor`, `setDuration`, `setInterpolation`, `sortKeyframes`,
-`trackKey`, and the `Timeline`, `Track`, `TrackChannel`, and `TrackTarget` types;
+`../src/document/timeline.js` for `addKeyframe`, `adoptKeyframeIds`, `ensureTrack`, `findTrack`,
+`maxKeyframeTime`, `moveKeyframe`, `removeKeyframe`, `removeTracksFor`, `setDuration`, `setInterpolation`,
+`sortKeyframes`, `trackKey`, and the `Timeline`, `Track`, `TrackChannel`, and `TrackTarget` types;
 `../src/document/project.js` for `Project` and `ObjectId`; `../src/animation/compile.js` for `buildClip` and
 `channelBinding`; `../src/animation/playback.js` for `Playback`; `three` for `Object3D`,
 `PerspectiveCamera`, `NumberKeyframeTrack`, `QuaternionKeyframeTrack`, `VectorKeyframeTrack`, and the three

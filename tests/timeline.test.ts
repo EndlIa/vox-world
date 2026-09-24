@@ -14,6 +14,7 @@ import { Playback } from '../src/animation/playback.js';
 import { Project, type ObjectId } from '../src/document/project.js';
 import {
   addKeyframe,
+  adoptKeyframeIds,
   ensureTrack,
   findTrack,
   maxKeyframeTime,
@@ -582,5 +583,33 @@ describe('playback sampling', () => {
     playback.stop();
     expect(playback.time).toBe(0);
     expect(node.position.toArray()).toEqual([0, 0, 0]);
+  });
+});
+
+describe('adoptKeyframeIds', () => {
+  it('floors the minter above the ids a loaded timeline already holds', () => {
+    // A timeline as a file brings it in: an id this session's minter never handed out.
+    const timeline: Timeline = {
+      durationMs: 4000,
+      fps: 30,
+      tracks: [
+        {
+          target: { kind: 'camera' },
+          channel: 'fov',
+          interpolation: 'linear',
+          keyframes: [{ id: 'keyframe-900', timeMs: 0, value: [50] }],
+        },
+      ],
+    };
+
+    adoptKeyframeIds(timeline);
+    const added = addKeyframe(timeline, { kind: 'camera' }, 'fov', 1000, [60]);
+
+    expect(added.ok).toBe(true);
+    if (!added.ok) return;
+    expect(added.keyframe.id).not.toBe('keyframe-900');
+    expect(Number(/^keyframe-(\d+)$/.exec(added.keyframe.id)?.[1])).toBeGreaterThan(900);
+    // The adopted id is left exactly as the file had it.
+    expect(ids(findTrack(timeline, { kind: 'camera' }, 'fov'))).toEqual(['keyframe-900', added.keyframe.id]);
   });
 });

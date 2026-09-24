@@ -29,6 +29,9 @@ const VALUE_SIZE: Record<TrackChannel, number> = {
  */
 let nextKeyframeId = 1;
 
+/** The only keyframe id shape this file mints, so `adoptKeyframeIds` can tell a loaded id from a foreign one. */
+const KEYFRAME_ID_PATTERN = /^keyframe-(\d+)$/;
+
 /**
  * Clamps a time onto the clip: whole milliseconds inside `[0, durationMs]`. Every entry point funnels through
  * this, which is what makes a keyframe outside the duration unrepresentable (README D45) — the author's time is
@@ -234,6 +237,26 @@ export function removeTracksFor(timeline: Timeline, objectId: ObjectId): void {
     if (track === undefined) continue;
     if (track.target.kind === 'object' && track.target.objectId === objectId) {
       timeline.tracks.splice(i, 1);
+    }
+  }
+}
+
+/** The per-channel value length: the one table, read by `serialize.ts` instead of a second copy of the widths. */
+export function channelValueSize(channel: TrackChannel): number {
+  return VALUE_SIZE[channel];
+}
+
+/**
+ * Restore hook (README D51): raises the minting counter above every id the timeline already holds, so a keyframe
+ * loaded from a file can never be minted a second time. An id of another shape is skipped, because ids are opaque
+ * to every caller but this module and a foreign one must not be able to set the counter.
+ */
+export function adoptKeyframeIds(timeline: Timeline): void {
+  for (const track of timeline.tracks) {
+    for (const keyframe of track.keyframes) {
+      const match = KEYFRAME_ID_PATTERN.exec(keyframe.id);
+      if (match === null) continue;
+      nextKeyframeId = Math.max(nextKeyframeId, Number(match[1]) + 1);
     }
   }
 }

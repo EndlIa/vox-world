@@ -3,7 +3,7 @@
 Ring: 1 · Layer: document · Depends on: ../voxels/uniform/grid.js, ./timeline.js, three
 
 ## Responsibility
-Owns the project truth: object records, identity, hierarchy, transforms, representation binding, mask colors, camera and project settings, and the single `Timeline` instance. It is not a voxel container, not the Three.js scene mirror, and not a serializer — payloads are handed in and held by reference.
+Owns the project truth: object records, identity, hierarchy, transforms, representation binding, mask colors, camera and project settings, the single `Timeline` instance, and the two minters (`nextId`, `maskCursor`) that keep identity unique. It exposes that truth as plain data (`snapshot`) and takes it back in place (`restore`), so a load never replaces an instance a mirror, a mixer, or the editor already holds. It is not a voxel container and not the Three.js scene mirror; it is not a serializer either — the file format, the cell codec, and the file-facing validation live in `./serialize.js` (README D51) — and payloads are handed in and held by reference.
 
 ## Public interface
 ```ts
@@ -19,6 +19,14 @@ type SceneObject = {
 };
 type CameraSettings = { fov: number; near: number; far: number; transform: Transform };
 type ProjectSettings = { background: HexColor; ambientIntensity: number };
+type ProjectCounters = { nextId: number; maskCursor: number };   // the minters, saved so a restore re-mints nothing
+type ProjectData = {                                             // the project as plain data: what a file carries of it
+  objects: SceneObject[];                                        // in `objects` insertion order
+  camera: CameraSettings;
+  settings: ProjectSettings;
+  timeline: Timeline;
+  counters: ProjectCounters;
+};
 
 class Project {
   readonly objects: Map<ObjectId, SceneObject>;
@@ -41,7 +49,10 @@ class Project {
   keyframePosition(target: TrackTarget, position: THREE.Vector3): THREE.Vector3;   // the placement a keyframe may store
   alignWorldMatrix(id: ObjectId, matrix: THREE.Matrix4): THREE.Matrix4;    // the same rule in the object's own frame
   nextMaskColor(): HexColor;                  // palette walk, deterministic
+  snapshot(): ProjectData;                    // reads; records are copied, payload grids are shared
+  restore(data: ProjectData): void;           // the only writer of objects, camera, settings, timeline, and the counters
 }
+function isObjectId(value: unknown): value is ObjectId;   // the one `obj-<n>` shape, shared with ./serialize.js
 ```
 `new Project()` takes no arguments: an empty object map, an identity-transform camera, default settings (`background: 0x3d4250`, ambient intensity `1`), an empty timeline with `durationMs: 0`, which the app sets on load. The background is the scene's clear color and therefore the color of every exported frame, so its one definition is here rather than in the stylesheet: `index.html` mirrors the same value as `--scene`, which only makes the page behind the canvas match, and the previous project's editor uses the same slate (its `COL_SCENE_BG`, read from its own `--scene`).
 
@@ -58,6 +69,8 @@ class Project {
 10. `keyframePosition(target, position)` is that rule for authoring (D42): an `'object'` target goes through `alignedPosition(target.objectId, position)`, so everything a track holds is whole cells of that object's own grid, while every other target — the camera — gets `position.clone()`, because a viewpoint is not voxel content and a camera confined to whole cells could not frame anything. Snapping the *sampled* pose is not this method's job: the mixer interpolates freely between the placements it is handed.
 11. `alignWorldMatrix(id, matrix)` applies the same rounding in the object's own frame, so a gizmo drag previews exactly what its commit will store instead of jumping on release (D42). It returns `matrix` *itself* (no copy) for an unaligned object and for an unknown id, and never mutates that argument. Otherwise it divides the parent's world matrix out — `parent.clone().invert().multiply(matrix)`, or `matrix.clone()` when the object is a root — writes `alignedPosition`'s result into the local matrix' translation, and multiplies the parent back in (`parent.multiply(local)`), so what comes back is a matrix this call made: the fresh parent-chain product for a child, the argument's clone for a root. A whole-cell local placement therefore survives even when a rotated or scaled ancestor maps it to a fractional world one.
 12. `nextMaskColor()` returns `PALETTE[this.maskCursor++ % PALETTE.length]` from a module-level frozen palette of 12 distinct `0xRRGGBB` values. The walk is a plain increment, so two fresh `Project`s produce the same sequence and colors stay stable for the project's lifetime.
+13. `snapshot()` builds a fresh `ProjectData`: one copied record per object in `objects` iteration order — the three transform parts copied into new `Vector3`/`Quaternion` values, so a later write to the project cannot reach the snapshot — then `camera` and `settings` copied by the same rule, the timeline as one new record with a copied track and keyframe per entry, and `counters` from `nextId` and `maskCursor`. Payload grids are the one thing shared by reference: a grid is read-only where the file is concerned, and copying millions of cells to answer a read is not worth it (README D51).
+14. `restore(data)` replaces the truth in place. It validates first — duplicate ids, ids that are not `obj-<n>`, unknown `parentId`s, and cycles all throw `RangeError` before anything is written, exactly like `setPayload` — and then writes: `objects` is cleared and refilled in `data.objects` order, `camera`'s and `settings`' fields are assigned into the existing records, `timeline.durationMs` and `timeline.fps` are assigned while `timeline.tracks` is spliced and refilled from `data.timeline` (so the `Timeline` object and its `tracks` array keep their identity for every holder, README D45), and the counters are written with a floor: `nextId = max(data.counters.nextId, highest loaded suffix + 1)` and `maskCursor = data.counters.maskCursor`. `adoptKeyframeIds(this.timeline)` (timeline.ts) then floors the keyframe minter above every loaded keyframe id, so nothing a restore brought in can be minted twice (README D51).
 
 ## Invariants
 - `objects` keys equal `SceneObject.id`; ids match `obj-<n>`, are unique, and are never reused, even after `remove`.
@@ -66,6 +79,10 @@ class Project {
 - `setPayload` leaves `transform`, `name`, `parentId`, `maskColor`, `visible`, and `alignToGrid` byte-identical, so attaching a payload to an `'empty'` placeholder never moves, renames, or recolors an object an importer already placed; the caller marks the object dirty for the mirror afterwards (D4).
 - `maskColor` is assigned once at creation from the palette walk, is independent of cell colors, and is never derived from object order at export time (D11).
 - `timeline` is one instance for the project's lifetime; mutators mutate it in place, so holding `project.timeline` stays valid.
+- `restore` keeps instance identity: the `objects` `Map`, `camera`, `settings`, `timeline`, and `timeline.tracks` are the same objects afterwards, so a holder of any of them — the mirror, the mixer, the panels — keeps reading live truth (README D51).
+- After `restore` the map holds exactly `data.objects` in that order, every key equals its record's `id`, and the hierarchy is legal; `nextId` is above every loaded id and the keyframe minter above every loaded keyframe id, so no later `allocateId` or `addKeyframe` collides with what the file brought in.
+- `snapshot()` reads and never writes: the project is unchanged by it, and a `snapshot()` taken after `restore(snapshot())` equals the first field for field (payload grids compare by identity).
+- Neither method is a file path: the format, the cell codec, and the rejection of a bad file live in `./serialize.js`, and `restore` is total over the data a validated file can produce.
 - Every object created here has `visible: true`; `visible` gates rendering only and never changes occupancy.
 - Objects, transforms, and payloads are plain records and typed arrays plus Three.js *value* types — no `Mesh`, `Object3D`, or scene reference is stored (D1).
 - `worldMatrix(id)` for a root equals its own composed local matrix; for a child it equals the parent chain product.
@@ -80,6 +97,7 @@ class Project {
 - `remove(unknownId)` is a no-op.
 - `alignedPosition`, `keyframePosition`, and `alignWorldMatrix` are total: an unknown id gets the input back instead of a `RangeError`, so the editor can ask about an id it is about to validate.
 - `createObject` cannot be called with a voxel representation — the parameter type admits only `'empty'`.
+- `restore` throws `RangeError`, before writing, for a duplicate id, an id that is not `obj-<n>`, an unknown non-null `parentId`, or a `parentId` chain that closes a cycle. A file that could produce any of those is refused by `./serialize.js` first, so reaching the throw is a programmer error; `snapshot` has no failure path.
 
 ## Dependencies
 - `../voxels/uniform/grid.js` — the `UniformGrid` payload type and `HexColor` are type-only, and `CELL_SIZE` is a value import: it is the fallback cell `alignedPosition` rounds to for an aligned object that has no grid, so the world unit is never re-declared here.
@@ -89,7 +107,7 @@ class Project {
 ## Tests
 - `tests/detach.test.ts` — pinned indirectly: a detached object inherits the source's `parentId`, gets a fresh palette color, and a fresh reusable id; `worldMatrix` of a root object equals its translation.
 - The import → voxelize flow is the caller of `setPayload` (an `'empty'` placeholder receives its payload); the transition itself is pinned directly in `tests/project.test.ts`, not by an import-side unit test.
-- `tests/project.test.ts` — the direct unit suite: identity and id non-reuse, `reparent` refusal, `remove` with track cleanup, the `setPayload` transition, `worldMatrix` composition, the alignment rule (the create-time flag, own-cell rounding, keyframes, the local-frame snap), and the mask-color walk.
+- `tests/project.test.ts` — the direct unit suite: identity and id non-reuse, `reparent` refusal, `remove` with track cleanup, the `setPayload` transition, `worldMatrix` composition, the alignment rule (the create-time flag, own-cell rounding, keyframes, the local-frame snap), the mask-color walk, and `snapshot`/`restore` (record copies, instance identity, the counter floor, and the refusals).
 
 ## Open questions
 - `remove` on an unknown id is specified here as a no-op; if the editor prefers a hard failure the `OpResult`-producing layer must check existence first. To be confirmed with `editor/ops.ts`.
