@@ -210,6 +210,11 @@ export function main(): void {
   let bindingsDirty = true;
   /** While set, navigation drives the output camera and the viewport renders through it. */
   let cameraLocked = false;
+  /**
+   * The camera navigation currently owns. The lock hands it the output camera and a run takes it back, so the choice is
+   * made once per frame from those two flags rather than at each of the places that set them (README D46, D48).
+   */
+  let navigationTarget: PerspectiveCamera = viewportCamera;
   let resolutionCache: EditResolution | null = null;
   /** The mirror node the gizmo is attached to, so a rebuilt replacement is noticed (see `syncGizmo`). */
   let gizmoNode: Object3D | undefined;
@@ -556,12 +561,12 @@ export function main(): void {
   /**
    * Turns the camera lock on or off. Locked, `ViewportControls` navigates the **output** camera, so
    * what the viewport shows is what an export captures; unlocked,
-   * navigation goes back to the app-owned viewport camera (D17). The flag is set before retargeting,
-   * so the retarget's own `change` event never writes authored data on the way out of the lock.
+   * navigation goes back to the app-owned viewport camera (D17). The flag is set before navigation is retargeted, so the
+   * retarget's own `change` event never writes authored data on the way out of the lock; the frame loop is what retargets
+   * it, because a run takes the output camera away from navigation for its length (see the loop, README D48).
    */
   function setCameraLock(enabled: boolean): void {
     cameraLocked = enabled;
-    controls.setOrbitTarget(enabled ? mirror.camera : viewportCamera);
     // The carrier's controls are meaningless while the viewport already is the output camera, and the path is hidden
     // with the carrier then too, so both re-read the flag (README D46, D47).
     refreshCameraPath();
@@ -1091,6 +1096,16 @@ export function main(): void {
     if (bindingsDirty) {
       bindingsDirty = false;
       if (!bindingsCurrent()) rebuildBindings();
+    }
+    // Navigation may own the output camera only while the author can aim it. `OrbitControls.update()` ends with
+    // `object.lookAt(target)`, so a camera navigation owns is re-aimed at the editor's orbit pivot every frame — which
+    // overwrites the pose the mixer just applied, and the clip's camera animation is then never seen. A run hands
+    // navigation the viewport camera for its length, and the lock takes the output camera back when the run pauses
+    // (README D46, D48).
+    const navigationCamera = cameraLocked && !playback.playing ? mirror.camera : viewportCamera;
+    if (navigationCamera !== navigationTarget) {
+      controls.setOrbitTarget(navigationCamera);
+      navigationTarget = navigationCamera;
     }
     controls.update();
     const renderCamera = cameraLocked ? mirror.camera : viewportCamera;

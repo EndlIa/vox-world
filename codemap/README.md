@@ -937,7 +937,10 @@ off the carrier while the carrier stays where it was — after which the handles
 was chosen over a carrier special case. The carrier is one more piece of viewport decoration with its own geometries and materials to release, and its
 selection is app state (`cameraControlSelected`, `gizmoMode`) with no home in the panel beyond the buttons that read it. Its fields author the camera
 whether or not it is selected, and the pose now has four writers — the lock's orbit copy, `applyCameraMatrix`, `setCameraPose`, and `cameraToView` —
-where it had one, so the `playback.playing` guard that path carries has to be checked against the other three rather than assumed.
+where it had one, so the `playback.playing` guard that path carries has to be checked against the other three rather than assumed. **Revised (D48)**:
+navigation is a fifth writer, and the only one outside the app's control — `OrbitControls.update()` ends with `object.lookAt(target)` — so the lock hands
+it the output camera only while the author can aim it: a run gives navigation the viewport camera instead, and the lock takes the output camera back
+when the run pauses. Without that, every frame re-aimed the clip's camera at the editor's orbit pivot, and a camera animation was never seen.
 
 Rejected: **aiming the camera with the lock alone** (the lock makes the viewport *be* the output camera, so the shot could only be aimed by looking
 through it and the editor would have no third-person view of what it frames); **a second real camera** (a third camera needs its own document node, its
@@ -1028,6 +1031,13 @@ lock is given back — and a non-looping run that reaches its last frame stops t
 follow off a run leaves the editor camera alone, and the carrier is drawn for the length of the run so the motion is still visible — which it now is
 in any case (**revised** with D46: the carrier no longer hides outside a selection, so a run needs no display of its own). The option is read
 when a run starts and never changes a run in flight.
+
+- **Navigation is handed the viewport camera for the run (D46).** A run draws the viewport through the output camera — that is what makes the viewport
+  *be* the shot — and the clip owns that camera's pose for as long as the run lasts. `OrbitControls.update()` re-derives its offset from the camera's
+  current position and then re-aims it with `object.lookAt(target)`, so a navigation that still owned the output camera would overwrite the poses the
+  mixer had just applied on every single frame: a camera track's rotation could never be seen, and even its position would be aimed at the editor's
+  orbit pivot rather than where the author put it. So the lock is engaged as before, and only *navigation* is pointed at the viewport camera until the
+  run pauses — which is also where the author gets the aiming workflow back.
 
 - **The app owns the transport because a run changes the viewport too.** `animation/playback.ts` gained a read-only `get loop()` beside `playing` (the
   private flag is now `looping`), and the widget's toggle calls `onTransport` instead of `play`/`pause`, reading `playback.playing` back only for its
