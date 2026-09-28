@@ -5,26 +5,6 @@ Ring: 3 · Layer: export · Depends on: document/project.ts, animation/playback.
 ## Responsibility
 The export frame loop: walk the requested timeline range at frame rate, sample it frame-exactly, render each frame at export resolution, and feed the encoder. It honours cancellation and never mutates the project — an export cannot corrupt authored data. It is not the encoder (`export/encode.ts`) and not a UI job wrapper.
 
-## Public interface
-```ts
-import type { Project } from '../document/project.js';
-import type { Playback } from '../animation/playback.js';
-import type { SceneMirror } from '../three-runtime/scene.js';
-import type { Capture } from '../three-runtime/capture.js';
-import type * as THREE from 'three';
-
-type ExportRequest = {
-  project: Project; scene: THREE.Scene; capture: Capture; playback: Playback;
-  output: { width: number; height: number; fps: number; from: number; to: number; mode: 'beauty' | 'mask' };
-};
-type ExportResult = { ok: true; blob: Blob; codec: string; frames: number } |
-  { ok: false; error: 'cancelled' | 'no-codec' | 'encoder-failed' | 'not-finalized' | 'no-frames'; detail: string };
-class ExportJob {
-  constructor(opts: { mirror: SceneMirror });
-  run(request: ExportRequest, signal?: AbortSignal): Promise<ExportResult>;
-}
-```
-
 ## Internal logic
 1. Validate and clamp first: `end = Math.min(to, playback.duration)` (the job owns this clamping, so the dialog can pass any `to`), then `total = Math.round((end - from) * fps) + 1`, so `from..end` includes both endpoints. A legal but empty range (`end < from`) returns `'no-frames'` before any encoder exists; non-finite `from`/`to`/`fps` or `fps <= 0` throw (see Errors). The clamped `total` is the frame count reported in a successful result.
 2. Codec: `const choice = await selectCodec(width, height, fps)`; `undefined` returns `'no-codec'` with a detail naming the three probed codecs. The codec is reported, never substituted (README D7), and the return happens before a writer exists, so no partial muxer can exist either.
@@ -57,14 +37,6 @@ class ExportJob {
 - `'not-finalized'` — `Mp4Writer.finish()`'s own literal, returned unchanged rather than collapsed into `'encoder-failed'`. It is the writer's answer for a cancelled writer or one that never received a frame, so the literal is in `ExportResult` even though the loop itself cannot reach it: one frame is pushed per index, so `push` always precedes `finish()`.
 - `'no-frames'` — `end < from` after the clamp; returned before any encoder or render work.
 - Programmer errors throw `RangeError`: non-finite `from`/`to`/`fps`, or `fps <= 0`. A non-positive `width`/`height` is likewise a caller bug and surfaces from `Capture` or the encoder config.
-
-## Dependencies
-- `../document/project.ts` — `Project`, carried by the request so one object identifies the timeline; the loop reads nothing mutable from it.
-- `../animation/playback.ts` — `Playback`: `setTime` for frame-exact sampling and `time` for the restore.
-- `../three-runtime/scene.ts` — `SceneMirror`: `camera` (the document camera), `sync`, `setMaskMode`.
-- `../three-runtime/capture.ts` — `Capture`: `render` and `readFrame` at export resolution.
-- `./encode.ts` — `selectCodec`, `Mp4Writer`, `FrameSink`: the encode seam (README D7); `three` — `Scene` for the render call.
-Not imported: `editor/*`. That the export path cannot reach an edit operation is part of why an export cannot corrupt authored data.
 
 ## Tests
 No `tests/*.test.ts` covers this module: it needs WebCodecs and a WebGL context, and the demo slice verifies export by running the application (README section 10). The checks are: export a range and compare the file duration against `frames / fps`, confirm the reported codec matches the choice, cancel mid-export and confirm no file is offered, and compare the project's objects and timeline before and after an export.

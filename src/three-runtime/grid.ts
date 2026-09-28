@@ -4,9 +4,9 @@
  * It is the only grid. The vertical displays the previous rewrite offered — `volume`'s two walls and the movable
  * `multi` plane — are gone, and so is the second copy of the ground the volume display carried: vox-world places and
  * aligns content on the world lattice itself (README D41, D42), and a wall of grid is a reference nothing here is
- * built against. The active object's own lattice is gone as well (README D49).
+ * built against. The active object's own lattice is gone as well (README D35).
  *
- * The look is the reference viewport's floor plane (README D35, D49): one white line per world cell, a brighter one
+ * The look is the reference viewport's floor plane (README D35): one white line per world cell, a brighter one
  * every `GRID_SECTION_SIZE` cells, drawn by `@pmndrs/vanilla`'s shader grid with three pure patches — three's
  * logarithmic-depth chunks, the reference's derivative-based line attenuation (without it a unit grid beats against
  * the pixel grid at the horizon), and no distance fade at all, because the reference's grid does not fade with
@@ -29,9 +29,7 @@
 import * as THREE from 'three';
 import { Grid } from '@pmndrs/vanilla/core/Grid';
 import { insertChunks } from './shaderPatch.js';
-
-/** The viewport decoration layer (README D24); `overlay.ts`, `controls.ts`, and the drawings share the number. */
-const OVERLAY_LAYER = 1;
+import { OVERLAY_LAYER } from './layers.js';
 
 /** Below the decorations drawn on top of it — the box preview and the camera path draw at 1000. */
 const GRID_RENDER_ORDER = 0;
@@ -47,7 +45,7 @@ export const GRID_SECTION_SIZE = 20;
  * large enough that the edge stays off screen in any view of demo-scale content; the reference answers the same
  * problem with a disc of radius 5100.
  */
-export const GRID_PLANE_EXTENT = 4096;
+const GRID_PLANE_EXTENT = 4096;
 
 /** Line half-width in pixels, as the share of a cell the library's line function reads. */
 const CELL_THICKNESS = 0.42;
@@ -131,7 +129,7 @@ export class WorldGrid {
       sectionColor: new THREE.Color(GRID_LINE_COLOR),
       // Both of these move the grid inside the shader, which is the one thing the display must not do: the quad is
       // moved instead, by whole cells, so the lines stay on the world's boundaries and the mesh stays where the
-      // grid it draws is (README D49).
+      // grid it draws is (README D35).
       followCamera: false,
       infiniteGrid: false,
       side: THREE.DoubleSide,

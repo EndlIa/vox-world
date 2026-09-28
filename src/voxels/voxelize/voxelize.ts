@@ -22,7 +22,7 @@ export type VoxelizeSource = {
   parts: readonly VoxelizePart[];
 };
 
-export type VoxelizeRequest = {
+type VoxelizeRequest = {
   sources: VoxelizeSource[];
   budget: number;
   onProgress?: (ratio: number) => void;

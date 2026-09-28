@@ -45,7 +45,7 @@ const UNSUPPORTED_EXTENSIONS: readonly string[] = [
   'EXT_meshopt_compression',
 ];
 
-export type ImportedNode = {
+type ImportedNode = {
   sourceId: string;
   name: string;
   geometry: THREE.BufferGeometry;
@@ -78,7 +78,7 @@ export type ImportedScene = {
   voxelizeBounds: THREE.Box3;
 };
 
-export type ImportResult =
+type ImportResult =
   | { ok: true; scene: ImportedScene }
   | { ok: false; error: 'parse-failed' | 'unsupported' | 'empty'; detail: string };
 
@@ -199,7 +199,7 @@ const LINE_OUTLINE_MATERIAL_NAME = 'line';
  * content. The name is the only signal that says a mesh exists to be drawn around another one, and it
  * is the one the whole file agrees on (README D27, ported from shithill `54b73b6`).
  */
-export function isDedicatedLineOutlineMesh(mesh: THREE.Mesh): boolean {
+function isDedicatedLineOutlineMesh(mesh: THREE.Mesh): boolean {
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
   return (
     materials.length > 0 &&
@@ -230,7 +230,7 @@ const textureCache = new WeakMap<THREE.Texture, TexturePixels>();
  * of deleting the voxel. It is read for every material, texture or not, because it belongs to the
  * material rather than to the map — `0` means the material has no cutoff.
  */
-export function buildColorSource(material: THREE.Material): ColorSource {
+function buildColorSource(material: THREE.Material): ColorSource {
   const color = materialColor(material);
   const baseColor = color === undefined ? DEFAULT_BASE_COLOR : color.getHex();
   const alphaTest = material.alphaTest;

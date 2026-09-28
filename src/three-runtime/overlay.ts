@@ -16,11 +16,8 @@
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
 import { normalizeBox } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
-
-/** The viewport decoration layer (README D24); `controls.ts` uses the same number for its gizmo. */
-const OVERLAY_LAYER = 1;
+import { DECORATION_RENDER_ORDER, OVERLAY_LAYER } from './layers.js';
 const DEFAULT_COLOR: HexColor = 0x38bdf8;
-const OVERLAY_RENDER_ORDER = 1000;
 
 export class Overlay {
   /** The owning object's space, which every update copies a world matrix onto. The scene's only added node. */
@@ -38,7 +35,7 @@ export class Overlay {
     // generic `Material` type, so it is narrowed once here.
     this.helper = new THREE.Box3Helper(new THREE.Box3(), DEFAULT_COLOR);
     this.helper.frustumCulled = false;
-    this.helper.renderOrder = OVERLAY_RENDER_ORDER;
+    this.helper.renderOrder = DECORATION_RENDER_ORDER;
     this.material = this.helper.material as THREE.LineBasicMaterial;
     this.material.depthTest = false;
     this.material.transparent = true;

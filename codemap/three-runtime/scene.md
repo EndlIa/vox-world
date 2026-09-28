@@ -5,34 +5,6 @@ Ring: 2 · Layer: three-runtime · Depends on: `../document/project.js`, `../vox
 ## Responsibility
 Mirrors the project into a `THREE.Scene`: exactly one `Object3D` per document object plus the output camera, and the derived `InstancedMesh` geometry that renders uniform cells. Owns every derived render resource and the instance-to-cell reverse map. It owns no project data, no renderer, no DOM, and never the viewport camera. It also parents the app's imported raw meshes under their objects' nodes on layer 2 (README D24) — the raw half of the raw-versus-voxel comparison — places each one by its own baked node matrix (README D25), and never owns them: a source mesh, its geometry, and its material belong to the app and are never disposed by the mirror.
 
-## Public interface
-```ts
-type CellLookup = { objectId: ObjectId; cells: [number, number, number][]; colors: HexColor[] };
-class SceneMirror {
-  constructor(project: Project, opts?: { background?: HexColor; ambientIntensity?: number });
-  readonly scene: THREE.Scene;
-  readonly camera: THREE.PerspectiveCamera;            // output camera, scene child named 'camera'
-  sync(): void;                                        // rebuilds only objects marked dirty
-  markDirty(id: ObjectId): void;
-  objectOf(id: ObjectId): THREE.Object3D | undefined;
-  contentCenterOf(id: ObjectId): THREE.Vector3;        // local-space center of the object's own content
-  previewTransform(id: ObjectId, matrixWorld: THREE.Matrix4): void;  // live gizmo drag: scene only, no document write
-  lookupOf(id: ObjectId): CellLookup | undefined;      // instanceId -> cell reverse map
-  setSelected(id: ObjectId | null): void;              // draws that object's outline and hides every other's
-  renderSelectionOutline(renderer, camera): boolean;   // draws it over the frame, cut by that object alone (D50)
-  setMaskMode(enabled: boolean): void;                 // flat per-object maskColor materials
-  attachSourceObject(id: ObjectId, source: THREE.Object3D, nodeWorldMatrix: THREE.Matrix4): void;  // raw mesh on layer 2, placed by its baked node matrix
-  setSourceVisible(enabled: boolean): void;            // global raw-mesh override, applied at once
-  get sourceVisible(): boolean;
-  clearSources(): void;                                // forgets the raw-mesh records; never touches the meshes (D51)
-  applySettings(): void;                               // re-reads project settings: background + ambient term (D51)
-  applyCamera(): void;                                 // re-reads the authored camera: pose, fov, near/far (D51)
-  frameAll(camera: THREE.PerspectiveCamera): void;      // fits the given camera to layers 0 and 2
-  dispose(): void;
-}
-```
-`ObjectId`/`Project` come from `document/project.js`, `HexColor` from `voxels/uniform/grid.js`; none is re-declared here.
-
 ## Internal logic
 1. Construction: `scene.background = new THREE.Color(background ?? project.settings.background)`, one `AmbientLight` at `ambientIntensity ?? project.settings.ambientIntensity`, one unconfigurable `DirectionalLight` so cube faces are distinguishable, the one `MeshLambertMaterial` every voxel instance shares — patched with the per-voxel face border (`three-runtime/faceGrid.md`, README D35) — and `camera = new THREE.PerspectiveCamera(project.camera.fov, 1, project.camera.near, project.camera.far)` with `camera.name = 'camera'` and its transform copied from `project.camera.transform`, added as a child of the scene root. That camera is the **output** camera: export and the `camera.fov` track use it and nothing else (README D17, D22). It is not the app's viewport camera; navigation moves the viewport camera, except while the camera lock is on, when the app retargets navigation to this camera (README D17). The mirror itself never moves either camera — it neither creates nor drives the viewport camera, and it never overwrites this one after construction, so the mixer and the composition root keep ownership.
 2. `sync()` step 1 — reconcile membership: every `project.objects` entry without a node gets one (`Group` for `representation: 'empty'`; a single `InstancedMesh` for `uniform`), and every mirrored id that left the project has its node removed, its geometry/material/instance buffers disposed, and its lookup dropped.
@@ -93,17 +65,8 @@ class SceneMirror {
 - `attachSourceObject(id, source, nodeWorldMatrix)` is a request, not an assertion: an id the project does not hold yet (or no longer holds) is recorded and simply never reached by `sync()` until that object exists, so no error is raised and nothing is attached for it. A mesh already attached under the same id is kept as the single child it already is, and the recorded node matrix is refreshed. A caller that never attaches anything sees no source meshes at all — the layer is empty, not implied by the object. The matrix is cloned, so the caller may keep mutating the one it passed.
 - `sync()`, `lookupOf`, `objectOf`, `attachSourceObject`, and `setSourceVisible` never throw for a structurally legal project.
 
-## Dependencies
-- `./faceGrid.js` — `applyFaceBorder`, the per-voxel border installed on the one shading material.
-- `@pmndrs/vanilla/core/Outlines` — the inverted hull the selection outline is drawn with; it takes the mesh as its
-  parent and shares that mesh's `instanceMatrix`, so the mirror hands it the object's own instances rather than a copy.
-- `three` — `Scene`, `Object3D`, `Group`, `InstancedMesh`, `BoxGeometry`, `MeshBasicMaterial`, `MeshLambertMaterial`, `PerspectiveCamera`, `DirectionalLight`, `AmbientLight`, `Color`, `Box3`, `Vector3`, `Matrix4` (the source placement and the attachment contract), `Layers`.
-- `../document/project.js` — `Project`, `ObjectId`, `SceneObject` (whose `representation` is the payload test of the source-mesh visibility rule).
-- `../voxels/uniform/grid.js` — `HexColor`, plus `CELL_SIZE`, the base cell size a grid subdivides; the rendered cube's edge and the cell-center offset are that grid's own `cellSize`, not the constant.
-No outer-ring import: no editor, no UI, no capture. A source mesh arrives as an `Object3D` from the caller; the mirror never builds one.
-
 ## Tests
-- `tests/scene.test.ts` (node environment, no renderer needed: it builds a real `Project` and `SceneMirror` and calls `sync()`) pins the derived voxel geometry, the one place a cell size can go wrong without any document value changing. One `describe`, two cases: a cube the size of the object's own cell centered half a cell past its index — the same cell `(3, 0, 0)` is a width-`1` cube at `3.5`/`0.5`/`0.5` at subdivision 1 and a width-`0.5` cube at `1.75`/`0.25`/`0.25` at subdivision 2, which is `(x + 0.5) * cell` on every axis — and `contentCenterOf` pivoting on that same lattice, `(1, 1, 1)` for the cells `(0, 0, 0)` and `(1, 1, 1)` at subdivision 1 and `(0.25, 0.25, 0.25)` at subdivision 4. The fixtures place the object at `(10, 0, -3)`, so an instance matrix that folded the node's own placement in would fail; the instance translations are read in a sorted list, so instance order never decides the result. Its contract is `codemap/tests/scene.md`.
+- `tests/scene.test.ts` (node environment, no renderer needed: it builds a real `Project` and `SceneMirror` and calls `sync()`) pins the derived voxel geometry, the one place a cell size can go wrong without any document value changing. One `describe`, two cases: a cube the size of the object's own cell centered half a cell past its index — the same cell `(3, 0, 0)` is a width-`1` cube at `3.5`/`0.5`/`0.5` at subdivision 1 and a width-`0.5` cube at `1.75`/`0.25`/`0.25` at subdivision 2, which is `(x + 0.5) * cell` on every axis — and `contentCenterOf` pivoting on that same lattice, `(1, 1, 1)` for the cells `(0, 0, 0)` and `(1, 1, 1)` at subdivision 1 and `(0.25, 0.25, 0.25)` at subdivision 4. The fixtures place the object at `(10, 0, -3)`, so an instance matrix that folded the node's own placement in would fail; the instance translations are read in a sorted list, so instance order never decides the result. Its contract is `tests/scene.test.ts`.
 - The reload support the app needs is pinned node-side in the same file: `clearSources()` followed by `sync()` leaves an app-detached source mesh detached, `applySettings()` moves the background colour and the ambient light's intensity, and `applyCamera()` copies the pose, field of view, near, and far into the output camera with the projection refreshed.
 - The rest of the mirror has no vitest file: mask mode's flat pass and its restore, the instance-to-cell lookup and picking through it, the layer-2 source meshes, `frameAll`, and material and lighting appearance are verified by running the app (README §10), plus the node-side checks below. `tests/timeline.test.ts` binds a stand-in root shaped like this class, so it pins the mixer, not the mirror.
 - The source-mesh layer is also checked node-side, where no renderer is needed (a throwaway `vitest` repro against a real `Project` and `SceneMirror`): a mesh attached before its node exists ends up on layer 2 as the object's only child under `userData.objectId`; attaching it twice leaves one child; a `uniform` payload hides it, `setSourceVisible(true)` shows it again, and a rebuild moves it onto the replacement node; `frameAll` moves a camera that saw nothing on layer 0 onto a layer-2 mesh alone. The placement contract is checked the same way against real imported content (79 rotated, non-uniformly scaled nodes of a Sketchfab GLB): every object `applyVoxelizeResult` fills comes out translation-only, and every attached mesh's world matrix still equals its imported node's, before the payload (local placement ≈ identity) and after it (local placement ≈ the `-origin` offset).

@@ -5,24 +5,6 @@ Ring: 1 · Layer: animation · Depends on: ./compile.js, ../document/project.js,
 ## Responsibility
 A thin `THREE.AnimationMixer` wrapper: it owns play, pause, stop, loop, interactive advance, and the frame-exact `setTime` the export loop drives, plus binding project object ids to their mirrored `Object3D`s. It owns no animation data — the authored keyframes live in `document/timeline.ts` and the clip is derived by `./compile.js` — and it never writes into the project (D4).
 
-## Public interface
-```ts
-class Playback {
-  constructor(opts: { camera: THREE.PerspectiveCamera });
-  bind(objects: Map<ObjectId, THREE.Object3D>): void;   // targets the mixer animates
-  rebuild(project: Project): void;                      // recompiles the clip, keeps the current time
-  setTime(time: number): void;                          // frame-exact, used by export
-  play(): void; pause(): void; stop(): void;
-  setLoop(loop: boolean): void;
-  advance(deltaSeconds: number): void;
-  get time(): number;
-  get playing(): boolean;                               // the mixer is advancing the clip
-  get loop(): boolean;                                  // whether the clip repeats; the transport's setting
-  get duration(): number;
-  dispose(): void;
-}
-```
-
 ## Internal logic
 1. Fields: the output `camera`, `mixer: THREE.AnimationMixer | null`, `clip: THREE.AnimationClip | null`, `action: THREE.AnimationAction | null`, the bound object map, and the `looping`/`running` flags. Everything is runtime state; nothing here is saved with the project, and `running` and `looping` are exposed as the read-only `playing` and `loop` accessors.
 2. `bind(objects)` stores the map and resolves the mixer root as the topmost ancestor of the first bound `Object3D`, which is `mirror.scene` — the mirror places every mirrored node under one scene root, so `PropertyBinding.findNode` reaches every named descendant from there. The root is never the bound object node itself: `PropertyBinding` resolves names relative to the root, and a node used as the root cannot find its own children's siblings. It then writes `object.name = objectId` for each entry and `camera.name = 'camera'`, because track names bind through `Object3D.name` — this naming is the binding contract of D22, and the output camera is a child of the scene root named `camera`. The assignment is idempotent — `SceneMirror` already names each per-object node with its `ObjectId` (plus `userData.objectId`) — and it never clobbers a display name, since display names live in `SceneObject.name`. Instance-bucket `InstancedMesh`es stay unnamed in the mirror, so no track can ever resolve to an instance mesh. `SceneMirror` adds the output camera to the scene root itself, so it is already a child of the mixer root when `bind` runs; that is what lets a `camera.*` track resolve.
@@ -54,11 +36,6 @@ class Playback {
 - No `Result` type and no user-facing failure: playback is driven by UI and export code that already owns error reporting.
 - A non-finite `time` or `deltaSeconds` throws `RangeError` — a programmer error, since `Timeline` times and the export loop are finite by construction.
 - `dispose()` is idempotent and safe before any `bind`; destroying the mixer while mirrored objects are still bound is prevented by leaving those objects in place.
-
-## Dependencies
-- `./compile.js` — `buildClip`, the only source of the clip; interpolation and channel paths are its business, not this file's.
-- `../document/project.js` — `Project` for `rebuild` and `ObjectId` for the binding map.
-- `three` — `AnimationMixer`, `AnimationAction`, `AnimationClip` types, `LoopRepeat`/`LoopOnce`, and `PerspectiveCamera`; allowed in ring 1 (D1, D2).
 
 ## Tests
 - `tests/timeline.test.ts` — `AnimationMixer.setTime` reproduces keyframe values exactly at keyframe times, which is this file's `setTime` contract; the same file pins the clip that `rebuild` installs. The `playing` accessor has no test of its own: only the app's authoring guard reads it, and that guard's effect is observable only in a running browser.

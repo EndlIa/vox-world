@@ -16,19 +16,6 @@ Both halves are three's own primitives: a `Line` over a buffer it grows on deman
 draws the ring from a `DataTexture` rather than a mesh per keyframe. A point sprite faces the drawing camera by
 construction, so nothing here turns a marker to the camera and the app has no per-frame call for it.
 
-## Public interface
-```ts
-class CameraPath {
-  constructor(scene: THREE.Scene);
-  readonly root: THREE.Group;   // the whole drawing; not a document node and not a gizmo target
-  setTrajectory(points: readonly THREE.Vector3[]): void;
-  setMarkers(points: readonly THREE.Vector3[]): void;
-  setScreenScale(distance: number): void;
-  setVisible(visible: boolean): void;
-  dispose(): void;
-}
-```
-
 ## Internal logic
 1. Constants: `OVERLAY_LAYER = 1`, the decoration layer `grid.ts`, `overlay.ts`, `controls.ts`, and `cameraControl.ts`
    share (README D24); `DECORATION_RENDER_ORDER = 1000`; the ring's `MARKER_INNER_RATIO = 0.62` and the
@@ -92,16 +79,10 @@ class CameraPath {
   including before any trajectory exists; `dispose()` is safe twice. Nothing here validates that a point is finite —
   the points come from the sampler and the authored keyframes, which are finite by construction.
 
-## Dependencies
-- `three` — `Scene`, `Group`, `Line`, `LineBasicMaterial`, `Points`, `PointsMaterial`, `BufferGeometry`,
-  `BufferAttribute`, `DataTexture`, `LinearFilter`, `RGBAFormat`, `Vector3`.
-No outer-ring import: no project, timeline, editor, UI, or other three-runtime module. The caller hands in the scene,
-exactly as it does for `Overlay` and `CameraControl`, and `app/main.ts` is the only caller.
-
 ## Tests
 `tests/cameraPath.test.ts` pins the layer and naming invariants, the polyline buffer and its draw range, the marker set
 and its draw range, the ring the material draws from its texture data, the position/size separation, and `dispose`, in
-the node environment — no DOM, no GPU — see `codemap/tests/cameraPath.md`. What needs a GPU stays app-verified
+the node environment — no DOM, no GPU — see `tests/cameraPath.test.ts`. What needs a GPU stays app-verified
 (README §10): the white polyline and its rings on screen over the scene, staying readable as the viewport orbits and as
 the viewing distance changes, following the toggle, and absent from an exported frame and from a pick.
 

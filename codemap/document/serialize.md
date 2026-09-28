@@ -10,45 +10,6 @@ hierarchy legality, cell ranges, keyframe widths and times, and the voxel budget
 anything. It owns the file format and the cell codec, and it owns no project state: it creates no `Project`,
 never mutates the one it reads, and hands a validated `ProjectData` back for `Project.restore` (README D51).
 
-## Public interface
-```ts
-const PROJECT_FORMAT = 'vox-world-project';   // the `format` field every file carries
-const PROJECT_VERSION = 1;                    // the schema version this reader knows
-
-type ProjectFileError =
-  | 'parse-failed'          // not JSON, or the top-level value is not an object
-  | 'unsupported-format'    // `format` is missing or names another document
-  | 'unsupported-version'   // `version` is not a positive integer, or is not PROJECT_VERSION
-  | 'bad-structure'         // a field is missing, of the wrong type, or out of its plain range
-  | 'bad-hierarchy'         // an object id is duplicated, or a parentId dangles or closes a cycle
-  | 'bad-cell'              // a cell payload's subdivision, key range, palette, or index is unusable
-  | 'bad-keyframe'          // a track or keyframe violates its channel, time, or ordering rule
-  | 'budget-exceeded';      // the file's total occupied cells exceed DEFAULT_CELL_BUDGET
-
-type ProjectFileResult =
-  | { ok: true; data: ProjectData }
-  | { ok: false; error: ProjectFileError; detail: string };
-
-function toJson(project: Project): string;
-function readJson(text: string): ProjectFileResult;
-function encodeCells(grid: UniformGrid): CellPayload;
-function decodeCells(payload: unknown): { ok: true; grid: UniformGrid } | { ok: false; detail: string };
-```
-
-`CellPayload` is the file's cell record, named by `codec` so a second encoding can be added without
-changing `version`:
-```ts
-type CellPayload = {
-  subdivision: number;      // the grid's own level (D43)
-  codec: 'varint-keys-palette';
-  cellCount: number;        // occupied cells; the decoded counts must agree with it
-  keys: string;             // base64: ascending packed cell keys, consecutive differences as varints
-  palette: number[];        // 0xRRGGBB, in first-use order over that same ascending cell order
-  indexWidth: 1 | 2;        // 1 when the palette holds at most 256 colors, else 2
-  index: string;            // base64: cellCount palette indices, little-endian at indexWidth bytes each
-};
-```
-
 ## Internal logic
 1. `toJson` assembles the document — `format`, `version`, `counters`, `settings`, `camera`, `objects`,
    `timeline` — from `project.snapshot()`, encoding each `uniform` object's grid with `encodeCells`, and
@@ -133,18 +94,6 @@ type CellPayload = {
   holds a cell outside it).
 - `decodeCells` reports `{ ok: false, detail }`; it is the only function here that inspects a value that did
   not come from this program.
-
-## Dependencies
-- `./project.js` — `Project`, `ProjectData`, `SceneObject`, `CameraSettings`, `ProjectSettings`,
-  `ObjectId` types, and `cell`-free constants; `project.ts` does not import this file, so the runtime edge
-  is one-way (`serialize -> project`), which is what keeps `Project.restore` the only writer.
-- `./timeline.js` — `Timeline`, `Track`, `Interpolation`, `TrackChannel`, and `channelValueSize`, the one
-  length table the keyframe check reads instead of re-declaring.
-- `../voxels/uniform/grid.js` — `UniformGrid`, `HexColor`, `CellKey`, `packKey`, `KEY_MIN`, `KEY_MAX`,
-  `isSubdivision`.
-- `../voxels/voxelize/voxelize.js` — `DEFAULT_CELL_BUDGET`, the one budget constant (D12).
-- No `three`, no `three-runtime`, no `editor`, no `ui`: it is the file boundary of the document layer and
-  nothing above it is reachable from here.
 
 ## Tests
 `tests/serialize.test.ts`: the codec's round trip on the unit lattice and on a subdivided grid, an empty

@@ -16,7 +16,7 @@ import type * as THREE from 'three';
  */
 const FINISH_DEADLINE_MS = 20_000;
 
-export type ExportRequest = {
+type ExportRequest = {
   project: Project;
   scene: THREE.Scene;
   capture: Capture;

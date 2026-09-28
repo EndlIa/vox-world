@@ -7,12 +7,6 @@ The two string transforms every shader patch in the runtime is built from: add a
 statement at the end of its body, or insert a block immediately before a named chunk. Both are pure and total, so a
 patch is checked in the node environment and a source that does not carry the anchor comes back unchanged.
 
-## Public interface
-```ts
-function insertChunks(source: string, declaration: string, statement: string): string;
-function insertBefore(source: string, anchor: string, insertion: string): string;
-```
-
 ## Internal logic
 1. `insertChunks` finds the first `void main() {` and the last `}`, and returns the source with `declaration` placed
    above `main` and `statement` placed at the end of the body — the shape a patch needs when it has to declare a
@@ -31,9 +25,6 @@ function insertBefore(source: string, anchor: string, insertion: string): string
 
 ## Errors
 Nothing throws; an absent anchor is a no-op, documented above.
-
-## Dependencies
-None. `grid.ts` uses `insertChunks` and `faceGrid.ts` uses both.
 
 ## Tests
 Covered through its callers: `tests/grid.test.ts` for the log-depth patch and `tests/faceGrid.test.ts` for both

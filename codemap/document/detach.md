@@ -5,15 +5,6 @@ Ring: 1 · Layer: document · Depends on: ../voxels/uniform/grid.js, ./project.j
 ## Responsibility
 Turns a selected box of a uniform voxel object into a new scene object: the box region's cells are re-indexed to a zero min corner and become a new uniform object. It owns the re-indexing, the new object's placement and naming, and the removal of the extracted cells from the source. It is not a voxel primitive (the container does the extraction) and not a selection tool — the caller resolves the box first (D6).
 
-## Public interface
-```ts
-type DetachResult =
-  | { ok: true; objectId: ObjectId; name: string }
-  | { ok: false; error: 'missing-object' | 'wrong-representation' | 'empty-region'; detail: string };
-
-function detachUniformBox(project: Project, sourceId: ObjectId, box: IntBox3): DetachResult;
-```
-
 ## Internal logic
 The path follows one rebasing rule (D20): the extracted content is expressed with its min corner at local `(0, 0, 0)`, the new object's placement follows D23, and the extracted cells are gone from the source afterwards. Under D21 the D23 placement is a pure translation, which is the translation-only transform it writes.
 
@@ -42,11 +33,6 @@ The path follows one rebasing rule (D20): the extracted content is expressed wit
 - `'empty-region'` — the box intersected no occupied cell.
 - `RangeError` — a box whose coordinates fall outside `[-512, 511]` propagates from `packKey` in `grid.ts`. The level copied into `UniformGrid.create` came from a live grid, so it is already legal. Detaching an existing region never throws.
 - All failure results carry `detail` with the offending id and region.
-
-## Dependencies
-- `../voxels/uniform/grid.js` — `IntBox3`, `UniformGrid.create`, `extractBox`, `unpackKey`, and the source grid's `subdivision`/`cellSize` reads; the only module that knows about packed cell keys.
-- `./project.js` — `Project` for id allocation, payload binding, parent inheritance, mask colors, and `worldMatrix`.
-- `three` — `Vector3` for `localMin` and the injected `position`; no container is a `Mesh` (D1).
 
 ## Tests
 - `tests/detach.test.ts` — uniform box detach re-indexes to a zero min corner and preserves world positions; the source no longer reports the extracted cells; parent inheritance, mask color, and the `"part <n>"` naming; and a region cut from a subdivided source keeps that subdivision with its cells still in place.

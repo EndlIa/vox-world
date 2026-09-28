@@ -11,13 +11,6 @@ only thing decided here is the set of times to ask for: an even walk over the cl
 no mixer, and writes nothing into the project; every call builds fresh points and releases the mixer it built
 (`animation/playback.ts` is the long-lived one, this is a throwaway). It exists for the camera path drawing (README D47).
 
-## Public interface
-```ts
-const CAMERA_PATH_SEGMENTS = 128;
-function sampleCameraTrajectory(project: Project, segments = CAMERA_PATH_SEGMENTS): Vector3[];
-function cameraKeyframePositions(project: Project): Vector3[];
-```
-
 ## Internal logic
 1. `CAMERA_PATH_SEGMENTS` is 128: enough that a curved move reads as a curve at demo scale, and few enough that the
    polyline is rebuilt cheaply on every redraw.
@@ -64,12 +57,6 @@ function cameraKeyframePositions(project: Project): Vector3[];
 No `Result` and no failure path: both functions are total. A missing track is the empty list, which is the state the
 drawing turns into nothing. `segments` is floored and floored at one, so a caller asking for less than one segment
 still gets a drawable two-point line rather than an exception.
-
-## Dependencies
-- `./compile.js` — `buildClip` for the clip and `channelBinding` for the `'.position'` path of the D22 name.
-- `../document/timeline.js` — `findTrack` and the `TrackTarget` type for the marker list.
-- `../document/project.js` — `Project`.
-- `three` — `AnimationClip`, `AnimationMixer`, `LoopOnce`, `Object3D`, `Vector3`; allowed in ring 1 (D1, D2).
 
 ## Tests
 - `tests/trajectory.test.ts` — even sampling with both ends included, the sampler following the track's interpolation

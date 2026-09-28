@@ -21,9 +21,9 @@ export function el<K extends keyof HTMLElementTagNameMap>(
 
   if (props !== undefined) {
     const { class: className, text, on: listeners, ...rest } = props;
-    if (className !== undefined && className !== null) element.className = className;
-    if (text !== undefined && text !== null) element.textContent = text;
-    if (listeners !== undefined && listeners !== null) {
+    if (className !== undefined) element.className = className;
+    if (text !== undefined) element.textContent = text;
+    if (listeners !== undefined) {
       for (const type of Object.keys(listeners)) {
         const listener = listeners[type];
         if (listener !== undefined) on(element, type, listener);
@@ -34,7 +34,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     Object.assign(settings, rest);
     for (const key of Object.keys(settings)) {
       const value = settings[key];
-      if (value === undefined || value === null) continue;
+      if (value === undefined) continue;
       Object.assign(element, { [key]: value });
     }
   }

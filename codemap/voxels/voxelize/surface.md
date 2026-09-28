@@ -8,20 +8,6 @@ cube the surface actually touches. A cell is the world unit cube (`CELL_SIZE`, R
 has no cell size to take. It is not a volume filler, it samples no colors, and it allocates no
 payload container — `voxelize.ts` owns both of those steps.
 
-## Public interface
-```ts
-type TriangleSoup = { positions: Float32Array; index: Uint32Array };  // already in target space
-type SurfaceCells = { cells: Map<CellKey, number>; triangleCount: number };  // value = triangle index
-
-function voxelizeSurface(soup: TriangleSoup, opts: {
-  budget: number;
-  onProgress?: (ratio: number) => void;
-  signal?: AbortSignal;
-}): SurfaceCells | { error: 'budget-exceeded' | 'cancelled'; detail: string };
-```
-Each map value is the index of the first triangle *within `soup`* that claimed that cell; the caller
-translates it to a global triangle index and then to a color.
-
 ## Internal logic
 1. Module-local `const CHUNK = 512`: the repository chunking convention, declared here and exported by
    nobody.
@@ -70,16 +56,6 @@ Thrown (programmer errors):
 - `RangeError` when `budget` is not a non-negative integer, or when an `index` entry is not a valid
   vertex of `positions`. `voxelize.ts` pre-validates soups so that mesh-driven malformations surface as
   `'unsupported-geometry'` results instead of throws.
-
-## Dependencies
-- `../uniform/grid.js` — `CellKey` as a type, and `CELL_SIZE` as a value: the lattice is the world unit
-  (README D41), so the kernel reads it instead of taking a cell size. This file packs its own keys with
-  the *same layout* the container uses, so the container's `unpackKey` inverts them, but without the
-  container's `[-512, 511]` guard: every coordinate that reaches this kernel is non-negative and already
-  aligned to the lattice, and the kernel must not throw from a data-driven path. The guard stays
-  where an out-of-range coordinate is a caller bug, in `UniformGrid` itself.
-- No `three` import and no outer-ring import: nothing from the library is needed, because the
-  intersection test is scalar arithmetic over `Float32Array` reads.
 
 ## Tests
 `tests/voxelize.test.ts` pins: an axis-aligned triangle slab at unit cells yields exactly the

@@ -9,15 +9,6 @@ holds no project state; what a file *means* is the composition root's decision, 
 *contains* belongs to `document/serialize.ts` (README D51), while content validation, decoding, and
 encoding belong to `three-runtime/import.ts` and `export/`.
 
-## Public interface
-```ts
-function pickGlbFile(): Promise<File | undefined>;
-function pickProjectFile(): Promise<File | undefined>;
-function wireDropTarget(target: HTMLElement, accept: readonly string[], onFile: (file: File) => void): () => void;
-function saveMp4(blob: Blob, filename: string): void;
-function saveJson(text: string, filename: string): void;
-```
-
 ## Internal logic
 `pickFile` — the one dialog both pickers use
 1. Create a detached `<input type="file">`, set `accept` to the caller's list and `hidden = true`.
@@ -80,11 +71,6 @@ fail on its own. A dropped file whose extension is not in `accept` is ignored si
 reported. A GLB that fails to parse is reported by `importGlb`'s result through `main`, and a project file
 that fails to load is reported by `readJson`'s result through `main`; neither `saveMp4` nor `saveJson`
 verifies what it is handed.
-
-## Dependencies
-None — browser globals only (`document`, `URL`, `Blob`, `DragEvent`, `Promise`). `ui/dom.ts` is
-deliberately not imported, so this file stays usable from the page bootstrap and from `Panels` without
-dragging UI machinery into the file boundary.
 
 ## Tests
 None. File picking, drag and drop, and downloads need a real browser; they are verified by running the app

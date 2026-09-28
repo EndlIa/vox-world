@@ -5,33 +5,6 @@ Ring: 3 · Layer: editor · Depends on: document/project.ts, document/detach.ts,
 ## Responsibility
 The edit operations: each mutates the project in place and returns an `OpResult` summarizing what happened. There is no undo, no command object, and no transaction here (README D9) — they are plain functions so a command layer can wrap them later unchanged. Selection state, pointer handling, and rendering are not part of this file.
 
-## Public interface
-```ts
-import type { ObjectId, Project } from '../document/project.js';
-import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
-import { KEY_MAX, KEY_MIN, boxCount, isSubdivision, normalizeBox } from '../voxels/uniform/grid.js';
-import { DEFAULT_CELL_BUDGET, type VoxelizeResult } from '../voxels/voxelize/voxelize.js';
-import type { Selection } from './session.js';
-import type * as THREE from 'three';
-
-type OpResult = { ok: true; detail: string; cells?: number } | { ok: false; error: string; detail: string };
-
-function applyVoxelizeResult(project: Project, result: Extract<VoxelizeResult, { ok: true }>, opts?: { attachTo?: ReadonlyMap<string, ObjectId>; parentId?: ObjectId | null }): { objectIds: ObjectId[] };  // attaching a payload leaves the object translation-only (README D25)
-function addBox(project: Project, objectId: ObjectId, box: IntBox3, color: HexColor): OpResult;
-function removeBox(project: Project, objectId: ObjectId, box: IntBox3): OpResult;
-function paintBox(project: Project, objectId: ObjectId, box: IntBox3, color: HexColor): OpResult;
-function detachSelection(project: Project, selection: Selection): OpResult & { objectId?: ObjectId };
-function createGroup(project: Project, name: string): OpResult & { objectId: ObjectId };
-function deleteObject(project: Project, objectId: ObjectId): OpResult;
-function reparentObject(project: Project, objectId: ObjectId, parentId: ObjectId | null): OpResult;
-function setObjectMaskColor(project: Project, objectId: ObjectId, color: HexColor): OpResult;
-function setTransformFromWorldMatrix(project: Project, objectId: ObjectId, matrix: THREE.Matrix4): OpResult;
-function setObjectVisible(project: Project, objectId: ObjectId, visible: boolean): OpResult;
-function setObjectSubdivision(project: Project, objectId: ObjectId, subdivision: number): OpResult;
-function setObjectAlignToGrid(project: Project, objectId: ObjectId, alignToGrid: boolean): OpResult;
-function renameObject(project: Project, objectId: ObjectId, name: string): OpResult;
-```
-
 ## Internal logic
 1. Guard order is the same everywhere: resolve the object (`missing-object`), check the representation (`wrong-representation`), then mutate. A failed guard returns before any write, so no operation can leave a half-applied edit.
 2. Uniform region operations consume one inclusive integer box in the addressed object's local grid (README D19). It arrives from `pointer.ts` already normalized and is re-normalized with `normalizeBox` before measuring, because `boxCount` drives the budget check.
@@ -67,14 +40,6 @@ function renameObject(project: Project, objectId: ObjectId, name: string): OpRes
 - Programmer errors propagate instead of being converted: cell coordinates outside the packable `[-512, 511]` range throw `RangeError` from `grid.ts`, and a `Matrix4` argument is checked only for finiteness and invertibility.
 - `setObjectAlignToGrid` refuses an unknown id with `'missing-object'` before touching the flag; a placement that is already whole is a success carrying the `is already on the grid` detail, not a failed no-op.
 - `setObjectSubdivision` throws a `RangeError` for a level that is not a power of two, before the object is even looked up, because that is an argument error rather than a failure of the object; every other refusal it has is data, and both of those — `'exceeds-grid'` and `'budget-exceeded'` — are measured before the refined grid is built, so the previous payload survives them.
-
-## Dependencies
-- `../document/project.ts` — `Project`, `ObjectId`, `SceneObject`: lookup, hierarchy, id allocation, `nextMaskColor`, and the alignment rule the two object operations call (`alignedPosition`, `alignWorldMatrix`).
-- `../document/detach.ts` — `detachUniformBox` for `detachSelection`.
-- `./session.ts` — `Selection` (type only); `../voxels/uniform/grid.ts` — `IntBox3`, `HexColor`, `boxCount`, `normalizeBox`, and — for `setObjectSubdivision` — `isSubdivision`, `KEY_MIN`, `KEY_MAX`.
-- `../voxels/voxelize/voxelize.ts` — `DEFAULT_CELL_BUDGET` (the budget `addBox` and `setObjectSubdivision` enforce) and `VoxelizeResult` (type only).
-- `three` — `Matrix4` for `setTransformFromWorldMatrix` and `Vector3` (type only) for the `placePayload` argument.
-No `three-runtime` import: operations neither render nor pick, and marking the mirror dirty is the caller's step.
 
 ## Tests
 `tests/ops.test.ts` is the direct unit coverage for this module, and it pins the grid-alignment half of the object operations: `setObjectAlignToGrid` pulling a fractional placement onto the nearest cell as the flag turns on while turning it off writes the flag alone, `setTransformFromWorldMatrix` storing whole cells whose parent-frame translation is the placement `alignWorldMatrix` previewed for the same matrix, and that same call keeping a fractional placement verbatim while the flag is off. It also pins `setObjectSubdivision` on a 2×2×2 cube at subdivision 1: every cell becoming a block of itself with the placement and the flag untouched, the level already held as a success and a coarser one refused, a cell at 300 leaving the key space as `'exceeds-grid'`, an object with no grid refused as `'wrong-representation'`, and a level of 3 throwing. The rule the two alignment operations apply has its own suite in `tests/project.test.ts`. README section 10 lists no further editor coverage, so the region operations (the budget refusal, the representation guard, `detachSelection`'s dispatch), `renameObject`'s `'invalid-name'`, and `applyVoxelizeResult` leaving every object it filled translation-only — identity quaternion, unit scale, `position` equal to the output's `origin` — including on the `attachTo` path are reached by running the application.

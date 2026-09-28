@@ -10,41 +10,6 @@ unit (`CELL_SIZE`) a grid subdivides: cell `(x, y, z)` occupies `[x / subdivisio
 world unit, so a cell coordinate is a world coordinate times the subdivision the grid carries and the grid
 stores no size (README D41, D43).
 
-## Public interface
-```ts
-const CELL_SIZE = 1; // the world unit: the base cell size a grid subdivides
-const KEY_MIN = -512;                                // exported inclusive per-axis bounds of the key space
-const KEY_MAX = 511;
-type CellKey = number;
-type HexColor = number; // 0xRRGGBB, the THREE.Color.getHex()/setHex() exchange form
-type IntBox3 = { min: readonly [number, number, number]; max: readonly [number, number, number] };
-
-class UniformGrid {
-  static create(subdivision = 1): UniformGrid;         // validates the level
-  readonly subdivision: number;                        // cells per world unit, fixed for the grid's life
-  get cellSize(): number;                              // CELL_SIZE / subdivision
-  get size(): number;                                  // occupied cell count
-  has(x: number, y: number, z: number): boolean;
-  getColor(x: number, y: number, z: number): HexColor | undefined;
-  set(x: number, y: number, z: number, color: HexColor): void;         // overwrites color
-  remove(x: number, y: number, z: number): boolean;
-  forEach(cb: (x: number, y: number, z: number, color: HexColor) => void): void;
-  bounds(): IntBox3 | null;                            // null when empty
-  fillBox(box: IntBox3, color: HexColor): number;      // returns cells written
-  clearBox(box: IntBox3): number;                      // returns cells deleted
-  paintBox(box: IntBox3, color: HexColor): number;     // occupied cells only
-  subdividedBy(levels: number): UniformGrid;           // a copy 2**levels finer; the receiver is untouched
-  extractBox(box: IntBox3, opts: { remove: boolean }): Map<CellKey, HexColor>;
-}
-
-function isSubdivision(value: number): boolean;        // integer power of two >= 1
-function packKey(x: number, y: number, z: number): CellKey;
-function unpackKey(key: CellKey): [number, number, number];
-function normalizeBox(a: readonly [number, number, number], b: readonly [number, number, number]): IntBox3;
-function boxCount(box: IntBox3): number;
-function boxEquals(a: IntBox3, b: IntBox3): boolean;
-```
-
 ## Internal logic
 1. Storage is `Map<CellKey, HexColor>`; the occupied set is exactly the key set, so `size === map.size`, `has` is `map.has(packKey(...))`, and `getColor` returns `undefined` for an unoccupied cell.
 2. `packKey(x, y, z) = (x − KEY_MIN) · AXIS_SPAN² + (y − KEY_MIN) · AXIS_SPAN + (z − KEY_MIN)`, where the exported `KEY_MIN`/`KEY_MAX` are `-512`/`511` and `AXIS_SPAN = KEY_MAX − KEY_MIN + 1` is derived from them; each axis must be an integer in `[KEY_MIN, KEY_MAX]`. Every key therefore lies in `[0, 1074790398]` and is an exact 32-bit integer. `unpackKey` is the exact inverse and re-checks nothing.
@@ -74,19 +39,6 @@ function boxEquals(a: IntBox3, b: IntBox3): boolean;
 - `create`/`assertSubdivision` throw `RangeError` for a subdivision that is not an integer power of two `>= 1`, and `subdividedBy` throws `RangeError` for a `levels` that is not a positive integer, both naming the offending value. A legal level whose blocks would leave the key space is not clamped: `packKey` throws out of `subdividedBy` instead, which is why `editor/ops.ts` checks the refined extents before asking.
 - An inverted box (`min > max` on an axis) is normalized by callers through `normalizeBox`; the region methods treat the box as given and inclusive, so an inverted box writes nothing and `boxCount` is `0` rather than throwing.
 - These are all programmer errors and throw; the grid has no `Result` type and never returns a silently degenerate value. The per-object voxel budget is not enforced here — callers check it before writing (README D12).
-
-## Dependencies
-None. `CellKey`, `HexColor`, and `IntBox3` are declared here and imported from `voxels/uniform/grid.js` by
-`voxels/voxelize`, `three-runtime/scene.ts`, `three-runtime/overlay.ts`, and `editor/ops.ts`, which must not
-re-declare them. `CELL_SIZE` is the base cell size a grid subdivides (README D41): `voxels/voxelize/surface.ts`
-reads it for a voxel's half extent and `document/project.ts` for the cell an aligned object with no payload
-grid rounds to, while `three-runtime/scene.ts` draws each cube at the grid's own `cellSize` and
-`three-runtime/overlay.ts` takes the cell from its caller, so nothing may hard-code a second copy of the world
-unit. `KEY_MIN`/`KEY_MAX` export the key space's
-per-axis bounds and `isSubdivision` its level rule, both consumed
-by `editor/ops.ts` to refuse a subdivision it cannot apply; the instance's `subdivision` and derived `cellSize`
-are read rather than re-derived by `document/project.ts`, `document/detach.ts`, `three-runtime/scene.ts`,
-`editor/pointer.ts`, and `editor/session.ts`.
 
 ## Tests
 `tests/uniform.test.ts`: key packing at both range ends and `RangeError` outside them; `packKey`/`unpackKey`

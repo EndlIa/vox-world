@@ -8,15 +8,6 @@ The viewport's mode switch: two buttons, `Object` and `Edit`, pinned to the bott
 whether a press may write voxels (README D39). It renders `session.mode` and forwards a click; it holds no state, reads no project data, and
 never touches the document, the scene, or the gizmo.
 
-## Public interface
-```ts
-type ModeBarContext = { session: EditorSession };
-class ModeBar {
-  constructor(root: HTMLElement, context: ModeBarContext);
-  refresh(): void;
-}
-```
-
 ## Internal logic
 1. The constructor builds one `<button>` per mode under `root`, in the order `Object`, `Edit` — the order the bar shows them — labels them from
    `MODE_LABELS`, and forwards each click through `session.setMode(mode)`. The `Object` button is never disabled: leaving a mode never needs a
@@ -43,11 +34,6 @@ class ModeBar {
 ## Errors
 None. `setMode` takes a closed union and validates nothing, so neither a click nor a refresh can fail; a disabled `Edit` button simply
 delivers no click.
-
-## Dependencies
-- `./dom.js` — `el` for the two buttons.
-- `../editor/session.js` — `EditorSession` for the mode it renders and sets, and `EditorMode` for the union itself.
-- No `app/` import, no Three.js import, and no `document/` or `three-runtime/` import: the bar knows only the session.
 
 ## Tests
 None, like the rest of `ui/`: vitest runs in the node environment without a DOM. Verified by running the app — the bar sits at the bottom centre

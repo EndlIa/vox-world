@@ -7,18 +7,6 @@ A read-only status readout: the active object, its representation type, the curr
 (README D41) — a selection summary, and the current frame and frame rate. It renders a value it is handed and queries nothing — it never touches the project, the picker, or the mirror — because all of that arrives
 through `HudState`.
 
-## Public interface
-```ts
-type HudState = {
-  activeObjectName: string | null; representation: 'empty' | 'uniform' | null;
-  editResolution: EditResolution | null; selectionText: string; frame: number; fps: number;
-};
-class Hud {
-  constructor(root: HTMLElement);
-  update(state: HudState): void;
-}
-```
-
 ## Internal logic
 1. The constructor builds one `<div class="hud">` under `root`, one row per field, each row a label `<span>` plus a value `<span>`. No control is
    interactive, no listener is registered, and no state is stored beyond those element references.
@@ -49,13 +37,6 @@ class Hud {
 ## Errors
 None. The HUD cannot fail and never throws: missing values arrive as `null` and render as `—`, and no value it shows is parsed or computed, so no
 parse or range error is possible.
-
-## Dependencies
-- `./dom.js` — `el` for the container, rows, and value spans, and `fmt` for the numbers.
-- `../editor/session.js` — `EditResolution` for the resolution row's typing.
-- `../document/project.js` — `Representation`, the owner of the `'empty' | 'uniform'` union that the brief spells out inline in
-  `HudState`.
-- No `app/` import, no outer-ring import, and no Three.js import.
 
 ## Tests
 None. The HUD needs a DOM and vitest runs in the node environment; it is verified by running the app — select an object and confirm its name,

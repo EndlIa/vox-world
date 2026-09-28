@@ -21,7 +21,7 @@ const MODE_LABELS: Record<EditorMode, string> = { object: 'Object', edit: 'Edit'
 /** The bar's buttons, in display order. */
 const MODES: readonly EditorMode[] = ['object', 'edit'];
 
-export type ModeBarContext = {
+type ModeBarContext = {
   session: EditorSession;
 };
 

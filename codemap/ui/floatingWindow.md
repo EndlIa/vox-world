@@ -9,25 +9,6 @@ and hears every visibility change through `onVisibilityChange`. Closing hides th
 never reads, writes, clears, or removes a control — so a reopened window shows whatever state its owner's controls were left in. It is not a
 dialog: it has no backdrop, nothing is modal, and several windows are open and moved independently at once.
 
-## Public interface
-```ts
-type FloatingWindowOptions = {
-  title: string;                    // the name the title bar shows
-  left: number; top: number;        // initial position, in viewport pixels
-  onVisibilityChange(open: boolean): void;   // called on every visibility change, never for a no-op
-};
-class FloatingWindow {
-  constructor(options: FloatingWindowOptions);
-  readonly root: HTMLElement;       // the owner appends it; only raise() ever rewrites its inline z-index
-  readonly body: HTMLDivElement;    // the owner's content goes here
-  get isOpen(): boolean;
-  open(): void;
-  close(): void;                    // hiding an already hidden window changes nothing and calls nothing
-  toggle(): void;
-  dispose(): void;                  // removes every listener this window registered and the root from the document
-}
-```
-
 ## Internal logic
 1. The constructor builds the whole widget once through `el`: a `section.window` holding an `h2.window-title` — a `span` with `title` plus a
    `button.window-close` whose text is `×` and whose `aria-label` is `Close` — and a `div.window-body`, which starts empty. It sets
@@ -83,11 +64,6 @@ No `Result` and nothing is swallowed. `open()` and `toggle()` throw `TypeError` 
 `VoxelizeDialog.open` makes — because a disposed window has no listeners and no place in the document, so opening it could only lie.
 `close()` and `dispose()` never throw: a stray `×` click on an already closed window, and a second `dispose()`, are ordinary no-ops. No other
 path can fail: a drag with no parent to raise against simply does not raise, and a drag that produced no `pointermove` leaves the position alone.
-
-## Dependencies
-`./dom.js` — `el` for construction and `on` for the listeners it must be able to remove. Nothing else: no project, document, editor, export, or
-Three.js import, no `app/`, and no CSS module — the window's look and the `MIN_VISIBLE`/`BASE_Z` facts it works with live in `index.html`
-(`.window`, `.window > h2`, `.window-close`) and in its own constants.
 
 ## Tests
 None, and it cannot have any: it needs a DOM, a layout, and pointer input, while vitest runs in the node environment, so it is verified by running

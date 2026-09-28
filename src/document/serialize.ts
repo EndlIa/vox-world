@@ -35,7 +35,7 @@ const BINARY_CHUNK = 0x8000;
 /** The largest key `packKey` produces, derived from the key space's own bound rather than written out again. */
 const MAX_CELL_KEY = packKey(KEY_MAX, KEY_MAX, KEY_MAX);
 
-export type ProjectFileError =
+type ProjectFileError =
   | 'parse-failed'
   | 'unsupported-format'
   | 'unsupported-version'
@@ -45,14 +45,14 @@ export type ProjectFileError =
   | 'bad-keyframe'
   | 'budget-exceeded';
 
-export type ProjectFileResult =
+type ProjectFileResult =
   | { ok: true; data: ProjectData }
   | { ok: false; error: ProjectFileError; detail: string };
 
-export type CellCodec = 'varint-keys-palette';
+type CellCodec = 'varint-keys-palette';
 
 /** One object's cells as the file stores them: ascending packed keys as varint deltas, plus a palette. */
-export type CellPayload = {
+type CellPayload = {
   subdivision: number;
   codec: CellCodec;
   cellCount: number;
@@ -80,7 +80,7 @@ function failed<T>(value: Read<T>): value is Failure {
  * has to be. Its fields stay `unknown`, and each reader names the ones it uses, so no field's type is implied
  * by this guard.
  */
-export function isJsonObject(value: unknown): value is Record<string, unknown> {
+function isJsonObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 

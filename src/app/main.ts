@@ -54,8 +54,9 @@ import { ModeBar } from '../ui/modeBar.js';
 import type { HudState } from '../ui/hud.js';
 import { el } from '../ui/dom.js';
 import { pickGlbFile, pickProjectFile, saveJson, saveMp4, wireDropTarget } from './files.js';
+import { OVERLAY_LAYER, SOURCE_LAYER } from '../three-runtime/layers.js';
 
-export type AppContext = {
+type AppContext = {
   project: Project;
   mirror: SceneMirror;
   picker: Picker;
@@ -173,8 +174,8 @@ export function main(): void {
   // The overlay and the gizmo live on camera layer 1 and the imported raw meshes on layer 2
   // (README D24), so the viewport camera draws both while the raycaster tests layers 0
   // and 2 and the export camera — and the `Capture` that renders through it — stays on layer 0 alone.
-  viewportCamera.layers.enable(1);
-  viewportCamera.layers.enable(2);
+  viewportCamera.layers.enable(OVERLAY_LAYER);
+  viewportCamera.layers.enable(SOURCE_LAYER);
   // The logarithmic depth buffer is what keeps a scene of any size drawable: an imported file is metres
   // per unit as authored, which for a centimetre-authored model is a scene kilometres across, and a linear
   // depth buffer with the near plane at 1e-4 spends its whole precision in the first metres — surfaces far

@@ -25,61 +25,6 @@ bar, because they are animation (README D44, D46). The rail is
 the whole overlay: the panel keeps no other row, and it has no message area of its
 own — a job's progress and an operation's failure are not its business (README D38).
 
-## Public interface
-```ts
-type CameraPose = {                 // one authored camera pose: the carrier's fields, and what a numeric field writes back
-  position: [number, number, number];
-  quaternion: [number, number, number, number];
-  fov: number;
-};
-type CameraControlView = {          // what the carrier's controls read (README D46)
-  selected: boolean;                // whether the gizmo currently drives the carrier
-  mode: 'translate' | 'rotate';     // the gizmo's mode, shared with objects
-  follow: boolean;                  // whether a run takes the viewport with it; the option applies to the next run (README D48)
-  playing: boolean;                 // whether a run is in flight, which is when the follow option waits
-  pose: CameraPose;                 // the authored camera, i.e. what a keyframe would record
-  pathVisible: boolean;             // whether the camera path is drawn; the app's flag, not the panel's
-  pathAvailable: boolean;           // whether the track holds a path at all (two keyframes or more)
-};
-type PanelContext = {
-  project: Project; session: EditorSession;
-  sceneVisible?(): boolean;    // the app's raw-mesh override; absent => forward-only checkbox
-  gridVisible?(): boolean;     // the viewport's one world grid's flag; absent => forward-only checkbox
-  timelineVisible?(): boolean;   // the app's timeline-bar flag; absent => the rail's `Animation` button is disabled
-  cameraControl?(): CameraControlView;   // the carrier's state; absent => the carrier's controls are disabled
-  actions: {
-    pickImportFile(): void;      // opens the file dialog from app/files.ts; ui never imports app
-    saveProject(): void;         // writes the whole project to one JSON download (README D51)
-    openProject(): void;         // opens a project file, replacing what is open (README D51)
-    exportMp4(options: { width: number; height: number; fps: number; from: number; to: number;
-      mode: 'beauty' | 'mask' }): void;
-    createGroup(): void;
-    deleteObject(objectId: ObjectId): void;   // deletes that object; clears the session when it was active
-    setActiveMaskColor(color: HexColor): void;
-    setActiveVisible(visible: boolean): void;   // shows or hides the active object
-    setActiveAlignToGrid(alignToGrid: boolean): void;   // turns the active object's grid alignment on or off
-    setActiveSubdivision(subdivision: number): void;    // raises the active object's own grid level; a coarser one is not offered
-    detachSelection(): void;   // detaches the region the session selected; the app runs it through the pointer tool
-    setSourceVisible(enabled: boolean): void;   // shows or hides every imported raw mesh
-    setGridVisible(visible: boolean): void;    // shows or hides the viewport's one world grid (README D35)
-    setTimelineVisible(visible: boolean): void;     // shows or hides the timeline bar; the app owns the flag
-    renameActive(name: string): void;           // renames the active object; the app trims and refuses ''
-    reparentActive(parentId: ObjectId | null): void;
-    setCameraFov(fov: number): void;         // authors the output camera's vertical FOV
-    setCameraPose(pose: CameraPose): void;   // writes the whole authored pose; the app refuses a bad component
-    toggleCameraControl(): void;             // selects or deselects the carrier (README D46)
-    toggleGizmoMode(): void;                 // flips the gizmo between moving and rotating, for whatever it is on
-    cameraToView(): void;                    // `Camera -> View`: authors the pose the viewport shows
-    viewToCamera(): void;                    // `View -> Camera`: moves the viewport, writes nothing
-    setCameraPathVisible(visible: boolean): void;   // draws or hides the camera path; a view switch, so it writes nothing else
-  };
-};
-class Panels {
-  constructor(root: HTMLElement, context: PanelContext);
-  refresh(): void;
-}
-```
-
 ## Internal logic
 1. The constructor builds every control once through `el` and places each group's controls in that group's own window: the
    import group (an import button, a dim line saying a `.glb` can be dropped on the viewport, and a `Show raw meshes`
@@ -161,7 +106,7 @@ class Panels {
    button needs a selection, since it is a command on the selected region. The `Grid` group's three controls need no active object — they act
    on the viewport rather than on the document — and only the `Display` select is never disabled: the axis and the offset are `disabled`
    unless the display on screen is `multi`, because the ground and the work cube are fixed, so those two fields would pretend to do
-   something (README D49). The `FOV (deg)` input
+   something (README D35). The `FOV (deg)` input
    forwards `parseFloat` of its value through `setCameraFov(fov)` on every `input` event, so the authored projection follows the field; the app
    validates and clamps what it receives.
 9. `Show raw meshes` is the raw-versus-voxel toggle (README D24): its `change` event forwards `checked` through `setSourceVisible(enabled)` and nothing else, so the panel never touches the mirror, the scene, or a mesh. It is seeded from `context.sceneVisible()` when the context exposes that function — the app does, with `SceneMirror.sourceVisible` — and left untouched by `refresh()` when it does not, in which case the checkbox is a plain forward-only control and the app remains the only thing that knows whether the raw meshes are shown. `refresh()` therefore never invents a state for it. The `Grid` group follows the same rule through `context.gridSettings()`, which is the
@@ -266,31 +211,7 @@ field re-seeds from the project. The carrier's pose is the one place the panel r
 plus the FOV as one pose, and a cleared or non-finite component makes it refresh instead — the fields come back showing what the camera holds — rather
 than handing over a partial pose; the app checks what it receives again and refuses a zero-length quaternion (README D46). The `Plane offset (cells)` field is
 forwarded as it reads, a fraction included, and the app drops what is not a whole number and refreshes the panel, so the panel validates nothing and the grid
-never sees a value it would refuse (README D49).
-
-## Dependencies
-- `./dom.js` — `el`, `fmt` for construction and the row's cell counts.
-- `./floatingWindow.js` — `FloatingWindow`, the one widget each group's controls are placed in; the panel supplies the title, the staggered
-  start position, the `onVisibilityChange` that marks the rail button, and the body's content, and never touches the window's position or
-  visibility itself.
-- `../document/project.js` — `Project`, `ObjectId` for the object read-out and the reparent target.
-- `../editor/session.js` — `EditorSession`, `ActiveTool`; the non-project state the panel reads and writes through its setters, including the
-  `editColor` shared with the add and paint tools, the `addHeight` the add tool's drag reads (README D19, D36), and `EditResolution` for the cells a row reports (README D41) and the level the subdivision select shows.
-- `../voxels/uniform/grid.js` — `HexColor` for the color inputs and the mask-color action. The panel no longer names `VoxelizeTarget`, so
-  `../voxels/voxelize/voxelize.js` is no longer imported here.
-- Mask color, the name, visibility, reparenting, the FOV, and the raw-mesh override arrive as `PanelContext` callbacks
-  that `main` implements with
-  `editor/ops.ts`, `three-runtime/controls.ts`, `three-runtime/scene.ts`, and the project camera; this file imports neither `editor/ops.js` nor anything from `app/`. No
-  outer-ring import and no Three.js use. `sceneVisible` is a plain callback, so exposing it costs the app one closure and gives
-  the panel no import it did not already have; the world grid's flag and its one action arrive the same way — a `gridVisible` closure and one callback —
-  so the panel holds no grid state and imports nothing from `three-runtime` at all (README D35); the timeline bar's flag and its toggle arrive the
-  same way, a `timelineVisible` closure and `setTimelineVisible`, so the rail's `Animation` button costs the panel no import either (README D44);
-  the settings themselves are the dialog's, not the
-  panel's, which is why neither `defaults` nor a voxelize target crosses this boundary any more, and why the panel holds no voxelize-related member at all.
-  The carrier's four actions and its pose write arrive the same way — plain `PanelContext` callbacks that `main` implements over the carrier and the
-  project camera, so the carrier costs the panel no import either (README D46) — and so does the camera path's toggle, `setCameraPathVisible`, which
-  `main` implements over the drawing and the app's flag (README D47), and
-  own flag and the transport it drives (README D48).
+never sees a value it would refuse (README D35).
 
 ## Tests
 None. The panel needs a DOM and vitest runs in the node environment, so it is verified by running the app (README section 10): the panel must show no
@@ -318,7 +239,7 @@ follow, and the gizmo must be gone; dragging the window's title bar must move it
 `Scene` together must show two windows at different positions, and pressing one must put it above the other; pressing `Grid` must open a window holding `Display`,
 `Plane axis`, and `Plane offset (cells)`, and choosing `Volume` must put the work cube's ground and its two walls into the viewport in place of the single floor plane, while
 choosing `Floor` again must take the walls away; the axis and the offset must be disabled under every display but `Multi plane`, and with `Multi plane` chosen an axis
-press and a committed offset in cells must move that one plane onto the axis and to the offset while the fixed displays stay where they were (README D49); pressing `Animation` must show the timeline bar along the bottom of the page and mark the button
+press and a committed offset in cells must move that one plane onto the axis and to the offset while the fixed displays stay where they were (README D35); pressing `Animation` must show the timeline bar along the bottom of the page and mark the button
 `on`, and pressing it again must hide the bar — leaving the keyframes it held intact when it is shown again — with the canvas' box and its drawing
 buffer still in step (README D44); a drag far past an edge must park
 the window against it with its title bar still reachable; a press below the rail must reach the viewport rather than the overlay; a second import

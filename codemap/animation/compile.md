@@ -5,12 +5,6 @@ Ring: 1 · Layer: animation · Depends on: ../document/project.js, ../document/t
 ## Responsibility
 Translates the authoring timeline into one `THREE.AnimationClip`: channel to keyframe-track class, interpolation mode to Three.js interpolant, channel to `PropertyBinding` path. It is a pure translation — it creates no mixer, holds no state, and never evaluates a time; Three.js is the interpolation engine (D2). It is also the one place an authored keyframe time becomes a clip time: the document holds whole milliseconds and the clip is seconds, so this division by 1000 is where the two units meet (README D45).
 
-## Public interface
-```ts
-function channelBinding(channel: TrackChannel): { path: string; valueSize: number };
-function buildClip(project: Project, only?: readonly ObjectId[]): THREE.AnimationClip;
-```
-
 ## Internal logic
 1. `channelBinding` is an exhaustive switch: `position → { path: '.position', valueSize: 3 }`, `quaternion → { path: '.quaternion', valueSize: 4 }`, `scale → { path: '.scale', valueSize: 3 }`, `fov → { path: '.fov', valueSize: 1 }`, with a `never` default so adding a channel breaks the build. The `valueSize` values must equal the keyframe lengths `timeline.ts` validates.
 2. `buildClip` walks `project.timeline.tracks` in array order and skips: tracks with zero keyframes (`KeyframeTrack` requires non-empty arrays), and object tracks whose `objectId` is absent from `project.objects` (a stale track survives a removal only if `removeTracksFor` was skipped). An empty track is a normal state rather than half of a deletion — `document/timeline.ts` keeps a track when its last keyframe is removed — and this skip is what makes such a track contribute nothing to the clip (README D45).
@@ -34,11 +28,6 @@ function buildClip(project: Project, only?: readonly ObjectId[]): THREE.Animatio
 ## Errors
 - No `Result` type: the inputs are validated where they are authored, so the only runtime failures are invariants. An unknown `TrackChannel` throws `TypeError` from the `never` guard; a keyframe whose `value.length` contradicts `channelBinding` throws `RangeError`.
 - Missing objects and empty tracks are skipped silently by design — they are normal states after an edit, not failures.
-
-## Dependencies
-- `../document/project.js` — `Project` and `ObjectId` (the `objects` map is the existence check for step 2).
-- `../document/timeline.js` — `Track`, `TrackChannel`, `Interpolation`, `TrackTarget` types; the timeline data itself is read through `project.timeline`, so no mutator is imported.
-- `three` — `AnimationClip`, `VectorKeyframeTrack`, `QuaternionKeyframeTrack`, `NumberKeyframeTrack`, and the interpolation constants; allowed in ring 1 (D1, D2).
 
 ## Tests
 - `tests/timeline.test.ts` — clip compilation maps `step`/`linear`/`smooth` onto the three interpolants, picks the right track class and `'.position'`/`'.quaternion'`/`'.scale'`/`'.fov'` paths, sets `duration` from `timeline.durationMs / 1000`, reads keyframe times back as `timeMs / 1000`, and omits objects without keyframes and tracks left empty.

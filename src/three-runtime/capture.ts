@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 
-export type CaptureResult =
+type CaptureResult =
   | { ok: true; bitmap: ImageBitmap }
   | { ok: false; error: 'context-lost' | 'render-failed'; detail: string };
 
@@ -45,16 +45,6 @@ export class Capture {
 
     this.canvas = this.renderer.domElement;
     this.canvas.addEventListener('webglcontextlost', this.handleContextLost);
-  }
-
-  /** Export width in pixels, whatever the visible canvas or its CSS size is. */
-  get width(): number {
-    return this.frameWidth;
-  }
-
-  /** Export height in pixels, whatever the visible canvas or its CSS size is. */
-  get height(): number {
-    return this.frameHeight;
   }
 
   /**

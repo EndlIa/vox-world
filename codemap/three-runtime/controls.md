@@ -4,22 +4,6 @@ Ring: 2 · Layer: three-runtime · Depends on: `three`, `three/addons/controls/O
 
 ## Responsibility
 
-## Public interface
-```ts
-class ViewportControls {
-  constructor(domElement: HTMLElement, camera: THREE.PerspectiveCamera);
-  readonly orbit: OrbitControls;
-  attachGizmo(object: THREE.Object3D, mode: 'translate' | 'rotate' | 'scale', pivot: THREE.Vector3): void;
-  detachGizmo(): void;
-  gizmoBusy(): boolean;                                // true while the gizmo owns the pointer
-  onGizmoChange(cb: (matrix: THREE.Matrix4) => void): void;   // the node matrix the drag derives
-  onGizmoCommit(cb: (matrix: THREE.Matrix4) => void): void;   // pointer-up: the matrix to write back
-  setViewFrom(position: THREE.Vector3, quaternion: THREE.Quaternion, target?: THREE.Vector3): void;   // points the viewport at a pose, at the pivot it is given
-  update(): void;
-  dispose(): void;
-}
-```
-
 ## Internal logic
 1. Constructor: `new OrbitControls(camera, domElement)` with `mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN }`. Wheel zoom keeps working through OrbitControls' own wheel handler, and left-drag stays free for the box tool. Damping is enabled, so `update()` must be called once per frame. The controls always navigate the **viewport** camera they were constructed with: navigation is the editor's camera, and a clip or a field is what moves the output camera.
 2. `attachGizmo(object, mode, pivot)` lazily creates one `TransformControls(camera, domElement)`, reuses it afterwards, sets `mode`, and adds its helper to the scene that owns `object` — the root found by walking `object.parent` upward. A root that is not a `THREE.Scene` throws `TypeError`, because an unattached helper would be invisible. It also records `object` as the attached node and places the pivot proxy: one reusable empty `Object3D`, added to that **scene root** rather than to the object, at `object.matrixWorld · T(pivot)` — the object's own rotation and scale included, so a `local`-space gesture is oriented like the object. The gizmo is attached to the proxy and never to the node (README D37): `TransformControls` draws its handles at the attached object's own origin and writes a drag into that object's own transform, so attaching the node would draw the handles at the node origin — the payload's min corner (README D25).
@@ -61,12 +45,6 @@ class ViewportControls {
   finite or the origin.
 - `detachGizmo()`, `onGizmoChange`, and `onGizmoCommit` before any attachment are no-ops; interactively so, never silently wrong, because no change can be produced without an attached object.
 - `gizmoBusy()` throws nothing and is legal at any time, including before any gizmo exists: no gizmo, no attachment, and a disabled gizmo all answer `false`.
-
-## Dependencies
-- `three` — `PerspectiveCamera`, `Object3D`, `Vector3`, `Matrix4`, `MOUSE`.
-- `three/addons/controls/OrbitControls.js` — viewport navigation (README §3 addon map).
-- `three/addons/controls/TransformControls.js` — the edit gizmo; neither is re-implemented. Its `dragging`, `axis`, and `enabled` state is what `gizmoBusy()` reads.
-No outer-ring import: no editor session, no document, no UI.
 
 ## Tests
 - No vitest file: both classes need a DOM element and pointer events, which the node test environment does not provide. Verified by running the app (README §10): middle/right navigation with left-drag free, one commit per gesture, and the follow lock — with the lock on, middle/right navigation moves the output camera and a timeline `add` on the camera records the pose it was left at. Gesture ownership is checked in the same walk: with a `select` gizmo attached to the active object, a left click on a voxel must reach the tool and select the cell under the pointer, while a press that starts on a handle must move the object and change no voxels.

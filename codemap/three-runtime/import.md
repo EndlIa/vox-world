@@ -5,24 +5,6 @@ Ring: 2 · Layer: three-runtime · Depends on: `../document/project.js`, `../vox
 ## Responsibility
 Reads a GLB byte buffer into an `ImportedScene`: one `ImportedNode` per mesh node, each carrying its own world matrix, geometry, and `ColorSource`, plus the scene's own name, the loader root, the displayed world bounds and the bounds of the nodes that are voxelized. Flags the dedicated outline shells a stylized export adds, and keeps them out of the voxelizer's input and out of the sizes derived from an import. Also converts an imported scene into **one** voxelizer source and **one** document object, and rescales a scene onto the world lattice at a requested cell count. It reads the base color texture's pixels back out of the image and hands them, with the geometry's UVs and the material's alpha cutoff, to `voxels/voxelize/colorSampler.ts`, which owns the sampling rules; it does not sample a texture itself, does not voxelize, does not build render meshes, and owns no scene state.
 
-## Public interface
-```ts
-type ImportedNode = { sourceId: string; name: string; geometry: THREE.BufferGeometry;
-  matrixWorld: THREE.Matrix4; color: ColorSource; sourceMesh: THREE.Mesh; outline: boolean };
-type ImportedScene = { name: string; root: THREE.Object3D; nodes: ImportedNode[]; bounds: THREE.Box3;
-  voxelizeBounds: THREE.Box3; authoredExtent: number };
-type ImportResult = { ok: true; scene: ImportedScene } |
-  { ok: false; error: 'parse-failed' | 'unsupported' | 'empty'; detail: string };
-function importGlb(data: ArrayBuffer): Promise<ImportResult>;
-function isDedicatedLineOutlineMesh(mesh: THREE.Mesh): boolean;
-function buildColorSource(material: THREE.Material): ColorSource;
-function buildVoxelizeSource(scene: ImportedScene): VoxelizeSource | undefined;
-function adoptImportedScene(project: Project, scene: ImportedScene):
-  { objectId: ObjectId; sourceId: string };
-function scaleImportedScene(scene: ImportedScene, cellsAcross: number): ImportedScene;
-```
-`ColorSource` is owned by `voxelize/colorSampler.ts`, `VoxelizeSource`/`VoxelizePart` by `voxelize/voxelize.ts`, `ObjectId`/`Project` by `document/project.ts`; none is re-declared here. `scene.name` is the GLB scene's own name (`gltf.scene.name`), or `'Imported scene'` when the file names no scene, so one import is never nameless. The `ColorSource` this file builds always carries `baseColor` and `alphaTest` (the material's `material.alphaTest`, `0` when it has no cutoff); it carries `texture` only when the material has a base color map whose image could be read back *and* the geometry has UVs, `uv` whenever the geometry has a `uv` attribute, and `vertexColors`/`vertexColorSize` only when the material asks for vertex colors and the geometry has them. `outline` is `isDedicatedLineOutlineMesh(node.sourceMesh)`; `bounds` covers every node, `voxelizeBounds` only the non-outline ones (and is the empty box when every node is an outline). `authoredExtent` is the longest edge of `voxelizeBounds` — of the outline-free content — as the file authored it (`0` when that content has no extent), and it is captured once at import and never recomputed, which is what makes `scaleImportedScene`'s factor absolute rather than relative to whatever scale the scene currently carries. `sourceId` is a per-file key for a node (`node-<gltf node index>`); it names a node in an error, and nothing pairs nodes to objects through it any more.
-
 ## Internal logic
 1. Container check: magic `0x46546C67`, `version === 2`, a complete chunk table; otherwise `parse-failed` naming the field. Decode the JSON chunk and read `extensionsRequired`.
 2. `extensionsRequired` containing `KHR_draco_mesh_compression` or `EXT_meshopt_compression` → `unsupported`, detail listing them. Every other extension is left to `GLTFLoader`, which either loads it or fails into step 3.
@@ -70,15 +52,6 @@ function scaleImportedScene(scene: ImportedScene, cellsAcross: number): Imported
 - `scaleImportedScene` throws `RangeError` when `cellsAcross` is not a positive integer — a fraction, a zero, or a negative count — and a scene whose outline-free content has no measurable extent is not an error: it comes back unchanged, because there is no factor to compute.
 - `adoptImportedScene` throws `TypeError` when `project` is not a `Project`; the other functions never throw for scene content, because `importGlb` rejected the unusable cases.
 - A texture is never an error: no image, no `document`, a size-less, short, or non-8-bit buffer, an image that cannot be drawn, a readback the browser refuses (a cross-origin canvas is tainted), and a geometry without UVs all drop the texture (or the UVs) and leave the node with its factor and vertex colors. A texture cannot make an import fail, and an unreadable one cannot make a node white.
-
-## Dependencies
-- `three` — `BufferGeometry`, `Matrix4`, `Box3`, `Vector3` (the extent measurement), `Mesh`, `Object3D`, `Color`, `Texture`.
-- `three/addons/loaders/GLTFLoader.js` — the GLB parser (README §3 addon export map).
-- `../voxels/voxelize/colorSampler.js` — `ColorSource` only.
-- `../voxels/voxelize/voxelize.js` — `VoxelizeSource`, `VoxelizePart` only.
-- `../document/project.js` — `Project`, `ObjectId`.
-- The DOM, for the texture readback only: `document.createElement('canvas')`, `getContext('2d')`, `drawImage`, `getImageData`. It is the sole DOM dependency, it is guarded by `typeof document === 'undefined'`, and it is reached only for an image that is neither absent nor a decoded 8-bit buffer.
-No outer-ring import: no editor, no UI, no renderer, no scene mirror.
 
 ## Tests
 No test file imports this module: `GLTFLoader` needs a DOM and the texture readback needs a canvas, and the node environment deliberately has neither. The rules it feeds are pinned next door by `tests/voxelize.test.ts`, which builds `ColorSource` values by hand — including the alpha-masked path — (product precedence, UV centroid, repeat addressing, the visible average, fallbacks, `RangeError`s). The import path itself is verified by running the application against `public/forest.glb`, the reference case: 79 nodes, 22 of them `*_Line _0` shells whose every assigned material is named `Line` (the predicate holds for all 22 and for no other node), 57 nodes textured, every node carrying `uv`, and `alphaTest` non-zero on 16 nodes (glTF `MASK` cutoffs of 0.00457 / 0.06552 / 0.07771, which is what puts the masked path to work). Its glTF scene is named `Sketchfab_Scene`, which is the name both the import and its one object take.

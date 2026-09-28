@@ -14,12 +14,6 @@ derived-mesh rule), so the border is a term on top of the existing shading rathe
 pass swaps in a `MeshBasicMaterial` of its own and stays flat (README D11), and the raw imported meshes belong to the
 importer (README D24), so neither carries the border.
 
-## Public interface
-```ts
-function withFaceBorder(vertexShader: string, fragmentShader: string): { vertexShader: string; fragmentShader: string };
-function applyFaceBorder(material: THREE.Material): void;   // installs the hook where three compiles the material
-```
-
 ## Internal logic
 1. `BORDER_STRENGTH = '0.22'` is the reference's `line * 0.22`: the share of a face's own colour the border takes away.
    `VERTEX_VARYING`/`VERTEX_WRITE` are the varying and the write that fills it; `FRAGMENT_VARYING` is the same varying
@@ -57,10 +51,6 @@ function applyFaceBorder(material: THREE.Material): void;   // installs the hook
 
 ## Errors
 Nothing throws. `withFaceBorder` is total, and `applyFaceBorder` writes one property.
-
-## Dependencies
-- `three` — `Material` for the hook and the `WebGLProgramParametersWithUniforms` it is handed.
-- `./shaderPatch.js` — `insertChunks` and `insertBefore`.
 
 ## Tests
 `tests/faceGrid.test.ts` pins: the varying and the `uv` read with no duplicate attribute declaration; the border landing

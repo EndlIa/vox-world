@@ -5,34 +5,6 @@ Ring: 1 · Layer: document · Depends on: ./project.js (type-only, `ObjectId`)
 ## Responsibility
 Holds the authoring truth of animation: tracks, channels, keyframes, and interpolation mode as plain serializable data, plus the pure mutators that edit them. It is not a sampler and not an evaluator — the clip and the mixer are derived from this data on change (D2), and this file never evaluates a time. Its clock is whole milliseconds (`Keyframe.timeMs`, `Timeline.durationMs`); the clip's seconds are `animation/compile.ts`'s one conversion (README D45).
 
-## Public interface
-```ts
-type Interpolation = 'step' | 'linear' | 'smooth';
-type TrackChannel = 'position' | 'quaternion' | 'scale' | 'fov';
-type TrackTarget = { kind: 'object'; objectId: ObjectId } | { kind: 'camera' };
-type Keyframe = { id: string; timeMs: number; value: number[] };   // length 3, except quaternion 4 and fov 1
-type Track = { target: TrackTarget; channel: TrackChannel; interpolation: Interpolation; keyframes: Keyframe[] };
-type Timeline = { durationMs: number; fps: number; tracks: Track[] };
-
-function trackKey(target: TrackTarget, channel: TrackChannel): string;
-function findTrack(timeline: Timeline, target: TrackTarget, channel: TrackChannel): Track | undefined;
-function ensureTrack(timeline: Timeline, target: TrackTarget, channel: TrackChannel,
-  interpolation?: Interpolation): Track;
-function addKeyframe(timeline: Timeline, target: TrackTarget, channel: TrackChannel, timeMs: number,
-  value: readonly number[]): { ok: true; keyframe: Keyframe } | { ok: false; error: 'bad-value-length'; detail: string };
-function maxKeyframeTime(timeline: Timeline): number;
-function moveKeyframe(timeline: Timeline, target: TrackTarget, channel: TrackChannel, id: string,
-  timeMs: number): boolean;
-function removeKeyframe(timeline: Timeline, target: TrackTarget, channel: TrackChannel, id: string): boolean;
-function setDuration(timeline: Timeline, durationMs: number): void;
-function setInterpolation(timeline: Timeline, target: TrackTarget, channel: TrackChannel,
-  interpolation: Interpolation): boolean;
-function sortKeyframes(timeline: Timeline): void;
-function removeTracksFor(timeline: Timeline, objectId: ObjectId): void;
-function adoptKeyframeIds(timeline: Timeline): void;
-function channelValueSize(channel: TrackChannel): number;   // the per-channel value length, read by ./serialize.js
-```
-
 ## Internal logic
 1. A module-private `VALUE_SIZE: Record<TrackChannel, number>` maps `position → 3`, `quaternion → 4`, `scale → 3`, `fov → 1`. It is the only length table here; `compile.ts` reports the same numbers through `channelBinding` and does not re-validate, and `serialize.ts` reads the widths through `channelValueSize` instead of declaring a second copy of them.
 2. A module-private `clampTime(timeMs, durationMs)` is the funnel every authored keyframe time passes through: it rounds to whole milliseconds, clamps into `[0, durationMs]`, and throws `RangeError` on a non-finite time. `addKeyframe`, `moveKeyframe`, and `setDuration` all call it, which is what makes a keyframe outside the duration unrepresentable — the author's time is rounded rather than rejected. That is also the answer to this file's former open question about a time past the end: it is neither accepted as authored nor taken to stretch the clip, it lands on the end, and `setDuration` is the only thing that moves the end.
@@ -67,10 +39,6 @@ function channelValueSize(channel: TrackChannel): number;   // the per-channel v
 - `addKeyframe` and `moveKeyframe` throw `RangeError` for a non-finite time and `setDuration` for a non-finite duration, and `addKeyframe` throws `TypeError` for a non-finite entry in `value` — all programmer errors, as the widget validates what it reads from its own fields. A negative time is not an error: it clamps to `0`.
 - `moveKeyframe`, `removeKeyframe`, and `setInterpolation` report ordinary misses with `false` rather than throwing, because a stale row or a move refused onto an occupied millisecond is a normal user state.
 - `removeTracksFor` cannot fail: an object with no tracks is a no-op.
-
-## Dependencies
-- `./project.js` — `ObjectId` type only, erased at compile time; `project.ts` imports this module for values, so the runtime edge is one-way.
-- No `three`, no `voxels/*`, no outer-ring import.
 
 ## Tests
 - `tests/timeline.test.ts` — insertion keeps ascending order, equal-millisecond insertion replaces the value while keeping the id, `'bad-value-length'` on a mismatched channel length, added and moved times clamped onto the clip, `moveKeyframe` and `removeKeyframe` by id with their `false` cases (unknown id, and a move onto an occupied millisecond), `removeKeyframe` leaving an emptied track in place with its interpolation and no track in the compiled clip, `setDuration` clamping onto the new length and keeping the later of two collapsed keyframes, `maxKeyframeTime`, `removeTracksFor` leaving camera tracks intact, and `adoptKeyframeIds` flooring the minter above the ids a loaded timeline already holds.

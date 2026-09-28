@@ -63,11 +63,10 @@ function placePayload(object: SceneObject, origin: Vector3): void {
 export function applyVoxelizeResult(
   project: Project,
   result: Extract<VoxelizeResult, { ok: true }>,
-  opts?: { attachTo?: ReadonlyMap<string, ObjectId> | undefined; parentId?: ObjectId | null | undefined },
+  opts?: { attachTo?: ReadonlyMap<string, ObjectId> | undefined },
 ): { objectIds: ObjectId[] } {
   const objectIds: ObjectId[] = [];
   const attachTo = opts?.attachTo;
-  const parentId = opts?.parentId ?? null;
   for (const output of result.outputs) {
     const mapped = attachTo?.get(output.sourceId);
     const existing = mapped === undefined ? undefined : project.get(mapped);
@@ -79,7 +78,6 @@ export function applyVoxelizeResult(
     }
     const created = project.createVoxelObject({
       name: output.name,
-      parentId,
       maskColor: project.nextMaskColor(),
       payload: output.payload,
       position: output.origin,

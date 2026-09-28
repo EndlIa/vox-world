@@ -13,17 +13,6 @@ rotated frame the edit will write. Composing the two matrices that way is also w
 decomposing their product into a single transform, which the hand-written version did, cannot express the shear a
 rotation inside a scale produces.
 
-## Public interface
-```ts
-class Overlay {
-  constructor(scene: THREE.Scene);
-  showBox(boxLocal: IntBox3, matrixWorld: THREE.Matrix4, cell: number, color?: HexColor): void;   // cell = the owning object's cell size in world units
-  clear(): void;
-  dispose(): void;
-}
-```
-`IntBox3` and `HexColor` come from `voxels/uniform/grid.js` and are not re-declared here.
-
 ## Internal logic
 1. Construction builds one `Box3Helper` over a `Box3` it owns, with `frustumCulled = false`, a high `renderOrder`, and
    the material the library gives it narrowed once (the library types it as a generic `Material`) so its `depthTest`
@@ -64,15 +53,10 @@ class Overlay {
 - `TypeError` when the constructor argument is not a `THREE.Scene`, or when `matrixWorld` is not a `THREE.Matrix4`.
 - An empty selection or a miss is expressed by `clear()`, never by drawing a degenerate zero-size frame.
 
-## Dependencies
-- `three` — `Scene`, `Group`, `Box3`, `Box3Helper`, `LineBasicMaterial`, `Matrix4`.
-- `../voxels/uniform/grid.js` — `IntBox3`, `HexColor`, `normalizeBox`.
-No outer-ring import: the overlay knows nothing about tools, sessions, ops, or picking.
-
 ## Tests
 - `tests/overlay.test.ts` pins the frame's placement — the inclusive cell box at the owning object's cell size, in that
   object's world space, including a rotated and non-uniformly scaled one — the one visible/hidden rule, the colour
-  write, the argument errors, and `dispose`, in the node environment; see `codemap/tests/overlay.md`.
+  write, the argument errors, and `dispose`, in the node environment; see `tests/overlay.test.ts`.
 - The corner handling `showBox` relies on is already pinned by `tests/uniform.test.ts` (`normalizeBox`, box counts).
 - What needs a GPU stays app-verified (README §10): the frame on screen over the voxels while a drag runs, following the
   object's orientation, and its absence from a pick and from an exported frame — layer 1 is what the picker's and the

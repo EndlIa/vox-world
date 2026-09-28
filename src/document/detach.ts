@@ -3,7 +3,7 @@ import { UniformGrid, unpackKey } from '../voxels/uniform/grid.js';
 import type { IntBox3 } from '../voxels/uniform/grid.js';
 import type { ObjectId, Project, SceneObject } from './project.js';
 
-export type DetachResult =
+type DetachResult =
   | { ok: true; objectId: ObjectId; name: string }
   | {
       ok: false;

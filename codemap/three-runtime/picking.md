@@ -5,20 +5,6 @@ Ring: 2 · Layer: three-runtime · Depends on: `./scene.js`, `../document/projec
 ## Responsibility
 Turns a viewport pointer position into voxel identity by raycasting the mirrored meshes and resolving the hit's `instanceId` through `SceneMirror.lookupOf()`. The camera that rendered the viewport is a parameter, never the mirror's output camera (README D17). It never walks voxel data on the CPU (README D5), never mutates anything, and holds no state beyond a reused `Raycaster`. It also resolves a hit on an imported raw mesh — an object-level hit with no cell behind it — to the object that mesh was attached to, because a mesh that is the only thing on screen still has to be selectable (README D24). A hit carries the face it landed on as well as the point, so the two things a box drag needs — the cell and the face's normal — come off that one `pick`: there is no surface-only pick any more, because the drag addresses the cell the instance lookup named, while flooring a surface point named the cell past the face (see `editor/pointer.ts`).
 
-## Public interface
-```ts
-type PickHit =
-  | { kind: 'cell'; objectId: ObjectId; cell: [number, number, number]; color: HexColor;
-      point: THREE.Vector3; normal: THREE.Vector3 | undefined }
-  | { kind: 'object'; objectId: ObjectId; point: THREE.Vector3;
-      normal: THREE.Vector3 | undefined };   // imported raw mesh, layer 2
-class Picker {
-  constructor(mirror: SceneMirror);
-  pick(ndc: THREE.Vector2, camera: THREE.PerspectiveCamera): PickHit | undefined;
-}
-```
-`ObjectId` comes from `document/project.js`, `HexColor` from `voxels/uniform/grid.js` (reached through `scene.js`); none is re-declared here. `normal` is the face the raycast hit, copied, in the object's own frame — `undefined` when the raycast reported no face for that hit.
-
 ## Internal logic
 1. `raycaster.setFromCamera(ndc, camera)`, then `intersectObject(mirror.scene, true)`; Three.js refreshes world matrices on the way and returns hits sorted by distance per mesh. The camera is the one that rendered the viewport, so the pointer maps to the view the user sees; the mirror's own `camera` is the output camera and is never read here (README D17).
 2. The raycaster tests layers 0 and 2 — voxel content and imported raw meshes — and never layer 1, where the viewport decorations and the transform gizmo live (README D24). Only hits with a resolvable owner count: `hit.object.userData.objectId` (written by `scene.ts`, on the object node, on every instance mesh, and on every attached source mesh) confirmed with `mirror.objectOf(id)`. Viewport decorations and the gizmo carry no such key and are on layer 1, so neither can be picked.
@@ -44,13 +30,6 @@ class Picker {
 - `TypeError` when `camera` is not a `THREE.PerspectiveCamera`.
 - A miss returns `undefined` — never a fallback object, a zero cell, or a nearest-anything. An empty scene, an `empty` object with no attached raw mesh (it has no mesh at all then), a raw mesh the mirror hid, and a voxel object whose payload has no occupied content (zero instances) all yield `undefined`, so a click there selects and edits nothing.
 - A hit with no face is not an error: its `normal` is `undefined`, and the box drag falls back to the camera's view direction to build its plane (see `editor/pointer.ts`).
-
-## Dependencies
-- `three` — `Raycaster`, `Vector2`, `Vector3`, `Object3D`, `InstancedMesh` (types), and `Intersection`/`Face` for `faceNormalOf`.
-- `./scene.js` — `SceneMirror` and the `CellLookup` its `lookupOf` returns.
-- `../document/project.js` — `ObjectId` (type only).
-- `../voxels/uniform/grid.js` — `HexColor` (type only).
-No outer-ring import: the picker does not know `EditorSession`, any tool, or the UI.
 
 ## Tests
 - No `tests/*.test.ts` covers this file. The resolution rules were checked node-side with a throwaway `vitest` repro against a real `Project` and `SceneMirror`, no renderer and the mirror's output camera passed explicitly as the `camera` argument: a ray through a single uniform cell resolves to that cell and its color; with two overlapping uniform objects the fixed order picks the nearer hit, then the smaller `objectId`; an empty scene, an `empty` object, and a voxel object with no occupied cells all return `undefined`.

@@ -5,41 +5,6 @@ Ring: 3 · Layer: editor · Depends on: document/project.ts, voxels/uniform/grid
 ## Responsibility
 Holds the editing state no other module owns: active object, active tool, selection, and the subscriber list. It is a view-model — it holds no project data, mutates no voxel container, and performs no edit; operations live in `editor/ops.ts` and are invoked by the caller.
 
-## Public interface
-```ts
-import type { ObjectId, Project } from '../document/project.js';
-import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
-
-type Selection =
-  | { kind: 'none' }
-  | { kind: 'box'; objectId: ObjectId; box: IntBox3 };
-type ActiveTool = 'select' | 'paint' | 'add' | 'remove';
-type EditorMode = 'object' | 'edit';   // what a viewport press is for (README D39)
-type SelectionShape = 'box';   // what a press selects; the only variant `Selection` has
-type EditResolution = { representation: 'empty' | 'uniform'; subdivision?: number; cells?: [number, number, number] };
-
-class EditorSession {
-  constructor(project: Project);
-  activeObjectId: ObjectId | null;
-  mode: EditorMode;
-  activeTool: ActiveTool;
-  selectionShape: SelectionShape;
-  selection: Selection;
-  editColor: HexColor;                                 // paint/box color, set from the UI
-  addHeight: number;                                   // cells deep an add drag builds out of the face it pressed
-  resolutionOf(objectId: ObjectId): EditResolution | undefined;
-  setActiveObject(id: ObjectId | null): void;
-  setMode(mode: EditorMode): void;
-  setTool(tool: ActiveTool): void;
-  setSelectionShape(shape: SelectionShape): void;
-  setSelection(selection: Selection): void;
-  setEditColor(color: HexColor): void;
-  setAddHeight(height: number): void;
-  subscribe(listener: () => void): () => void;
-  notify(): void;
-}
-```
-
 ## Internal logic
 1. Construction keeps the `Project` and initializes `activeObjectId = null`, `activeTool = 'select'`, `selection = { kind: 'none' }`, `editColor = 0xffffff`, `addHeight = 1`, `listeners = new Set<() => void>()`.
 2. `notify()` iterates a copy of the set, so a listener that subscribes or unsubscribes during the fan-out cannot corrupt the iteration or skip a sibling. It is synchronous, and every mutator calls it exactly once after the new state is fully assigned.
@@ -76,11 +41,6 @@ class EditorSession {
 - `setAddHeight(height)` with a non-integer or a value below `1` → `RangeError`; the previous height is preserved. It throws rather than clamping, because the UI field is what reads the user's text and a bad value there is a caller error.
 - `subscribe` with a non-function → `TypeError`.
 - There is no `Result` union here: the session has no user-facing failure mode, and nothing throws for a merely unusual but legal selection.
-
-## Dependencies
-- `../document/project.ts` — `Project`, `ObjectId`; object lookup plus the `representation`/`uniform` reads behind `resolutionOf`.
-- `../voxels/uniform/grid.ts` — `IntBox3` for the box selection payload and `HexColor` for `editColor` (type only).
-No `three` and no `three-runtime` import: being DOM- and renderer-free is what lets `ui/hud.ts` and `app/main.ts` read the session without owning a canvas.
 
 ## Tests
 No `tests/*.test.ts` covers this file in the demo slice; README section 10 verifies editing by running the application. A later `tests/editor.test.ts` (node environment — the session needs no DOM) should pin: a box selection refused on an object that is not uniform, a selection cleared by a change of active object, `setEditColor` refusing an out-of-range value without changing the color, `setAddHeight` refusing a zero, a fraction, or a non-number the same way, and `resolutionOf` reporting the per-axis `cells` of a uniform object's bounds and `empty` for one whose payload is not attached.

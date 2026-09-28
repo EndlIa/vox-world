@@ -14,7 +14,7 @@ import type { TrackTarget } from '../document/timeline.js';
 import type { Project } from '../document/project.js';
 
 /** How many segments the drawn path gets. Enough that a curved move reads as a curve at demo scale. */
-export const CAMERA_PATH_SEGMENTS = 128;
+const CAMERA_PATH_SEGMENTS = 128;
 
 /** The camera target as the timeline names it; its binding name is `camera` plus the channel's path (D22). */
 const CAMERA: TrackTarget = { kind: 'camera' };

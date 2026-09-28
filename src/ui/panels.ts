@@ -32,7 +32,7 @@ export type CameraPose = {
 };
 
 /** What the carrier's controls read: whether it is selected, the gizmo's mode, and the authored pose. */
-export type CameraControlView = {
+type CameraControlView = {
   selected: boolean;
   mode: 'translate' | 'rotate';
   pose: CameraPose;
@@ -213,14 +213,12 @@ export class Panels {
     exportTo: boolean;
     cameraFov: boolean;
     objectName: boolean;
-    gridOffset: boolean;
   } = {
     exportFps: false,
     exportFrom: false,
     exportTo: false,
     cameraFov: false,
     objectName: false,
-    gridOffset: false,
   };
 
   constructor(root: HTMLElement, context: PanelContext) {

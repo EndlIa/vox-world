@@ -5,57 +5,6 @@ Ring: 1 · Layer: document · Depends on: ../voxels/uniform/grid.js, ./timeline.
 ## Responsibility
 Owns the project truth: object records, identity, hierarchy, transforms, representation binding, mask colors, camera and project settings, the single `Timeline` instance, and the two minters (`nextId`, `maskCursor`) that keep identity unique. It exposes that truth as plain data (`snapshot`) and takes it back in place (`restore`), so a load never replaces an instance a mirror, a mixer, or the editor already holds. It is not a voxel container and not the Three.js scene mirror; it is not a serializer either — the file format, the cell codec, and the file-facing validation live in `./serialize.js` (README D51) — and payloads are handed in and held by reference.
 
-## Public interface
-```ts
-type ObjectId = string;                                  // 'obj-<n>', allocated only here
-type Transform = { position: THREE.Vector3; quaternion: THREE.Quaternion; scale: THREE.Vector3 };
-type Representation = 'empty' | 'uniform';
-type SceneObject = {
-  id: ObjectId; name: string; parentId: ObjectId | null;
-  transform: Transform; representation: Representation;
-  uniform?: UniformGrid;
-  maskColor: HexColor; visible: boolean;
-  alignToGrid: boolean;                       // the placement holds whole cells of its own grid while set; set at creation from that placement (D42)
-};
-type CameraSettings = { fov: number; near: number; far: number; transform: Transform };
-type ProjectSettings = { background: HexColor; ambientIntensity: number };
-type ProjectCounters = { nextId: number; maskCursor: number };   // the minters, saved so a restore re-mints nothing
-type ProjectData = {                                             // the project as plain data: what a file carries of it
-  objects: SceneObject[];                                        // in `objects` insertion order
-  camera: CameraSettings;
-  settings: ProjectSettings;
-  timeline: Timeline;
-  counters: ProjectCounters;
-};
-
-class Project {
-  readonly objects: Map<ObjectId, SceneObject>;
-  readonly camera: CameraSettings;
-  readonly settings: ProjectSettings;
-  readonly timeline: Timeline;
-  allocateId(): ObjectId;
-  createObject(init: { name: string; parentId?: ObjectId | null; representation: 'empty' }): SceneObject;
-  createVoxelObject(init: { name: string; parentId?: ObjectId | null; maskColor: HexColor;
-    payload: { kind: 'uniform'; grid: UniformGrid };
-    position: THREE.Vector3 }): SceneObject;  // alignToGrid set iff `position` is whole cells of that grid (D42)
-  setPayload(id: ObjectId, payload: { kind: 'uniform'; grid: UniformGrid } | undefined): void;   // the only way representation changes
-  get(id: ObjectId): SceneObject | undefined;
-  remove(id: ObjectId): void;                 // children are reparented to the removed node's parent
-  reparent(id: ObjectId, parentId: ObjectId | null): { ok: true } | { ok: false; error: 'missing' | 'cycle' };
-  roots(): SceneObject[];
-  childrenOf(id: ObjectId): SceneObject[];
-  worldMatrix(id: ObjectId): THREE.Matrix4;
-  alignedPosition(id: ObjectId, position: THREE.Vector3): THREE.Vector3;   // nearest whole cell of its own grid per axis while the object aligns
-  keyframePosition(target: TrackTarget, position: THREE.Vector3): THREE.Vector3;   // the placement a keyframe may store
-  alignWorldMatrix(id: ObjectId, matrix: THREE.Matrix4): THREE.Matrix4;    // the same rule in the object's own frame
-  nextMaskColor(): HexColor;                  // palette walk, deterministic
-  snapshot(): ProjectData;                    // reads; records are copied, payload grids are shared
-  restore(data: ProjectData): void;           // the only writer of objects, camera, settings, timeline, and the counters
-}
-function isObjectId(value: unknown): value is ObjectId;   // the one `obj-<n>` shape, shared with ./serialize.js
-```
-`new Project()` takes no arguments: an empty object map, an identity-transform camera, default settings (`background: 0x3d4250`, ambient intensity `1`), an empty timeline with `durationMs: 0`, which the app sets on load. The background is the scene's clear color and therefore the color of every exported frame, so its one definition is here rather than in the stylesheet: `index.html` mirrors the same value as `--scene`, which only makes the page behind the canvas match, and the previous project's editor uses the same slate (its `COL_SCENE_BG`, read from its own `--scene`).
-
 ## Internal logic
 1. Fields: `objects`, `camera`, `settings`, `timeline`, a monotonic `nextId` counter, and a `maskCursor` index. `objects` is a `Map`, so iteration order is insertion order — the deterministic order of `roots()` and `childrenOf()`.
 2. `allocateId()` returns `` `obj-${this.nextId++}` ``. The counter is never decremented and the map is never consulted, so ids stay unique after `remove`.
@@ -98,11 +47,6 @@ function isObjectId(value: unknown): value is ObjectId;   // the one `obj-<n>` s
 - `alignedPosition`, `keyframePosition`, and `alignWorldMatrix` are total: an unknown id gets the input back instead of a `RangeError`, so the editor can ask about an id it is about to validate.
 - `createObject` cannot be called with a voxel representation — the parameter type admits only `'empty'`.
 - `restore` throws `RangeError`, before writing, for a duplicate id, an id that is not `obj-<n>`, an unknown non-null `parentId`, or a `parentId` chain that closes a cycle. A file that could produce any of those is refused by `./serialize.js` first, so reaching the throw is a programmer error; `snapshot` has no failure path.
-
-## Dependencies
-- `../voxels/uniform/grid.js` — the `UniformGrid` payload type and `HexColor` are type-only, and `CELL_SIZE` is a value import: it is the fallback cell `alignedPosition` rounds to for an aligned object that has no grid, so the world unit is never re-declared here.
-- `./timeline.js` — `Timeline` type, `TrackTarget` (the `keyframePosition` argument), and `removeTracksFor` on deletion. `timeline.ts` imports `ObjectId` from here type-only, so the value dependency stays one-way (`document/project → document/timeline`) and no runtime cycle exists.
-- `three` — `Vector3`, `Quaternion`, `Matrix4` for transforms; allowed in ring 1 (D1).
 
 ## Tests
 - `tests/detach.test.ts` — pinned indirectly: a detached object inherits the source's `parentId`, gets a fresh palette color, and a fresh reusable id; `worldMatrix` of a root object equals its translation.

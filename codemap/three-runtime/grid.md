@@ -7,33 +7,13 @@ The viewport's world grid: **one** horizontal plane of shader-drawn lines on the
 app's one `World grid` flag. It is the only grid — the vertical work planes (`volume`'s walls, the movable `multi`
 plane) and the second copy of the ground the volume display carried are gone, because vox-world places and aligns
 content on the world lattice itself (README D41, D42) and a wall of grid is a reference nothing here is built against.
-The active object's own lattice is gone as well (README D49). The look is the reference viewport's floor plane: one
+The active object's own lattice is gone as well (README D35). The look is the reference viewport's floor plane: one
 white line per world cell, a brighter one every `GRID_SECTION_SIZE` cells (README D35).
 
 The plane is `@pmndrs/vanilla`'s shader grid with three pure patches applied where the material compiles:
 three's logarithmic-depth chunks, the reference material's derivative-based line attenuation, and no distance fade.
 The whole thing is decoration: layer 1, so the picker's raycaster (layers 0 and 2) never hits it and no export frame
 contains it (README D24), and `depthWrite = false`, so it cannot occlude a voxel below the plane.
-
-## Public interface
-```ts
-const GRID_CELL_SIZE = 1;        // one cell is one world unit: the lines are the cell boundaries (README D41)
-const GRID_SECTION_SIZE = 20;    // the brighter line, the reference material's majorUnitFrequency
-const GRID_PLANE_EXTENT = 4096;  // side of the quad, in world units
-
-function withLogDepth(vertexShader: string, fragmentShader: string): { vertexShader: string; fragmentShader: string };
-function withAnisotropicAttenuation(fragmentShader: string): string;
-function withoutDistanceFade(fragmentShader: string): string;
-
-class WorldGrid {
-  constructor();
-  readonly root: THREE.Group;   // the owner adds this to its scene
-  get visible(): boolean;
-  setVisible(visible: boolean): void;
-  update(camera: THREE.Camera): void;   // once a frame, after the camera itself has been settled
-  dispose(): void;
-}
-```
 
 ## Internal logic
 1. Constants: `OVERLAY_LAYER = 1` (README D24), `GRID_RENDER_ORDER = 0` (below the 1000 the box preview and the
@@ -83,11 +63,6 @@ class WorldGrid {
 ## Errors
 Nothing throws. `update` accepts any camera, `setVisible` any boolean, and `dispose` is safe twice. `GRID_PLANE_EXTENT`
 and `GRID_SECTION_SIZE` are module constants, not validated inputs.
-
-## Dependencies
-- `three` — `Group`, `Mesh`, `Vector3`, `Color`, `DoubleSide`, `ShaderMaterial`, `Camera`, `Scene` (by the caller).
-- `@pmndrs/vanilla/core/Grid` — the shader grid itself: its material, geometry, and uniform set.
-- `./shaderPatch.js` — `insertChunks`, the one transform the log-depth patch needs.
 
 ## Tests
 `tests/grid.test.ts` pins the one plane, its layer and depth behaviour, the cell and section spacing, the white lines,

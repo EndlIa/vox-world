@@ -22,18 +22,6 @@ keeps it out of the `Picker`'s raycast (layers 0 and 2) and out of every export 
 The node carries no name, so the mixer's binding walk, which reaches `<ObjectId>`-named nodes and `camera`, can
 never bind it (README D22).
 
-## Public interface
-```ts
-class CameraControl {
-  constructor(scene: THREE.Scene);
-  readonly node: THREE.Object3D;   // the pose node: the gizmo's target, and the app's handle on the carrier
-  setPose(position: THREE.Vector3, quaternion: THREE.Quaternion, fovDegrees: number, aspect: number): void;
-  setVisible(visible: boolean): void;
-  setSelected(selected: boolean): void;
-  dispose(): void;
-}
-```
-
 ## Internal logic
 1. Construction builds the node (`Object3D`) and one child `Group` — the helper, which owns the drawing and its fixed size — plus the display projection and the `CameraHelper` over it. The helper's own local
    matrix is replaced with a fresh identity `Matrix4` and `matrixAutoUpdate` is turned off: the library normally places
@@ -100,14 +88,9 @@ class CameraControl {
   validates `fovDegrees` or `aspect` — the FOV the app hands over is the one `setCameraFov` already clamped, and the aspect
   comes from the canvas.
 
-## Dependencies
-- `three` — `Scene`, `Object3D`, `Group`, `PerspectiveCamera`, `CameraHelper`, `Color`, `Vector3`, `Quaternion`.
-No outer-ring import: no project, editor, UI, or other three-runtime module. The caller hands in the scene, exactly
-as it does for `Overlay` and `WorldGrid`, and `app/main.ts` is the only caller.
-
 ## Tests
 `tests/cameraControl.test.ts` pins the drawing and the two separations a drag depends on in the node environment —
-no DOM, no GPU — by reading the helper's own point map and colour attribute: see `codemap/tests/cameraControl.md`. What
+no DOM, no GPU — by reading the helper's own point map and colour attribute: see `tests/cameraControl.test.ts`. What
 needs a GPU stays app-verified (README §10): the carrier on screen with its two colours, following the output camera as
 it is aimed and hidden while the viewport already is that camera, and absent from an exported frame.
 

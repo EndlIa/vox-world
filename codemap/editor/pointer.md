@@ -5,32 +5,6 @@ Ring: 3 · Layer: editor · Depends on: document/project.ts, editor/session.ts, 
 ## Responsibility
 All pointer handling in the viewport, in one place: point pick (cell or object), box drag, and commit of the active tool. It translates pointer events into session state and `editor/ops.ts` calls. It never mutates voxel data, never renders, and never owns navigation — `OrbitControls` owns that.
 
-## Public interface
-```ts
-import type { ObjectId, Project } from '../document/project.js';
-import type { EditorSession } from './session.js';
-import type { Picker } from '../three-runtime/picking.js';
-import type { Overlay } from '../three-runtime/overlay.js';
-import type * as THREE from 'three';
-
-type PointerCallbacks = {
-  onSessionChange(): void;      // selection or tool changed
-  onProjectChange(ids: readonly ObjectId[]): void;
-                                // the objects an operation wrote, so the caller can rebuild
-                                // exactly their derived geometry (README D4)
-};
-
-class PointerTool {
-  constructor(opts: { dom: HTMLElement; project: Project; session: EditorSession;
-    picker: Picker; overlay: Overlay; getCamera: () => THREE.PerspectiveCamera;
-    getGizmoBusy: () => boolean; callbacks: PointerCallbacks });
-  detachSelection(): void;      // commits a detach on the region the session already selected
-  dispose(): void;
-}
-```
-
-`getGizmoBusy` is the gizmo's claim on the pointer (`ViewportControls.gizmoBusy()` in `app/main.ts`): the tool defers a left press exactly when it answers `true`, and takes the press itself otherwise. `detachSelection()` is the tool's one operation that is not a press: it runs the `detach` the panel's button asks for on the current selection (see Internal logic 10).
-
 ## Internal logic
 1. The constructor stores the seven arguments — `getCamera`, the closure that names the `PerspectiveCamera` the viewport is currently rendered with, and `getGizmoBusy`, the closure that reports whether the gizmo owns the pointer — plus private drag state (one `DragState`: `pointerId`, `objectId`, `cell`, `anchorCell`, `cornerCell`, `outer`, `dragging`, `plane`, `normal`, `toLocal`) and the `pressActive` flag, and adds `pointerdown`/`pointermove` on `dom` and `pointerup`/`pointercancel` on `window`, so a drag that leaves the canvas still ends. It touches no `dom.style` and no controls state.
 2. NDC from an event: `x = (clientX - rect.left) / rect.width * 2 - 1`, `y = -((clientY - rect.top) / rect.height * 2 - 1)` with `dom.getBoundingClientRect()`, so picking matches what the canvas shows at any CSS size. Every pick then passes that NDC *and* `getCamera()` to the picker, resolved for that one call: the closure names the camera that rendered the
@@ -79,16 +53,8 @@ click always lands on what the user is looking at.
 - An `object`-mode press activates the object under the pointer and nothing else: no cell selection is set, no drag is armed, and no voxel is written, however the tool row is set. Mode is the whole of that rule, and the tool row only matters in `edit` mode (README D39).
 - Pressing a box-consuming tool on an object that carries no uniform payload (`select`, `add`, `paint`, `remove`) is not an error either: the object becomes active and no drag is armed, because `armDrag` needs the object's grid to address cells and `project.get(id)?.uniform` is `undefined` for a group and for an import with no voxel payload — so there are no cells to address; the press then commits nothing. An object whose grid is merely empty cannot be reached this way at all: a `'cell'` hit needs an instance the mirror drew. A commanded `detachSelection()` on an empty selection is the same kind of not-an-error: the commit returns before it does anything, and nothing is logged. Pressing a raw source mesh is the same kind of not-an-error: the object becomes active, there is no selection kind to set, and no tool acts on it.
 
-## Dependencies
-- `../document/project.ts` — `Project`, `ObjectId` for the ids `onProjectChange` carries, `worldMatrix`, `get`.
-- `./session.ts` — `EditorSession`, `Selection`, `ActiveTool`; `./ops.ts` — `addBox`, `removeBox`, `paintBox`, `detachSelection`, `OpResult`.
-- `../three-runtime/picking.ts` — `Picker` and `PickHit` (the `'cell'` variant is what `armDrag` consumes); its single `pick` method takes the `camera` argument, which this file supplies per call from `getCamera()`. `../three-runtime/overlay.ts` — `Overlay`, `showBox`, `clear`.
-- `../voxels/uniform/grid.ts` — `KEY_MIN`/`KEY_MAX` for the key space `cellOfLocal` and `holdCell` hold a cell inside, `normalizeBox` for `dragBox`, and `IntBox3` as its return type.
-- `three` — `PerspectiveCamera` as the `getCamera()` return type, `Vector2`/`Vector3` for NDC and cell math, `Matrix4` for world matrices and the world-to-local inverse, `Matrix3` for the normal matrix, `Plane` for the drag plane, `Raycaster` for its intersection.
-Not imported: `three-runtime/controls.ts`. The gizmo and `OrbitControls` are wired in `app/main.ts`, which hands this file the gizmo's claim as the `getGizmoBusy` closure; this file only asks that closure (see Open questions).
-
 ## Tests
-`tests/pointer.test.ts` drives the tool's own listeners with pointer events and answers picks from a variable, against a real `Project` + `EditorSession` and a 2×2×2 block, pinning both ends of a box drag — the cell a face hit names, and a box carried off the model into empty cells — and the `add` tool's own layer: one cell out of the pressed face on a click, the wall on a tracked drag, and `paint`'s box left on the seen cells; see `codemap/tests/pointer.md`. The rest is app-verified (README section 10), and the checks are manual and observable: drag a box and confirm the committed extents are the ones the preview drew, click once and confirm a single cell changes, drag across two objects and confirm the box stays in the anchor object, press `add` on a face and confirm a cell appears in front of it while the pressed cell keeps its color, drag `add` off the model and confirm the cells appear where the pointer went — in the layer in front of the pressed face, in the object's own frame — set `Add wall` above one and confirm the same drag builds that many layers while a click still adds one, press `paint` on a face and confirm it recolors the cell the user sees rather than stepping out of it, drag the gizmo and confirm no voxels change while the transform does, and middle/right drag to confirm only the camera moves. With the gizmo attached — the default `select` state for an active object — a click on a cell must select it, moving the HUD's selection readout and the overlay to the picked cell and leaving the transform alone; only a press on a handle may move the object. Then tick the carrier's controls, steer the output camera, and click an object: the hit
+`tests/pointer.test.ts` drives the tool's own listeners with pointer events and answers picks from a variable, against a real `Project` + `EditorSession` and a 2×2×2 block, pinning both ends of a box drag — the cell a face hit names, and a box carried off the model into empty cells — and the `add` tool's own layer: one cell out of the pressed face on a click, the wall on a tracked drag, and `paint`'s box left on the seen cells; see `tests/pointer.test.ts`. The rest is app-verified (README section 10), and the checks are manual and observable: drag a box and confirm the committed extents are the ones the preview drew, click once and confirm a single cell changes, drag across two objects and confirm the box stays in the anchor object, press `add` on a face and confirm a cell appears in front of it while the pressed cell keeps its color, drag `add` off the model and confirm the cells appear where the pointer went — in the layer in front of the pressed face, in the object's own frame — set `Add wall` above one and confirm the same drag builds that many layers while a click still adds one, press `paint` on a face and confirm it recolors the cell the user sees rather than stepping out of it, drag the gizmo and confirm no voxels change while the transform does, and middle/right drag to confirm only the camera moves. With the gizmo attached — the default `select` state for an active object — a click on a cell must select it, moving the HUD's selection readout and the overlay to the picked cell and leaving the transform alone; only a press on a handle may move the object. Then tick the carrier's controls, steer the output camera, and click an object: the hit
 must be what the locked view shows, which is the per-pick camera lookup. A fresh import is the raw-mesh walk (README D24): before any voxelization a click must select the imported object — the object list and the HUD follow, no selection or overlay appears, and no voxel changes — hovering must change nothing at all, ticking `Show raw meshes` must bring the meshes back over the voxels once the object has been voxelized, and clicks must then act on the voxel surface in front of them, not on the mesh behind them.
 
 ## Open questions

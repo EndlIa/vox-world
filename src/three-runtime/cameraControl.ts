@@ -22,10 +22,7 @@
  */
 
 import * as THREE from 'three';
-
-/** The viewport decoration layer (README D24); `overlay.ts`, `controls.ts`, and `grid.ts` use the same number. */
-const OVERLAY_LAYER = 1;
-const DECORATION_RENDER_ORDER = 1000;
+import { DECORATION_RENDER_ORDER, OVERLAY_LAYER } from './layers.js';
 
 /**
  * The two planes the display projection is built for, in helper units. The near one carries the marker frame and
@@ -60,9 +57,6 @@ export class CameraControl {
   private readonly frustum: THREE.CameraHelper;
   private readonly material: THREE.LineBasicMaterial;
 
-  /** The projection the current frustum was built for, so a pose update that changes neither rebuilds nothing. */
-  private builtFov = 0;
-  private builtAspect = 0;
   private selected = false;
 
   constructor(scene: THREE.Scene) {
@@ -108,9 +102,7 @@ export class CameraControl {
   setPose(position: THREE.Vector3, quaternion: THREE.Quaternion, fovDegrees: number, aspect: number): void {
     this.node.position.copy(position);
     this.node.quaternion.copy(quaternion);
-    if (fovDegrees === this.builtFov && aspect === this.builtAspect) return;
-    this.builtFov = fovDegrees;
-    this.builtAspect = aspect;
+    if (fovDegrees === this.projection.fov && aspect === this.projection.aspect) return;
     this.projection.fov = fovDegrees;
     this.projection.aspect = aspect;
     this.projection.updateProjectionMatrix();

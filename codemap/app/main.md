@@ -9,17 +9,6 @@ the voxelization settings live there (README D26), and this file is what asks fo
 never holds the settings; it seeds the dialog from the retained import's per-axis extent and acts on the count it resolves —
 scaling the imported model onto the unit lattice first, so that count is the model's length in voxels (README D41).
 
-## Public interface
-```ts
-type AppContext = {
-  project: Project; mirror: SceneMirror; picker: Picker; session: EditorSession; playback: Playback;
-  controls: ViewportControls; pointer: PointerTool; capture: Capture; overlay: Overlay; worldGrid: WorldGrid;
-  cameraControl: CameraControl;
-  cameraPath: CameraPath;
-};
-function main(): void;
-```
-
 ## Internal logic
 1. **Entry and project.** `index.html` pins `<canvas id="viewport">`, `<div id="panels">`, `<div id="timeline">`, and `<div id="hud">` and loads
    `/src/app/main.ts` as a module. `main()` resolves those four elements once, builds everything below, schedules the render loop, and returns;
@@ -34,7 +23,7 @@ function main(): void;
    and the export camera — and the `Capture` that renders through it — tests layer 0 alone; `new THREE.WebGLRenderer({ canvas: viewport,
    antialias: true, logarithmicDepthBuffer: true })`; `new SceneMirror(project, { background, ambientIntensity })`, whose `mirror.camera` is the output camera; `new
    `ViewportControls(viewport, viewportCamera)`; `new Overlay(mirror.scene)`; `new WorldGrid()`, whose `root` is added to `mirror.scene` —
-   viewport decoration on layer 1 like the overlay, so it is never picked and never exported (D35, D49); `new CameraControl(mirror.scene)`, the
+   viewport decoration on layer 1 like the overlay, so it is never picked and never exported (D35); `new CameraControl(mirror.scene)`, the
    runtime-only camera carrier the edit gizmo aims the output camera with (README D46) — a node on the same layer 1, so it is never picked
    and no export frame contains it, and it reports the authored camera rather than owning any data — with `CAMERA_CONTROL_PIVOT`, `new Vector3(0, 0, 0)`,
    as the pivot the gizmo attaches it at; `new CameraPath(mirror.scene)`, the runtime-only drawing of the authored camera's trajectory (README D47) —
@@ -258,7 +247,7 @@ function main(): void;
    scene's own scale. The grid follows the same camera, one statement before that distance is used:
    `worldGrid.update(viewportCamera)` puts the shown display's planes on the camera the frame is about to be drawn through — the planes read nothing of
    it but its position — and it is decoration, so nothing
-   about it reaches the render or the framing (README D49). That floor is the path's alone: `TransformControls` sizes its own handles by the distance to the drawing camera, so
+   about it reaches the render or the framing (README D35). That floor is the path's alone: `TransformControls` sizes its own handles by the distance to the drawing camera, so
    with the viewport on the carrier the handles still degenerate, and the flow that follows is to orbit away — a middle-drag moves the viewport off
    the carrier while the carrier stays where it was — after which the handles are grabbable again. Sizing them the way the object gizmo already does
    was chosen over special-casing the carrier. Finally `timelinePanel.setTime(playback.time * 1000)` — the clip's seconds into the widget's milliseconds, the mirror image of `onScrub`'s division (README D45) — and a fresh `HudState` into the HUD.
@@ -282,7 +271,7 @@ function main(): void;
 - `main()` creates the renderer, the mirror, and every listed object once, and schedules exactly one render loop.
 - Project mutations get `mirror.markDirty` plus `panels.refresh()`, every session change refreshes the mode bar, the panels, and the timeline, and
   timeline edits go through `onEdited` → `playback.rebuild`; one job at a time. A commit re-aims nothing: the grid follows the camera in the loop
-  rather than the document, so the per-object lattice's refresh and its `objectGridKey` are gone (README D49).
+  rather than the document, so the per-object lattice's refresh and its `objectGridKey` are gone (README D35).
 - Every path that can make geometry measurable re-fits the **viewport** camera: the import path fits right after `commitDirty()`, on the raw meshes the
   user is about to answer the dialog about, and a confirmed prompt fits again through `runVoxelizeJob`, whose success path fits after
   `applyVoxelizeResult` and `commitDirty()`, because a payload can only be measured once it is attached. No other path moves the camera, and the output
@@ -391,27 +380,6 @@ than report: `setCameraPose` returns before writing anything when any component 
 becomes a partial pose on the document or the mirror camera; the `panels.refresh()` that follows — or the next frame —
 re-seeds the fields from what the document then holds. `applyCameraMatrix` takes the matrix the gizmo derived from a real node transform, so it has
 nothing to refuse (README D46).
-
-## Dependencies
-- `../document/project.js`, `../editor/{session,ops,pointer}.js` — `Project`, `EditorSession`, `EditResolution`, `applyVoxelizeResult`,
-  `createGroup`, `deleteObject`, `renameObject`, `setObjectMaskColor`, `setObjectVisible`, `setObjectAlignToGrid`,
-  `setObjectSubdivision`, `reparentObject`, `PointerTool`.
-- `../voxels/voxelize/voxelize.js` — `voxelize`, `DEFAULT_CELL_BUDGET`, `VoxelizeSource`; `../three-runtime/import.js` — `importGlb`,
-  `adoptImportedScene`, `scaleImportedScene`, `buildVoxelizeSource`, and `ImportedScene` for the retained import's type. There is no
-  `VoxelizeTarget` to import any more: the confirmed count is baked into the scaled scene (README D41).
-- `../voxels/uniform/grid.js` — `UniformGrid` for the demo cube's unit cells (README D41), and `HexColor`, `IntBox3` for the mask-color action
-  and the selection text.
-- `../three-runtime/{scene,picking,controls,capture,overlay,grid}.js` — `SceneMirror`, `Picker`, `ViewportControls`, `Capture`,
-  `Overlay`, and `WorldGrid`, whose `visible` flag and `setVisible` are the panel's one grid control (README D35); and
-  `../three-runtime/cameraControl.js` — `CameraControl`, the runtime-only carrier the gizmo aims the output camera with
-  (README D46); `../three-runtime/cameraPath.js` — `CameraPath`, the runtime-only drawing of the authored camera's trajectory, and
-  `../animation/trajectory.js` — `sampleCameraTrajectory` and `cameraKeyframePositions`, the points it is handed (README D47); `../animation/playback.js` and `../export/job.js` — `Playback`, `ExportJob`.
-- `../ui/{panels,timeline,hud,dom}.js` — `Panels`, `TimelinePanel`, `Hud`, `el`, and the `CameraPose` type its `setCameraPose` action takes;
-  `../ui/voxelizeDialog.js` — `VoxelizeDialog`,
-  `DEFAULT_VOXELS_ACROSS` (the count an arriving import is scaled to) and its `VoxelizeDialogDefaults` seed type; `./files.js` — `pickGlbFile`,
-  `pickProjectFile`, `saveJson`, `saveMp4`, `wireDropTarget`; `../document/serialize.js` — `toJson` and `readJson`, the project file's whole boundary
-  (README D51);
-  `three` — `WebGLRenderer`, `PerspectiveCamera`, and the `Matrix4` type `applyCameraMatrix` takes. Nothing may import this file: the dependency direction stops here.
 
 ## Tests
 None of its own: it is the smoke target of the slice, verified by `npm run dev` plus a walk through Scenario A and Scenario B (README section 9).

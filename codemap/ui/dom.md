@@ -7,14 +7,6 @@ Three small plain-DOM helpers shared by every panel: element construction, event
 returns its own detach function, and locale-independent number formatting. It holds no state,
 declares no data type, and is not a widget toolkit or a component system.
 
-## Public interface
-```ts
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, props?: Partial<HTMLElementTagNameMap[K]> & {
-  class?: string; text?: string; on?: Record<string, EventListener> }, children?: (Node | string)[]): HTMLElementTagNameMap[K];
-function on<T extends EventTarget>(target: T, type: string, handler: (event: Event) => void): () => void;
-function fmt(value: number, digits?: number): string;
-```
-
 ## Internal logic
 `el`
 1. `document.createElement(tag)`.
@@ -52,10 +44,6 @@ function fmt(value: number, digits?: number): string;
 Nothing returns a `Result`. An unknown tag name, a property that the tag does not implement, or a
 `digits` outside `toFixed`'s accepted range throws `TypeError`/`RangeError` from the DOM or from
 `toFixed`; those are programmer errors and propagate unchanged.
-
-## Dependencies
-None — page globals (`document`, `EventTarget`, `Node`) only. Every panel can import this file without
-pulling in project, editor, animation, or Three.js code, which is why it sits at the bottom of `ui`.
 
 ## Tests
 None. `fmt` is pure and would run under the node test environment, but the brief's test inventory

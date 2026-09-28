@@ -22,7 +22,6 @@ export class Playback {
   private mixer: AnimationMixer | null = null;
   private clip: AnimationClip | null = null;
   private action: AnimationAction | null = null;
-  private objects: Map<ObjectId, Object3D> = new Map();
   private looping = false;
   /** Whether the transport is running; the public face of it is the `playing` accessor. */
   private running = false;
@@ -36,7 +35,6 @@ export class Playback {
    * which is what makes the compiled track names resolve (D22). Re-binding releases the old root.
    */
   bind(objects: Map<ObjectId, Object3D>): void {
-    this.objects = objects;
     for (const [objectId, object] of objects) object.name = objectId;
     this.camera.name = CAMERA_NAME;
     let root: Object3D | undefined;
@@ -153,7 +151,6 @@ export class Playback {
     this.mixer = null;
     this.clip = null;
     this.action = null;
-    this.objects = new Map();
   }
 
   private installAction(): void {

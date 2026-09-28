@@ -16,9 +16,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-
-/** The viewport decoration layer (README D24); `overlay.ts` uses the same number. */
-const OVERLAY_LAYER = 1;
+import { OVERLAY_LAYER } from './layers.js';
 /** Below this the camera sits on the orbit pivot, where rotation and dolly have no effect at all. */
 const MIN_ORBIT_RADIUS = 1e-4;
 
@@ -78,7 +76,7 @@ export class ViewportControls {
    * The gizmo is created on first use and reused afterwards; its helper goes into the scene that owns
    * the object, because a helper outside the scene graph would never be drawn.
    */
-  attachGizmo(object: THREE.Object3D, mode: 'translate' | 'rotate' | 'scale', pivot: THREE.Vector3): void {
+  attachGizmo(object: THREE.Object3D, mode: 'translate' | 'rotate', pivot: THREE.Vector3): void {
     let root: THREE.Object3D = object;
     while (root.parent !== null) root = root.parent;
     if (!(root instanceof THREE.Scene)) {

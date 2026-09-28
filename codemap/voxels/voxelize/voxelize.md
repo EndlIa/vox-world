@@ -11,36 +11,6 @@ Cells are the world unit (README D41), so there is no resolution to choose here:
 already scaled onto the lattice (`three-runtime/import.ts`'s `scaleImportedScene`), and a payload's cell
 coordinates are world coordinates.
 
-## Public interface
-```ts
-type VoxelizePart = {
-  soup: TriangleSoup;   // world space: the caller bakes transforms, voxelize never applies one
-  color: ColorSource;   // the part's own colour source: factor, texture, UVs, vertex colours, alphaTest
-};
-type VoxelizeSource = {
-  sourceId: string;     // caller's own key, e.g. the imported scene; NOT a document ObjectId
-  name: string;
-  parts: readonly VoxelizePart[];  // one import's mesh nodes; every part writes into this one payload
-};
-type VoxelizeRequest = {
-  sources: VoxelizeSource[];
-  budget: number;
-  onProgress?: (ratio: number) => void;
-  signal?: AbortSignal;
-};
-type VoxelizeOutput = {
-  sourceId: string;
-  name: string;
-  payload: { kind: 'uniform'; grid: UniformGrid };
-  origin: THREE.Vector3;   // world-space position of the payload's local (0, 0, 0)
-};
-type VoxelizeResult =
-  | { ok: true; outputs: VoxelizeOutput[]; stats: { cells: number; triangles: number } }
-  | { ok: false; error: 'cancelled' | 'budget-exceeded' | 'empty' | 'unsupported-geometry' | 'exceeds-grid'; detail: string };
-const DEFAULT_CELL_BUDGET = 4_000_000;   // the app passes this as `budget`; `editor/ops.ts` imports it for box edits, so an edit cannot disagree with a voxelization
-function voxelize(request: VoxelizeRequest): Promise<VoxelizeResult>;
-```
-
 ## Internal logic
 Sources run in ascending `sources` index order and each source's parts in `parts` index order, which is what makes
 the run deterministic.
@@ -96,12 +66,6 @@ Returned, never thrown: `'empty'` — no source has a part with a triangle: ther
 - `'budget-exceeded'` — the running total would pass `budget`; `detail` carries the measured count and the limit.
 - `'cancelled'` — the signal aborted; `detail` states that the scene was left untouched, and no output is returned.
 Thrown: `RangeError` for a `budget` that is not a non-negative integer; soup malformations are returned instead, because they come from imported data. Nothing else is validated: cells are the world unit, so there is no `voxelSize` to check (README D41).
-
-## Dependencies
-- `../uniform/grid.js` — `UniformGrid`, `unpackKey` (cell keys out of the surface map), and the `HexColor`, `CellKey` types; the registered same-ring edge `voxels/voxelize -> voxels/uniform` (README D8).
-- `./surface.js` — `TriangleSoup`, `SurfaceCells`, `voxelizeSurface`; `./colorSampler.js` — `ColorSource`, `resolvePrimitiveColor`.
-- `three` — `Vector3` for `origin`; a value type, never project data (README D1).
-No outer-ring import: nothing here reaches `document`, `three-runtime`, or `editor`.
 
 ## Tests
 `tests/voxelize.test.ts` pins per-source separation (one output per source, distinct payloads, `sourceId`/`name` copied through), the parts model — the shared cell written once with the first part's colour, the cell only a later part claims taking its colour, the origin at the union AABB of the parts, and a partless source behaving like a triangle-free one — each `origin` being the world min corner, `stats` totals (`UniformGrid.size`), that each cell carries the color resolved from the three vertices of the triangle that claimed it — the soup's index buffer decides which vertex, not the triangle index — `'empty'` for triangles-free soups, `'unsupported-geometry'` for a malformed soup, `'exceeds-grid'` for a soup whose extent outgrows the container's 512 cells per axis, and the `budget-exceeded` and `'cancelled'` aborts returning no outputs.

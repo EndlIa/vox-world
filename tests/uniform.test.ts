@@ -3,7 +3,6 @@ import {
   CELL_SIZE,
   UniformGrid,
   boxCount,
-  boxEquals,
   isSubdivision,
   normalizeBox,
   packKey,
@@ -45,7 +44,7 @@ describe('box helpers', () => {
     const forward = normalizeBox([-1, 4, 0], [3, 1, 2]);
     const reversed = normalizeBox([3, 1, 2], [-1, 4, 0]);
     expect(forward).toEqual({ min: [-1, 1, 0], max: [3, 4, 2] });
-    expect(boxEquals(forward, reversed)).toBe(true);
+    expect(forward).toEqual(reversed);
     expect(forward.min[0]).toBeLessThanOrEqual(forward.max[0]);
     expect(forward.min[1]).toBeLessThanOrEqual(forward.max[1]);
     expect(forward.min[2]).toBeLessThanOrEqual(forward.max[2]);
@@ -57,14 +56,6 @@ describe('box helpers', () => {
     expect(boxCount(normalizeBox([0, 0, 0], [1, 0, 0]))).toBe(2);
     const inverted: IntBox3 = { min: [1, 1, 1], max: [0, 1, 1] };
     expect(boxCount(inverted)).toBe(0);
-  });
-
-  it('compares boxes by corners', () => {
-    const box = normalizeBox([0, 0, 0], [1, 1, 1]);
-    expect(boxEquals(box, normalizeBox([0, 0, 0], [1, 1, 1]))).toBe(true);
-    expect(boxEquals(box, normalizeBox([0, 0, 0], [2, 1, 1]))).toBe(false);
-    expect(boxEquals(box, normalizeBox([-1, 0, 0], [1, 1, 1]))).toBe(false);
-    expect(boxEquals(box, { min: box.min, max: [1, 1, 1] })).toBe(true);
   });
 });
 

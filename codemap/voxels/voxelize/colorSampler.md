@@ -12,23 +12,6 @@ sampling rules — nearest-neighbour lookup, repeat addressing, the sRGB decode 
 masked average — while the pixels, the UVs and the cutoff are handed to it by `three-runtime/import.ts`.
 It never touches an image, a canvas, or a `THREE.Texture`.
 
-## Public interface
-```ts
-type ColorSource = {
-  baseColor: HexColor;
-  vertexColors?: Float32Array;
-  vertexColorSize?: number;
-  texture?: { width: number; height: number; pixels: Uint8ClampedArray };  // sRGB RGBA texels
-  uv?: Float32Array;                                                        // 2 per vertex
-  alphaTest?: number;                                                       // material alpha cutoff; 0 or absent = none
-};
-function resolvePrimitiveColor(source: ColorSource, triangleVertices: readonly [number, number, number]): HexColor;
-```
-`triangleVertices` are the three indices the soup's own index buffer gives for one triangle, so they index
-`vertexColors` and `uv` in the source's vertex order. `alphaTest` is `material.alphaTest` verbatim — the
-value glTF's `alphaMode: MASK` sets to its `alphaCutoff` (0.5 by default) — and is compared against
-`alpha / 255` of a texel, so a non-positive value means the material has no cutoff.
-
 ## Internal logic
 1. Identity path: with neither `vertexColors` nor a usable `texture` + `uv` pair, `source.baseColor` is
    returned unchanged. It is already in the `HexColor = 0xRRGGBB` exchange format (the form
@@ -124,13 +107,6 @@ edges are not on the table at this resolution, so a slightly soft mask edge is t
   with neither are resolved from the terms that do exist.
 - No result union: for well-formed input color resolution cannot fail, and a source without vertex
   colors or a texture always carries `baseColor`. A failure here is never swallowed into a fallback color.
-
-## Dependencies
-- `../uniform/grid.js` — `HexColor` as a type only.
-- `three` — `Color` and `SRGBColorSpace`, for color-space-correct decode of the factor and the texels and
-  encode of the result (README D1/D14). Nothing else from Three.js is needed and no local RGB math is
-  written.
-No outer-ring import, and no DOM: this file never touches an image, a canvas, or a texture object.
 
 ## Tests
 `tests/voxelize.test.ts` (node, no DOM, no GPU — every `ColorSource` is hand-built) pins:

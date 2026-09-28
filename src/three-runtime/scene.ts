@@ -20,17 +20,13 @@ import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
 import { Outlines } from '@pmndrs/vanilla/core/Outlines';
 import { applyFaceBorder } from './faceGrid.js';
-
-/** The imported-source-mesh layer (README D24); `picking.ts` enables it on its raycaster too. */
-const SOURCE_LAYER = 2;
+import { OUTLINE_LAYER, SCENE_LAYER, SOURCE_LAYER } from './layers.js';
 /**
  * The selection outline's own layer (README D24, D50): the hull and the depth-only copy of the selected object's
  * instances that cuts it to a rim live here, apart from the layer-1 decorations, because the outline is drawn in a pass
  * of its own that must contain nothing else. A pick's raycaster and the export camera never test it, so an outline
  * cannot change what a click or an export sees either.
- */
-const OUTLINE_LAYER = 3;
-/** The selected object's outline: yellow, which nothing else in the scene uses. */
+ *//** The selected object's outline: yellow, which nothing else in the scene uses. */
 const SELECTION_COLOR = 0xffd400;
 /**
  * How far the outline's hull is pushed out along each face, as a share of the object's own cell. A share rather than a
@@ -51,10 +47,10 @@ const MIN_NEAR = 1e-4;
  * feedback (`controls.ts` and `overlay.ts`), which is never picked, exported, or measured (README D24).
  */
 const CONTENT_LAYERS = new THREE.Layers();
-CONTENT_LAYERS.set(0);
+CONTENT_LAYERS.set(SCENE_LAYER);
 CONTENT_LAYERS.enable(SOURCE_LAYER);
 
-export type CellLookup = {
+type CellLookup = {
   objectId: ObjectId;
   cells: [number, number, number][];
   colors: HexColor[];

@@ -5,21 +5,6 @@ Ring: 3 · Layer: export · Depends on: mp4-muxer (library), WebCodecs (platform
 ## Responsibility
 The encoder and muxer half of the export: pick a codec the browser actually supports, then turn a stream of `ImageBitmap` frames into one MP4 blob. It knows nothing about the project, the scene, or the timeline — `FrameSink` is the only thing the render side sees (README D7). Capture orchestration lives in `export/job.ts`.
 
-## Public interface
-```ts
-type FrameSink = { push(frame: ImageBitmap, index: number): void };
-type CodecChoice = { codec: string; muxerCodec: 'avc' | 'hevc' | 'av1' | 'vp9'; label: string };
-function selectCodec(width: number, height: number, fps: number): Promise<CodecChoice | undefined>;
-class Mp4Writer implements FrameSink {
-  constructor(choice: CodecChoice, opts: { width: number; height: number; fps: number; bitrate?: number });
-  push(frame: ImageBitmap, index: number): void;       // encodes and muxes, closes the frame
-  finish(): Promise<{ ok: true; blob: Blob; codec: string } |
-    { ok: false; error: 'encoder-failed' | 'not-finalized'; detail: string }>;
-  cancel(): void;
-}
-```
-`FinishResult` names that `finish()` union but stays module-private: the module exports exactly `FrameSink`, `CodecChoice`, `selectCodec`, and `Mp4Writer`, so the name is declared once and used only by the cached-result field and the settle helper.
-
 ## Internal logic
 1. `selectCodec` probes the candidate table below in that fixed preference order (README D7), returning the first entry the platform accepts **for the requested size**. For each it builds `{ codec, width, height, framerate: fps, bitrate, latencyMode: 'quality' }` — bitrate derived from the pixel rate and clamped unless the caller fixed it — and awaits `VideoEncoder.isConfigSupported(config)`. A `supported: false` answer, a rejection, or a throw moves on to the next candidate; nothing else is ever tried. Every entry is profile/level qualified, because Chromium answers `isConfigSupported` **false** for the bare `avc1`/`av01`/`vp09` strings the brief listed, which would fail every export with `'no-codec'`.
 
@@ -54,11 +39,6 @@ class Mp4Writer implements FrameSink {
 - `{ ok: false, error: 'not-finalized', detail }` — `finish()` on a writer that was cancelled or never received a frame. No blob is produced.
 - `selectCodec` reports failure by returning `undefined` (spelled `'no-codec'` by `job.ts`): never by throwing, never by silently choosing a weaker codec.
 - Programmer errors throw: `new VideoFrame` on a closed/detached bitmap throws `InvalidStateError`, a candidate whose prefix is not `avc1.`/`av01.`/`vp09.` throws `RangeError` from the prefix mapping, and a `CodecChoice` with an unknown `muxerCodec` is refused by `mp4-muxer`.
-
-## Dependencies
-- `mp4-muxer` — `Muxer`, `ArrayBufferTarget`: the MP4 container.
-- WebCodecs `VideoEncoder`/`VideoFrame` and `Blob` — the platform. `selectCodec` returning `undefined` when `VideoEncoder` is missing is why the probe is never assumed to succeed.
-No relative import: this file depends on no module of ours, which is exactly what makes the encoder replaceable behind `FrameSink` (README D7).
 
 ## Tests
 No `tests/*.test.ts` covers this module: the node test environment has no WebCodecs, and the demo slice verifies export by running the application and inspecting the produced MP4 (README section 10). The observable checks are that the export reports the codec it chose, that the file plays, and that its duration equals `frames / fps`. The timestamp mapping is a pure function of index and fps, so it is the one part that could be pinned in a node test if the writer is ever refactored.

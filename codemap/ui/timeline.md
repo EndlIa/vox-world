@@ -8,23 +8,6 @@ seeking is delegated to `onScrub` and clip rebuilds to `onEdited` (README D2), a
 the bottom of the page, and that bar starts collapsed: whether it is on screen is the app's flag, and `setVisible` is the view of it, the way
 `setTime` is the view of the playhead (README D44).
 
-## Public interface
-```ts
-type TimelineContext = {
-  project: Project; playback: Playback; session: EditorSession;
-  onScrub(timeMs: number): void;   // seeks to an absolute millisecond time; the app converts it to the clip's seconds
-  onEdited(): void;
-  adoptViewAsCamera?(): void;   // a camera key captures the view the author is aiming (README D46)
-  onTransport(): void;       // starts or pauses the run; the app owns the transport because a run moves the viewport (D48)
-};
-class TimelinePanel {
-  constructor(root: HTMLElement, context: TimelineContext);
-  setTime(timeMs: number): void;
-  setVisible(visible: boolean): void;   // shows or hides the host bar; the app owns the flag
-  refresh(): void;
-}
-```
-
 ## Internal logic
 1. The constructor builds one `<div>` under `root`: a transport row — the one Play/Pause toggle and the `loop` checkbox labelled
    `loop`, the row's only control whose meaning is not in its own text, so the label carries the word and, by wrapping
@@ -110,19 +93,6 @@ puts the field back to what the clip holds. A duration that is not finite, and a
 `refresh()` instead of reaching the model — `setDuration` would throw on the first, and a non-positive `fps` is no frame grid at all. Showing and
 hiding the bar has no failure path at all — `setVisible` writes the host's attribute and returns — and nothing here throws and no failure is
 silently dropped.
-
-## Dependencies
-- `./dom.js` — `el`, `fmt` for construction and the time and keyframe-value readouts.
-- `../document/timeline.js` — the mutators (`addKeyframe`, `moveKeyframe`, `removeKeyframe`, `setDuration`, `setInterpolation`) and the lookups
-  (`findTrack`, `maxKeyframeTime`), plus the `TrackTarget`, `TrackChannel`, `Interpolation` types; that file owns the data, the ordering rules,
-  and the clamp, so the panel owns none of that logic.
-- `../document/project.js` — `Project` for `timeline`, `camera`, object transforms, and `keyframePosition`, the one rule a `position` keyframe is
-  read through (ring 1).
-- `../animation/playback.js` — `Playback` for the loop setting, the playhead read, and the `playing` flag the toggle's label follows (ring 1); the
-  transport itself is the app's, through `onTransport` (README D48).
-- `../editor/session.js` — `EditorSession` for the active object that keys the object tracks (ring 3).
-- No outer-ring import and no `three` import of its own: keyframe values are read as plain numbers from the `Vector3`/`Quaternion` components the
-  project already holds.
 
 ## Tests
 None. The widget needs a DOM, and the mutators it calls are pinned by `tests/timeline.test.ts` (insertion order, id-addressed moves and removals,

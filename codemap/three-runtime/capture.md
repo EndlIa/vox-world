@@ -5,21 +5,6 @@ Ring: 2 · Layer: three-runtime · Depends on: `three`
 ## Responsibility
 Renders one frame per call at the export resolution on its own offscreen `WebGLRenderer` and hands that frame to the encoder as an `ImageBitmap`. It draws whatever scene and camera it is given: it knows nothing about mask colors, timelines, or the visible canvas, and it reads no project data.
 
-## Public interface
-```ts
-type CaptureResult = { ok: true; bitmap: ImageBitmap } |
-  { ok: false; error: 'context-lost' | 'render-failed'; detail: string };
-class Capture {
-  constructor(opts: { width: number; height: number });
-  readonly width: number;
-  readonly height: number;
-  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera): void;   // one frame, at export size
-  readFrame(): Promise<CaptureResult>;
-  resize(width: number, height: number): void;
-  dispose(): void;
-}
-```
-
 ## Internal logic
 1. Constructor: `new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true, logarithmicDepthBuffer: true })` — the same depth buffer the viewport uses, so an exported frame cannot fight where the viewport does not (README D40) — then `setPixelRatio(1)` — export pixels are exact and `devicePixelRatio` must not scale them — `setSize(width, height, false)` so no canvas style is touched, `toneMapping = THREE.NoToneMapping`, and `outputColorSpace = THREE.SRGBColorSpace`. The canvas is never attached to the document; nothing is rendered until `render` is called.
 2. `render(scene, camera)` first sets `camera.aspect = width / height` and calls `camera.updateProjectionMatrix()`: the capture owns the export viewport, so it owns the aspect, while fov, near, far, and the transform stay the caller's data — in the app that camera is `SceneMirror.camera`, the output camera derived from `project.camera` (README D17).
@@ -41,10 +26,6 @@ class Capture {
 - `readFrame` → `{ ok: false, error: 'context-lost', detail }` when the offscreen context is lost; a loss is never masked by a blank bitmap.
 - `render` and `resize` throw `Error` with the detail `capture context lost` or `capture disposed`, since a synchronous signature cannot carry the result union.
 - `RangeError` for a non-positive or non-integer `width`/`height`, in the constructor and in `resize`.
-
-## Dependencies
-- `three` — `WebGLRenderer`, `Scene`, `PerspectiveCamera`, `NoToneMapping`, `SRGBColorSpace`.
-That is the whole list: `Capture` imports nothing from this repository, which is what keeps the export path independent of the mirror and the visible canvas.
 
 ## Tests
 - No vitest file: the node test environment has no WebGL context, and the brief forbids `WebGLRenderer` in tests. Verified by running an export (README §10) and inspecting the produced MP4: resolution equal to the requested export size on a differently sized viewport, one frame per timeline frame, and mask frames carrying flat per-object colors.

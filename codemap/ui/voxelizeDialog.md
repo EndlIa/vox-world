@@ -13,19 +13,6 @@ read-only dimensions beside it are what that count makes the model — an orient
 value the job is handed (README D29, D41). It owns no project state, calls nothing, and runs no
 job — it is a question, and the app acts on the answer.
 
-## Public interface
-```ts
-const DEFAULT_VOXELS_ACROSS = 96;   // exported: the count every prompt opens at
-type VoxelizeDialogDefaults = { extent: { readonly x: number; readonly y: number; readonly z: number } };
-type VoxelizeDialogOutcome = { kind: 'run'; cellsAcross: number } | { kind: 'cancel' };
-class VoxelizeDialog {
-  constructor(root: HTMLElement, defaults: () => VoxelizeDialogDefaults);
-  open(context: { title: string }): Promise<VoxelizeDialogOutcome>;
-  get isOpen(): boolean;
-  dispose(): void;
-}
-```
-
 ## Internal logic
 1. The constructor builds the whole modal once through `el`: a `<dialog>` holding a `section` card of 320 px — the title `h2`, a
    `<form method="dialog">` with the field, the read-only dimensions line, and a `.row` of the `Voxelize` and `Cancel` buttons.
@@ -109,18 +96,6 @@ class VoxelizeDialog {
 No `Result` and no reporting: the dialog validates nothing for anyone but itself (an unparsable field simply disables
 `Voxelize`), and a job's failure never reaches it — the app reports that (README D38). `open()` on a disposed dialog throws
 `TypeError`, which is a programmer error — `main` disposes the dialog only while tearing the page down.
-
-## Dependencies
-- `./dom.js` — `el` for construction and `fmt` for the dimensions readout. The prompt's listeners are handed to `el` with the
-  nodes they belong to, so there is no listener to detach: a closed dialog is out of the document.
-- `index.html` — the modal's look, and only its look: the `dialog` reset (no platform border, padding, background, or color)
-  and `dialog::backdrop`, the translucent ground the page shows through behind the card. The stacking is the platform's, not
-  the stylesheet's: `showModal()` puts the dialog in the top layer, above `#hud` (10), `#panels` (12), and `.window` (15),
-  which is why the modal needs no `z-index` of its own.
-- Page globals (`document`, `KeyboardEvent`, `SubmitEvent`) and nothing else: no Three.js, no project, no outer-ring import,
-  and nothing in `ui` imports this file except `app/main.ts` — which also imports `DEFAULT_VOXELS_ACROSS`, the count it scales
-  an arriving import to. `VoxelizeTarget` is gone from the app (README D41), so this file no longer names
-  `../voxels/voxelize/voxelize.js` at all.
 
 ## Tests
 None. The dialog needs a DOM and vitest runs in the node environment, so it is verified by running the app (README section 10):

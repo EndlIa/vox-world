@@ -1,9 +1,9 @@
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 
 /** The renderer-to-encoder seam (README D7): the export loop sees nothing else of this file. */
-export type FrameSink = { push(frame: ImageBitmap, index: number): void };
+type FrameSink = { push(frame: ImageBitmap, index: number): void };
 
-export type CodecChoice = { codec: string; muxerCodec: 'avc' | 'hevc' | 'av1' | 'vp9'; label: string };
+type CodecChoice = { codec: string; muxerCodec: 'avc' | 'av1' | 'vp9' };
 
 /** What `Mp4Writer.finish()` returns: the finished file with the codec reported, or the reason it failed. */
 export type FinishResult =
@@ -82,7 +82,7 @@ export async function selectCodec(width: number, height: number, fps: number): P
     try {
       const support = await VideoEncoder.isConfigSupported(config);
       if (support.supported === true) {
-        return { codec: candidate.codec, muxerCodec, label: candidate.codec };
+        return { codec: candidate.codec, muxerCodec };
       }
     } catch {
       continue;

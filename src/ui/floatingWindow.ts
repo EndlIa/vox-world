@@ -22,7 +22,7 @@ const BASE_Z = 15;
 /** The class every window carries, which is also how `raise()` finds the ones it stacks against. */
 const WINDOW_CLASS = 'window';
 
-export type FloatingWindowOptions = {
+type FloatingWindowOptions = {
   /** The name the title bar shows. */
   title: string;
   /** The window's initial left edge, in viewport pixels. */

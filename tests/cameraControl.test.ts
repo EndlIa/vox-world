@@ -8,9 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { CameraControl } from '../src/three-runtime/cameraControl.js';
-
-/** The viewport decoration layer (README D24). */
-const OVERLAY_LAYER = 1;
+import { OVERLAY_LAYER } from '../src/three-runtime/layers.js';
 
 function cameraHelper(control: CameraControl): THREE.CameraHelper {
   let found: THREE.CameraHelper | undefined;

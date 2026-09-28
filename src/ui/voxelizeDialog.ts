@@ -44,7 +44,7 @@ export type VoxelizeDialogDefaults = {
 };
 
 /** What the user answered: how long the model is in voxels, or a dismissal to act on. */
-export type VoxelizeDialogOutcome =
+type VoxelizeDialogOutcome =
   | { kind: 'run'; cellsAcross: number }
   | { kind: 'cancel' };
 

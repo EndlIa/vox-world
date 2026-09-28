@@ -15,6 +15,7 @@ import type { ObjectId } from '../document/project.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
 import type { SceneMirror } from './scene.js';
+import { SCENE_LAYER, SOURCE_LAYER } from './layers.js';
 
 export type PickHit =
   | {
@@ -44,12 +45,6 @@ type Candidate = {
   normal: THREE.Vector3 | undefined;
   payload: Payload;
 };
-
-/** The voxel-content layer (README D24); layer 1 is viewport feedback, layer 2 the raw meshes. */
-const SCENE_LAYER = 0;
-/** The imported-source-mesh layer (README D24), enabled alongside layer 0 on the raycaster. */
-const SOURCE_LAYER = 2;
-
 export class Picker {
   private readonly mirror: SceneMirror;
   private readonly raycaster = new THREE.Raycaster();

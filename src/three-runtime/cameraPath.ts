@@ -13,10 +13,7 @@
  */
 
 import * as THREE from 'three';
-
-/** The viewport decoration layer (README D24); the grid, overlay, gizmo, and carrier use the same number. */
-const OVERLAY_LAYER = 1;
-const DECORATION_RENDER_ORDER = 1000;
+import { DECORATION_RENDER_ORDER, OVERLAY_LAYER } from './layers.js';
 
 /** Ring band as a share of the ring's outer radius, and the side of the texture the ring is drawn into. */
 const MARKER_INNER_RATIO = 0.62;
