@@ -119,7 +119,9 @@ function main(): void;
      writes through `setCameraPose`, which refuses rather than reports — a non-finite component, or a zero-length quaternion that is not to be normalized
      into a rotation, returns before the document is touched, so a refused field leaves the camera exactly as it was — and, past both checks, normalizes,
      writes the position, routes the FOV through `setCameraFov` (which owns the clamp and the projection refresh), and copies the pose onto the mirror
-     camera. Both refresh the panel, so a refused field is re-seeded from what the camera then holds.
+     camera. Both refresh the panel, so a refused field is re-seeded from what the camera then holds. Neither one moves the viewport: a shot is aimed from
+     the third person, so a view that followed every commit — including one that changed nothing — would make that impossible. `View -> Camera` is the one
+     explicit way to look through the shot, and the transport is the only other thing that moves the view on its own.
    - Raw meshes — `setSourceVisible` is the panel's one entry point for the override, and it writes the mirror's flag and nothing else: the mirror owns it,
      applies it at once and again on the next `sync()`, and the panel reads it back through `sceneVisible`, so the checkbox cannot drift from the mirror;
      no dirty mark or refresh is needed, and an export is unaffected either way.
@@ -134,8 +136,9 @@ function main(): void;
      and a little larger, so seeding from them would stretch the printed dimensions for content they do not cover. A scene of nothing but outlines has no
      outline-free bounds, so it falls back to `scene.bounds`, which is what framing uses either way, because every node is displayed.
    - Animate — `onEdited` rebuilds the mixer, and the path refresh rides the same callback; `onTransport` is `togglePlayback`, so the widget's toggle
-     reports the press and the app is what starts or pauses the run; `adoptViewAsCamera` is `captureViewAsCamera`, which is what makes a camera keyframe
-     record the view the author is aiming; `onScrub` pauses and then seeks, the one place the widget's milliseconds become the clip's seconds — the scrub
+     reports the press and the app is what starts or pauses the run; `adoptViewAsCamera` is the app's own guard — it captures the viewport only while the
+     carrier is *not* selected, so a camera keyframe records the shot the carrier was aimed at and the view only when the view is what the author is
+     aiming; `onScrub` pauses and then seeks, the one place the widget's milliseconds become the clip's seconds — the scrub
      bar, the exact-time field, and a keyframe row's `key` all seek through it.
    - Transport — the transport is the app's, not the widget's, because a run of the clip changes the viewport too. `startPlayback` returns while a run is
      already going and captures `playbackView` before anything moves, cloning every value so nothing later writes through it. `pausePlayback` returns while
@@ -244,7 +247,9 @@ function main(): void;
   `setCameraPose`, the numeric grid's whole-pose write; and `cameraToView`, through `captureViewAsCamera`. The bootstrap's write is what keeps the shot
   from being the document's default identity pose, which in this Z-up world looks straight
   down the camera's own `-Z`. Navigation never writes it: it flies the viewport camera, so the authored
-  camera is only ever moved by an explicit gesture on the carrier. `project.camera.fov` is written only by `setCameraFov`, which `setCameraPose` routes its FOV through. Nothing else reads a mirror
+  camera is only ever moved by an explicit gesture on the carrier. And the authored pose never moves the view either: a commit that changed nothing
+  would otherwise teleport the viewport into the shot, which is what makes third-person aiming impossible. The view is moved by `View -> Camera` and by
+  the transport's handoff and restore, and by nothing else. `project.camera.fov` is written only by `setCameraFov`, which `setCameraPose` routes its FOV through. Nothing else reads a mirror
   transform back into the document while the mixer is running.
 - A run of the clip is the app's transport and it is reversible: `togglePlayback` is the only entry point, `startPlayback` captures `playbackView` before
   anything moves, and the frame loop ends a non-looping run at its last frame through `finishPlayback` — so every run either pauses on the frame it

@@ -36,9 +36,9 @@ export type TimelineContext = {
   onScrub(timeMs: number): void;
   onEdited(): void;
   /**
-   * Captures the editor's current view as the output camera's pose, if the app can. The viewport is what
-   * the author aims with, so a camera keyframe has to record it: without this a key would read a document pose that
-   * nothing keeps current, and every camera key would record the same stale value.
+   * Run before a camera key is authored, so the app can make the document hold the pose the key should record. The
+   * widget reads `project.camera.transform` either way; which pose that should be — the view being looked through, or a
+   * shot the app has already placed — is the app's decision, not the keyframe's.
    */
   adoptViewAsCamera?(): void;
   /**
@@ -326,8 +326,8 @@ export class TimelinePanel {
     if (channel === 'fov') {
       return target.kind === 'camera' ? [this.context.project.camera.fov] : undefined;
     }
-    // A camera key records the pose the author is aiming, so the app captures the editor's view first when it can.
-    // An object key records the object, which the session already selected and can be seen moving.
+    // A camera key records what the app says it should: the hook runs first, so the app can put the pose the key is to
+    // hold into the document. An object key records the object, which the session already selected and can be seen moving.
     if (target.kind === 'camera') this.context.adoptViewAsCamera?.();
     const transform =
       target.kind === 'camera' ? this.context.project.camera.transform : this.context.project.get(target.objectId)?.transform;

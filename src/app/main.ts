@@ -336,8 +336,11 @@ export function main(): void {
       // A keyframe edit is what changes the camera's trajectory, so the path is redrawn here.
       refreshCameraPath();
     },
-    // A camera key records the view the author is aiming.
-    adoptViewAsCamera: captureViewAsCamera,
+    // A camera key records what the author aimed: while the carrier is selected that is the shot the gizmo or the pose
+    // fields just moved, which the document already holds; otherwise it is the view being looked through.
+    adoptViewAsCamera: (): void => {
+      if (!cameraControlSelected) captureViewAsCamera();
+    },
   };
 
   const panels = new Panels(panelsRoot, panelContext);
@@ -694,8 +697,9 @@ export function main(): void {
     transform.quaternion.normalize();
     mirror.camera.position.copy(transform.position);
     mirror.camera.quaternion.copy(transform.quaternion);
-    // The editor view follows, so the next camera keyframe captures the pose the drag just committed.
-    controls.setViewFrom(transform.position, transform.quaternion);
+    // The viewport is deliberately left where it is: the carrier exists so a shot can be aimed from the third person,
+    // which a view that followed every drag would make impossible — and a commit that moved nothing would still move
+    // the view. `View -> Camera` is the one explicit way to look through the shot.
     panels.refresh();
   }
 
@@ -719,9 +723,8 @@ export function main(): void {
     setCameraFov(pose.fov);
     mirror.camera.position.copy(transform.position);
     mirror.camera.quaternion.copy(transform.quaternion);
-    // The editor view follows the authored pose, so a camera keyframe — which captures that view — records the pose
-    // the author typed rather than overwriting it with wherever they happened to be looking.
-    controls.setViewFrom(transform.position, transform.quaternion);
+    // The viewport is left alone for the same reason a drag leaves it alone: the pose fields edit the shot, and the
+    // view is only ever moved by an explicit command.
     panels.refresh();
   }
 
