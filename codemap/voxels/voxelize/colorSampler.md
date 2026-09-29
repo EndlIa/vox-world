@@ -128,7 +128,7 @@ edges are not on the table at this resolution, so a slightly soft mask edge is t
 ## Dependencies
 - `../uniform/grid.js` — `HexColor` as a type only.
 - `three` — `Color` and `SRGBColorSpace`, for color-space-correct decode of the factor and the texels and
-  encode of the result (README D1/D14). Nothing else from Three.js is needed and no local RGB math is
+  encode of the result. Nothing else from Three.js is needed and no local RGB math is
   written.
 No outer-ring import, and no DOM: this file never touches an image, a canvas, or a texture object.
 

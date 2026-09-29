@@ -1,6 +1,6 @@
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 
-/** The renderer-to-encoder seam (README D7): the export loop sees nothing else of this file. */
+/** The renderer-to-encoder seam: the export loop sees nothing else of this file. */
 export type FrameSink = { push(frame: ImageBitmap, index: number): void };
 
 export type CodecChoice = { codec: string; muxerCodec: 'avc' | 'hevc' | 'av1' | 'vp9'; label: string };
@@ -14,7 +14,7 @@ export type FinishResult =
 const BASELINE_3_1_MAX_PIXELS = 1280 * 720;
 
 /**
- * Probed in this fixed preference order (README D7); the first candidate the platform accepts for
+ * Probed in this fixed preference order; the first candidate the platform accepts for
  * the requested size wins. Every entry is a profile/level qualified string: Chromium answers
  * `isConfigSupported` false for a bare `avc1`/`av01`/`vp09`, so a bare entry would disable export
  * outright. `avc1.42001f` is baseline 3.1 and is skipped above 720p, where its level cannot carry

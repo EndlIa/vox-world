@@ -58,5 +58,4 @@ None — page globals (`document`, `EventTarget`, `Node`) only. Every panel can 
 pulling in project, editor, animation, or Three.js code, which is why it sits at the bottom of `ui`.
 
 ## Tests
-None. `fmt` is pure and would run under the node test environment, but the brief's test inventory
-(section 4) covers rings 0/1 only; DOM behavior is verified by running the app (README section 10).
+None. `fmt` is pure and would run under the node test environment, but DOM behavior is verified by running the app (README section 10).

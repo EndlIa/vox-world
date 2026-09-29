@@ -4,7 +4,7 @@ Ring: 0 · Layer: voxels/voxelize · Depends on: `../uniform/grid.js` (`CELL_SIZ
 
 ## Responsibility
 Conservative surface voxelization: given one indexed triangle soup, produce the set of grid cells whose
-cube the surface actually touches. A cell is the world unit cube (`CELL_SIZE`, README D41), so the kernel
+cube the surface actually touches. A cell is the world unit cube (`CELL_SIZE`), so the kernel
 has no cell size to take. It is not a volume filler, it samples no colors, and it allocates no
 payload container — `voxelize.ts` owns both of those steps.
 
@@ -31,7 +31,7 @@ translates it to a global triangle index and then to a color.
 3. Per triangle `t`, in ascending index order:
    - read the three vertices, take the component-wise min/max;
    - candidate cells are `Math.floor(min) .. Math.floor(max)` per axis — one cell per lattice span covered
-     by the triangle's AABB, the min-corner convention at the world unit (README D41) — and a cell's cube is
+     by the triangle's AABB, the min-corner convention at the world unit — and a cell's cube is
      that cell's unit cube, half extent `CELL_SIZE / 2`. A face lying exactly on a lattice plane therefore
      claims the cells on both sides;
    - iterate candidates in `z`, then `y`, then `x` order (deterministic);
@@ -48,7 +48,7 @@ translates it to a global triangle index and then to a color.
 5. Budget: before a new key would grow the map past `opts.budget`, return
    `{ error: 'budget-exceeded', detail: 'cell budget exceeded: <cells.size + 1> cells at the limit of <budget>' }`.
    The check runs before the write, so the map never grows past the budget and the caller has not yet
-   allocated a payload (README D12).
+   allocated a payload.
 
 ## Invariants
 - Every key in `cells` is a cell cube the surface really intersects; no candidate is kept otherwise.
@@ -72,8 +72,8 @@ Thrown (programmer errors):
   `'unsupported-geometry'` results instead of throws.
 
 ## Dependencies
-- `../uniform/grid.js` — `CellKey` as a type, and `CELL_SIZE` as a value: the lattice is the world unit
-  (README D41), so the kernel reads it instead of taking a cell size. This file packs its own keys with
+- `../uniform/grid.js` — `CellKey` as a type, and `CELL_SIZE` as a value: the lattice is the world unit,
+  so the kernel reads it instead of taking a cell size. This file packs its own keys with
   the *same layout* the container uses, so the container's `unpackKey` inverts them, but without the
   container's `[-512, 511]` guard: every coordinate that reaches this kernel is non-negative and already
   aligned to the lattice, and the kernel must not throw from a data-driven path. The guard stays

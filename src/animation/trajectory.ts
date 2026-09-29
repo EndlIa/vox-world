@@ -2,7 +2,7 @@
  * The camera path: where the authored camera travels, as plain points and nothing else.
  *
  * The sampling runs the clip `animation/compile.ts` builds through a scratch `AnimationMixer`, which is the same
- * evaluation a render uses — discrete, linear, or the smooth spline, exactly as the track is set up (README D2) —
+ * evaluation a render uses — discrete, linear, or the smooth spline, exactly as the track is set up —
  * so no interpolation math is reimplemented here. What this file adds is the choice of times: an evenly spaced
  * walk over the clip's length, which is what a polyline needs.
  */
@@ -16,7 +16,7 @@ import type { Project } from '../document/project.js';
 /** How many segments the drawn path gets. Enough that a curved move reads as a curve at demo scale. */
 export const CAMERA_PATH_SEGMENTS = 128;
 
-/** The camera target as the timeline names it; its binding name is `camera` plus the channel's path (D22). */
+/** The camera target as the timeline names it; its binding name is `camera` plus the channel's path. */
 const CAMERA: TrackTarget = { kind: 'camera' };
 
 /**

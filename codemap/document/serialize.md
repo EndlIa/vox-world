@@ -8,7 +8,7 @@ Turns the project truth into one versioned JSON document and back. It reads a `P
 shape, encodes every uniform grid's cells, and validates a file completely — format, version, structure,
 hierarchy legality, cell ranges, keyframe widths and times, and the voxel budget — before a caller writes
 anything. It owns the file format and the cell codec, and it owns no project state: it creates no `Project`,
-never mutates the one it reads, and hands a validated `ProjectData` back for `Project.restore` (README D51).
+never mutates the one it reads, and hands a validated `ProjectData` back for `Project.restore`.
 
 ## Public interface
 ```ts
@@ -39,7 +39,7 @@ function decodeCells(payload: unknown): { ok: true; grid: UniformGrid } | { ok: 
 changing `version`:
 ```ts
 type CellPayload = {
-  subdivision: number;      // the grid's own level (D43)
+  subdivision: number;      // the grid's own level
   codec: 'varint-keys-palette';
   cellCount: number;        // occupied cells; the decoded counts must agree with it
   keys: string;             // base64: ascending packed cell keys, consecutive differences as varints
@@ -63,7 +63,7 @@ type CellPayload = {
    an integer `maskColor` inside `[0, 0xffffff]`, and boolean `visible`/`alignToGrid`. A `'uniform'` entry
    must carry a payload and an `'empty'` one must not; a duplicate id, a dangling `parentId`, a cycle, or a
    self-parent is `bad-hierarchy`. Nothing is repaired: `alignToGrid` against a fractional position is the
-   file's own statement and is preserved (D42 records what the editor does on the next write).
+   file's own statement and is preserved.
 4. Payloads go to `decodeCells`, which validates before it constructs: `subdivision` is an integer power of
    two `>= 1` (`isSubdivision`), `codec` is one this reader knows, `cellCount` is a non-negative integer,
    `index` holds exactly `cellCount * indexWidth` bytes, every `palette` entry is an integer in
@@ -80,7 +80,7 @@ type CellPayload = {
    into yet.
 7. Timeline validation: `durationMs` is a non-negative integer, `fps` a positive integer, `tracks` a list of
    entries whose `target` is `{ kind: 'camera' }` or `{ kind: 'object', objectId }` naming a loaded object
-   (`bad-keyframe` — a track onto a vanished object would otherwise be a dangling reference the D45 mutators
+   (`bad-keyframe` — a track onto a vanished object would otherwise be a dangling reference the timeline mutators
    cannot repair), whose `channel` is one of the four, and whose `interpolation` is `'step'`, `'linear'`, or
    `'smooth'`. At most one track may exist per `(target, channel)` pair.
 8. Keyframe validation: `value.length` equals the channel's size (3 for `position`/`scale`, 4 for
@@ -94,7 +94,7 @@ type CellPayload = {
     the limit. The check happens while reading, so an oversized file is refused before the rest of its cells
     are built.
 10. `detail` always names what failed in the file's own terms — the object id, the track, the keyframe id,
-    the field — because the console report (D38) is the only channel a refused file has.
+    the field — because the console report is the only channel a refused file has.
 11. `encodeCells` is total and allocation-proportional: it collects `(key, color)` pairs, sorts by key,
     builds the palette in first-use order over that sorted sequence, emits varints of consecutive key
     differences, widens `indexWidth` to 2 past 256 colors, and base64-encodes the two byte streams.
@@ -142,7 +142,7 @@ type CellPayload = {
   length table the keyframe check reads instead of re-declaring.
 - `../voxels/uniform/grid.js` — `UniformGrid`, `HexColor`, `CellKey`, `packKey`, `KEY_MIN`, `KEY_MAX`,
   `isSubdivision`.
-- `../voxels/voxelize/voxelize.js` — `DEFAULT_CELL_BUDGET`, the one budget constant (D12).
+- `../voxels/voxelize/voxelize.js` — `DEFAULT_CELL_BUDGET`, the one budget constant.
 - No `three`, no `three-runtime`, no `editor`, no `ui`: it is the file boundary of the document layer and
   nothing above it is reachable from here.
 

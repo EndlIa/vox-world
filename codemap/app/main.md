@@ -5,9 +5,9 @@ Ring: 4 · Layer: app · Depends on: every module of rings 0-4 (see Dependencies
 ## Responsibility
 The composition root: the only file allowed to import every module. It creates the project and every long-lived object, wires the import → voxelize
 → edit → animate → export flow, and runs the render loop; it owns no algorithm, only calls into inner rings. It also owns the one `VoxelizeDialog`:
-the voxelization settings live there (README D26), and this file is what asks for them — once per import, after the model is on screen. `main`
+the voxelization settings live there, and this file is what asks for them — once per import, after the model is on screen. `main`
 never holds the settings; it seeds the dialog from the retained import's per-axis extent and acts on the count it resolves —
-scaling the imported model onto the unit lattice first, so that count is the model's length in voxels (README D41).
+scaling the imported model onto the unit lattice first, so that count is the model's length in voxels.
 
 ## Public interface
 ```ts
@@ -21,298 +21,215 @@ function main(): void;
 ```
 
 ## Internal logic
-1. **Entry and project.** `index.html` pins `<canvas id="viewport">`, `<div id="panels">`, `<div id="timeline">`, and `<div id="hud">` and loads
-   `/src/app/main.ts` as a module. `main()` resolves those four elements once, builds everything below, schedules the render loop, and returns;
-   the long-lived objects live in one `AppContext`, everything else stays `main`-local. It creates `new Project()` and sets the clip it opens with —
-   `project.timeline.durationMs = DEFAULT_DURATION_MS` (10 000, the authoring unit, i.e. ten seconds once the clip is compiled) and
-   `project.timeline.fps = DEFAULT_FPS` — and one demo voxel object
-   through `project.createVoxelObject(...)` — `buildDemoGrid()`, a `DEMO_CELLS`³ cube (4×4×4) of unit cells built by
-   `UniformGrid.create()`, placed at `(-2, 0, -2)` — so the viewport is not empty before the first import. A cell coordinate is a world
-   coordinate (README D41), so the demo content occupies the cells it names.
-2. **Viewport.** `viewportCamera = new THREE.PerspectiveCamera(...)` is app-owned viewport state (D17) and has camera layers 1 and 2 enabled, so the overlay,
-   the gizmo (layer 1) and the imported raw meshes (layer 2, D24) are drawn by the viewport while the raycaster tests layers 0 and 2
-   and the export camera — and the `Capture` that renders through it — tests layer 0 alone; `new THREE.WebGLRenderer({ canvas: viewport,
-   antialias: true, logarithmicDepthBuffer: true })`; `new SceneMirror(project, { background, ambientIntensity })`, whose `mirror.camera` is the output camera; `new
-   `ViewportControls(viewport, viewportCamera)`; `new Overlay(mirror.scene)`; `new WorldGrid()`, whose `root` is added to `mirror.scene` —
-   viewport decoration on layer 1 like the overlay, so it is never picked and never exported (D35, D49); `new CameraControl(mirror.scene)`, the
-   runtime-only camera carrier the edit gizmo aims the output camera with (README D46) — a node on the same layer 1, so it is never picked
-   and no export frame contains it, and it reports the authored camera rather than owning any data — with `CAMERA_CONTROL_PIVOT`, `new Vector3(0, 0, 0)`,
-   as the pivot the gizmo attaches it at; `new CameraPath(mirror.scene)`, the runtime-only drawing of the authored camera's trajectory (README D47) —
-   hidden, unnamed, and on the same layer 1, so it is never picked and no export frame contains it, and it holds points the app hands it rather than
-   any camera data; then
-   `new Capture({ width, height })` at the initial export size, which every export resizes to the resolution the panel asked for;
-   then `mirror.frameAll(viewportCamera)`.
-3. **Editor objects.** `new EditorSession(project)`, `new Picker(mirror)`, and `new PointerTool({ dom: viewport, project, session, picker, overlay,
-   `getCamera: () => viewportCamera`, `getGizmoBusy: () => controls.gizmoBusy()`, callbacks })`; the camera closure
-   is what keeps a pick on the camera that drew the frame, and the gizmo closure is the one claim the tool defers
-   to, so a left press on empty space still reaches picking while the gizmo is attached — `controls` is constructed in step 2 and the arrow defers the
-   lookup to call time. The callbacks are the two closures that keep the UI and the mirror in step: `onSessionChange` re-reads the readouts,
-   re-syncs the gizmo, and refreshes the mode bar, the panels, and the timeline, and marks the active object dirty; `onProjectChange(ids)`
-   receives the ids of the objects an operation wrote — `projectChanged(ids)` adds each of them to `dirtyIds` and flags the playback bindings for a
-   rebuild, then commits, so exactly those objects are marked dirty for the mirror and rebuilt (README D4) — which is what leaves neither half of a
-   detach, whose two objects both changed, drawing stale geometry. Two app flags sit beside `cameraPathVisible`: `cameraControlSelected` (`false`), which
-   is whether the gizmo drives the carrier instead of the active object, and `gizmoMode` (`'translate'`), the one gizmo mode the carrier and an object
-   share (README D46). `cameraPathVisible` (`false`) sits beside them: whether the camera path is drawn, which `refreshCameraPath` clears whenever
-   the camera track holds fewer than two keyframes (README D47). `playbackView` holds
-   the viewport state a run started from — the camera's `position` and `quaternion`, the orbit `target`, and the playhead (`time`) it started at — or `undefined` when no run has captured one; it is what lets a pause hand the frame
-   over and a run's end undo the whole thing (README D48).
-4. **Animation.** `new Playback({ camera: mirror.camera })` — the output camera whose `fov` a track animates — then `playback.bind(new Map(...))`
-   mapping every `ObjectId` to `mirror.objectOf(id)`; `Playback` names the bound objects itself.
-5. **UI.** `new Panels(panelsRoot, panelContext)`, `new TimelinePanel(timelineRoot, timelineContext)`, `new Hud(hudRoot)`,
-   `new ModeBar(modebarRoot, { session })` — the viewport's two-button mode switch, a view of the session like the panels — and
-   `new VoxelizeDialog(panelsRoot, () => defaults())` — the settings modal is mounted into the same element as the panels and, like them, receives only
-   callbacks and no state — over the actions of
-   step 6, over `gridVisible`, the `WorldGrid` flag the `Grid` group's one checkbox reads, over `timelineVisible`, the app's own timeline-bar flag, and over
-   `cameraControl`, the view the `Camera` group's carrier controls read: `{ selected: cameraControlSelected, mode: gizmoMode, playing: playback.playing,
-   pose, pathVisible: cameraPathVisible, pathAvailable: cameraKeyframePositions(project).length >= 2 }`, whose pose comes from
-   `project.camera.transform` and `project.camera.fov` — not from the carrier node — because what the fields show is what a keyframe would record,
-   and whose two path fields say whether the drawing is on and whether the track holds two keyframes for one to exist at all (README D46, D47);
-   `pickImportFile` is implemented here as `void pickGlbFile().then(file => { if (file) void importFile(file); })`, so the file dialog stays in
-   `app/`. That timeline flag is declared beside the other app flags and is `false`, so the bar opens collapsed; the context hands it over as
-   `timelineVisible: () => timelineVisible`, and the matching action, `setTimelineVisible`, is its only writer. Right after the panel is built,
-   `timelinePanel.setVisible(timelineVisible)` makes the flag and the markup agree from the first frame: `index.html` carries
-   `<div id="timeline" hidden>` rather than leaving the attribute to the module, because a bar laid out by the first paint and hidden only when the
-   bundle runs would flash (README D44). The app creates no status line and no message area: the panel overlay holds the rail and the windows only (D38). The dialog is
-   created here because it belongs to `app/` in the same way the file dialog does: `ui` never imports `app/`, so the closure that seeds the dialog and
-   the handling of its outcome live in this file.
+1. **Entry and project.** `index.html` pins the elements `main` resolves — `<canvas id="viewport">`, and the `#modebar`, `#panels`, `#timeline`, and `#hud`
+   divs. The long-lived objects live in one `AppContext`; everything else stays `main`-local. The project opens with one demo voxel object — a
+   `DEMO_CELLS`³ cube of unit cells, placed off the origin — so the viewport is not empty before the first import, and a clip of `DEFAULT_DURATION_MS`
+   (10 000, the authoring unit, i.e. ten seconds once the clip is compiled) at `DEFAULT_FPS`. A cell coordinate is a world coordinate, so the demo content
+   occupies the cells it names.
+2. **Viewport.** `viewportCamera` is app-owned viewport state with camera layers 1 and 2 enabled: the viewport draws the overlay, the gizmo, and the other
+   decorations (layer 1) and the imported raw meshes (layer 2), while the raycaster tests layers 0 and 2 and the export camera — and the `Capture` that
+   renders through it — tests layer 0 alone. `mirror.camera` is the output camera; the `Capture` opens at the initial export size and every export resizes
+   it to the resolution the panel asked for. Everything else in this step is viewport-only decoration: on layer 1, holding no document data, never picked,
+   never in an export frame, and never bound by the mixer. That is the `Overlay`, the `WorldGrid` (its `root` added to `mirror.scene`), the `CameraControl`
+   — the runtime-only carrier the edit gizmo aims the output camera with, which reports the authored camera rather than owning data and pivots at
+   `CAMERA_CONTROL_PIVOT`, its own origin, the camera position — and the `CameraPath`, the runtime-only drawing of the authored camera's trajectory, hidden
+   and unnamed and holding the points the app hands it. The viewport is fitted once at boot.
+3. **Editor objects.** The pointer tool takes its two live lookups — the camera that drew the frame, and the gizmo's claim — as closures, so neither is
+   cached across frames and a left press on empty space still reaches picking while the gizmo is attached; `controls` exists before the tool, and the
+   lookup is deferred to call time. Its two callbacks keep the UI and the mirror in step: a session change re-syncs the gizmo, marks the active object
+   dirty, and re-reads the readouts and the UI; the ids an operation wrote go straight to a mark-dirty plus a commit, so exactly those objects are rebuilt
+   — which is what leaves neither half of a detach, whose two objects both changed, drawing stale geometry. The flags no module can own are the app's:
+   `cameraControlSelected` (`false`; whether the gizmo drives the carrier instead of the active object), `gizmoMode` (`'translate'`; the one mode the
+   carrier and an object share), and `cameraPathVisible` (`false`, which `refreshCameraPath` clears whenever the track holds fewer than two keyframes).
+   `playbackView` is the viewport state a run started from — the camera's pose, the orbit target, and the playhead — or `undefined` when no run has
+   captured one; it is what lets a pause hand the frame over and a run's end undo the whole thing.
+4. **Animation.** `Playback` is built over the output camera — whose `fov` a track animates — and bound to every object's mirrored node; it names the bound
+   objects itself.
+5. **UI.** `ModeBar` is a view of the session like the panels are, and the `VoxelizeDialog` is mounted into the same element as the panels; both, like
+   them, receive callbacks and no state. They live in this file, and so does the file dialog, because `ui` never imports `app/`: the closure that seeds the
+   dialog, the handling of its outcome, and the file dialog itself are the app's. The `Camera` group's view is read from the app's flags and from
+   `project.camera.transform` and `project.camera.fov` — never from the carrier node, because what the fields show is what a keyframe would record — and
+   `pathAvailable` is whether the track holds the two keyframes a path needs to exist at all. The timeline bar's visibility is the app's `timelineVisible`,
+   `false` so the bar opens collapsed; `setTimelineVisible` is its only writer, and the panel is told the flag as soon as it exists, so flag and markup
+   agree from the first frame — `index.html` carries `hidden` rather than leaving it to the module, because a bar laid out by the first paint and hidden
+   only when the bundle runs would flash. There is no status line and no message area: the overlay holds the rail and the windows only.
 6. **Flow wiring**, the only place the modules meet:
-   - Import — `importFile(file)` is the body of `pickImportFile` and of the drop callback: `file.arrayBuffer()` → `await importGlb(data)`; failure →
-     `reportFailure(result)`; success → `scaleImportedScene(result.scene, DEFAULT_VOXELS_ACROSS)` puts the model on the unit lattice as it arrives —
-     one voxel is one world unit (README D41), so the count the prompt asks for is the model's length and the raw meshes and the payload are placed in
-     the same unit — and the scaled scene is what is retained: `lastImport` is the `ImportedAssets` record `{ scene, objectId, meshes }`, whose
-     `meshes` holds one raw mesh per imported node so a rescale can re-place them instead of building them again.
-     `adoptImportedScene(project, scene)` creates the import's **one** object, and
-     `attachSourceMeshes(scene, objectId, meshes)` builds one `new THREE.Mesh(node.geometry, node.sourceMesh.material)` per imported node — every node, the
-     outline shells included — keeps each in that `meshes` array (and, the first time, in the app-local `sourceMeshes` array for teardown), and hands it to
-     `mirror.attachSourceObject(objectId, mesh, node.matrixWorld)` — with **that node's** own baked world matrix (D25), which the mirror keeps per mesh (README D28), not with an assumed identity local
-     transform, because that matrix is where the model's placement lives now that one object stands for the whole file, and because the object's own
-     transform is about to be replaced by the payload's placement. A later call for the same scene reuses the mesh each node already has, so a rescale
-     re-places the raw meshes instead of duplicating them. Then that id is marked dirty, `bindingsDirty` is set, `mirror.frameAll(viewportCamera)`
-     fits the view to the model as it now stands on the lattice — `frameAll` syncs, so the node and its layer-2 meshes exist and are what it measures — and `commitDirty()`
-     refreshes both panels. Nothing has a payload yet: the object is `'empty'` and the raw meshes
-     are the whole of what the user sees; nothing announces the import's node count any more (D38). The flow ends by
-     `await promptVoxelize(scene, adopted.objectId)` (D26), so the settings are asked for **after** the model is on screen and fitted. An outline
-     shell is a source mesh like every other node — the whole file is displayed — but its geometry never reaches `buildVoxelizeSource`, so no
-     payload carries its inverted hull; the object holds all of them at once, which is why a file of nothing but outlines still gets one object and no
-     voxels at all.
-   - Voxelize — the settings are asked for by `promptVoxelize(scene, objectId)`, the one prompt: it awaits
-     `voxelizeDialog.open({ title: `Voxelize ${scene.name}` })` and acts on the outcome. On `{ kind: 'cancel' }` it writes
-     and returns without reporting anything — the object stays `'empty'` with its source meshes
-     displayed, so the user can inspect the raw model first — and on `{ kind: 'run', cellsAcross }` it re-scales the import to that
-     count — `scaleImportedScene(scene, cellsAcross)`, the model's length in voxels, with the same raw meshes re-placed through
-     `attachSourceMeshes(scaled, objectId, assets.meshes)` when the retained import is still the one the prompt was about, so the
-     meshes stay glued to the content the job is about to voxelize (README D24, D41) — and runs the shared job on that scaled source,
-     `buildVoxelizeSource(scaled)`.
-     `main` derives no count of its own: the dialog's answer is the whole request (D26). One caller produces the prompt —
-     `importFile` at the end of an import, with the scene it just adopted — and it binds the prompt to that scene's object, so the job always lands on
-     the model the dialog was about.
-   - One body, `runVoxelizeJob(source, objectId)`, is what a confirmed prompt runs: abort the in-flight job
-     (`jobController?.abort()`, then cleared, so an import with nothing to voxelize still supersedes it) and return when `source` is `undefined`
-     (an outline-only import), otherwise own a fresh `AbortController` and run
-     `voxelize({ sources: [source], budget: DEFAULT_CELL_BUDGET, signal })` on it — one source, no target: the confirmed prompt has already scaled
-     the model onto the unit lattice, so the job takes no voxel size at all (README D41). Failure → `reportFailure(result)`;
-     success → `applyVoxelizeResult(project, result, { attachTo: new Map([[source.sourceId, objectId]]) })`, mark dirty, `commitDirty()`,
-     then `mirror.frameAll(viewportCamera)`. The map is keyed by the source's own id, which every output carries, so
-     the payload lands on the object the import created instead of beside it. Framing belongs here, after the payload: an object that was an `'empty'`
-     placeholder until this call renders as voxels now, and its source meshes hide behind them unless the override is on. `frameAll` syncs before measuring, so the
-     payload meshes rebuilt for the id just marked dirty are exactly what it fits. The abort is mandatory and comes first: a dialog confirmed twice, or an
-     import that lands on top of a running job, must leave only the newest payloads, and a superseded `voxelize` call reports itself as
-     `'cancelled'`. There is no second prompt: the dialog that follows a successful parse is the only way in, so a cancelled — or later
-     regretted — voxelization is re-run by importing the file again, which adopts a fresh object beside the raw one the cancelled prompt left
+   - Import — an arriving model is put on the unit lattice first (`DEFAULT_VOXELS_ACROSS`), because one voxel is one world unit: the count the prompt asks
+     for is the model's length, and the raw meshes and the payload live in that one unit. The import becomes **one** object, and every node — outline
+     shells included, since the whole file is displayed — gets its raw mesh on layer 2 placed by its own baked world matrix, because the model's placement
+     lives in those matrices now that one object stands for the whole file and the object's own transform is about to carry the payload's. A rescale
+     re-places those meshes rather than building new ones, and the scaled scene is what is retained — `lastImport` is the import's scene, its object, and
+     its meshes. Nothing but the raw meshes is on screen yet — the object is `'empty'`, and no node count is announced anywhere — so the settings are asked
+     for **after** the model is on screen and fitted, because the object must exist and be measurable before the question can be asked in context. An
+     outline shell contributes no cells, its geometry never reaching `buildVoxelizeSource`, so no payload carries its inverted hull; a file of nothing but
+     outlines still gets its one object and no voxels at all. A failed parse goes to `reportFailure` and leaves the project untouched.
+   - Voxelize — `promptVoxelize` is the one prompt and `importFile` its one caller, which binds the prompt to the object it just adopted, so the job always
+     lands on the model the dialog was about. `main` derives no count of its own: the dialog's answer is the whole request. A cancel writes nothing and
+     reports nothing — the object stays `'empty'` with its source meshes displayed, so the raw model can be inspected first. A run re-scales the import to
+     the answered count, the model's length in voxels, and — while the retained import is still the one the prompt was about — re-places the same raw
+     meshes on it, so they stay glued to the content the job is about to voxelize; the shared job then runs on that scaled source.
+   - One body, `runVoxelizeJob`, is what a confirmed prompt runs. It aborts the in-flight job first and unconditionally — a superseded confirmation must
+     never attach its payloads after a newer one, and an import with nothing to voxelize still supersedes the running job — then returns if there is no
+     source (an outline-only import). Otherwise it runs one source at `DEFAULT_CELL_BUDGET`, with no target and no voxel size, because the confirmed prompt
+     has already scaled the model onto the unit lattice. Its payload is attached through a map keyed by the source's own id, the key every output carries,
+     so it lands on the object the import created instead of beside it. Success marks the object dirty, commits, and fits the view **after** the payload:
+     the `'empty'` placeholder renders as voxels now, its source meshes hide behind them unless the override is on, and the fit syncs before measuring, so
+     the rebuilt payload meshes are what it measures. Nothing is written while it runs; failure goes to `reportFailure` and leaves the project untouched,
+     and a superseded call reports itself as `'cancelled'`. There is no second prompt — the dialog after a successful parse is the only way in — so a
+     cancelled or regretted voxelization is redone by importing the file again, which adopts a fresh object beside the raw one the cancelled prompt left
      behind.
-   - Edit and Scene: `createGroup` → `createGroup(project, 'Group')`; `deleteObject(id)` → `deleteObject(project, id)` from the row's trash, which
-     also clears `session.activeObjectId` when that object was the active one. Deleting is per row, so the active object need not be the one deleted.
-   - Ops: `setActiveMaskColor(color)` → `setObjectMaskColor(project, session.activeObjectId, color)`; `setActiveVisible(visible)` →
-     `setObjectVisible(project, session.activeObjectId, visible)`; `setActiveAlignToGrid(alignToGrid)` →
-     `setObjectAlignToGrid(project, session.activeObjectId, alignToGrid)`, which snaps the placement when it turns alignment on;
-     `setActiveSubdivision(level)` → `setObjectSubdivision(project, session.activeObjectId, level)`, which replaces the payload
-     with a block-replicated grid so the object keeps its placement and only its cells get smaller (README D43); the op throws
-     `RangeError` for a level that is not a power of two, reports `'wrong-representation'` for an object with no grid,
-     `'unsupported-subdivision'` for a level below the one the object holds, `'exceeds-grid'` when the refined cells would leave
-     the key space, and `'budget-exceeded'` over `DEFAULT_CELL_BUDGET`, while the level the object already holds is an `ok` that
-     writes no payload — a refused choice reports and leaves the project untouched;
-     `renameActive(name)` → `renameObject(project, session.activeObjectId, name)`, which
-     trims and refuses an empty name; `reparentActive(parentId)` →
-     `reparentObject(project, session.activeObjectId, parentId)`. Every one of them returns without acting when
-     nothing is active. The one action that is not a `project` call is `detachSelection()` → `pointer.detachSelection()`: the
-     panel's `detach` button is a command on the region the `Select` tool already chose rather than a tool choice, so it goes
-     through the pointer tool, which commits it exactly as a viewport press would and reports the two objects it wrote through
-     `onProjectChange` — the app therefore marks them dirty on the edit path instead of in this wrapper (README D19, D23). The action defers the
-     call to click time, which is what lets it name the `pointer` built later in the same function.
-     A failed `OpResult` goes to `reportFailure(result)`; success marks dirty and refreshes
-     the next `mirror.sync()` pick the change up, since the panel is re-read only through `commitDirty`.
-   - Gizmo: `syncGizmo()` attaches the edit gizmo to `gizmoNodeNow()` — the carrier's node while the carrier is selected, otherwise the active
-     object's mirrored node while the session is in `object` mode, and nothing in `edit` mode or with an empty selection — and detaches it
-     otherwise (README D39, D46). It also tells the mirror which object to outline, with the same condition the gizmo uses
-     (`mirror.setSelected(session.mode === 'object' && !cameraControlSelected ? session.activeObjectId : null)`): the outline says which object the
-     handles are on, so it comes and goes with them and is never drawn in edit mode or on the carrier. The attach pivots at `CAMERA_CONTROL_PIVOT` for the carrier — its own origin, the camera position, because a
-     camera has no content to center on — and at `mirror.contentCenterOf(objectId)`, the center of the object's own content, for an object, so the
-     handles sit on what the user edits instead of at the node origin the document transform means (README D37). Both go through the same
-     `gizmoMode`, which is the app's one flag for both. The drag has two halves: `onGizmoChange`, for the carrier, decomposes the reported matrix
-     straight into `cameraControl.node` — the carrier *is* the node the gizmo derives from, so the drawing follows the pointer — and returns;
-     for an object it feeds `mirror.previewTransform(objectId, project.alignWorldMatrix(objectId, matrix))`, so the mirrored
-     node is put on the world matrix the gesture asks for with the very rule the commit stores — the preview and the document write must show and
-     store the same pose, or the release would step the object back onto the grid (README D42). `onGizmoCommit`, for the carrier, calls
-     `applyCameraMatrix(matrix)` and returns; for an object it writes that matrix to the document
-     with `setTransformFromWorldMatrix(project, session.activeObjectId, matrix)` — the world matrix, converted to the
-     object's local transform against its parent — followed by the usual mark-dirty plus `commitDirty()`. The document is
-     therefore written exactly once per gesture, and the rebuild that write triggers discards the preview. `gizmoNodeNow()`
-     is also what the render loop compares against the attached node, because that rebuild replaces it (see 7).
-   - Camera carrier — the four `Camera` group commands over the carrier (README D46). `toggleCameraControl()` flips `cameraControlSelected` and
-     re-syncs the gizmo, so selecting the carrier takes it from the active object and deselecting it gives the gizmo back from the session alone;
-     `toggleGizmoMode()` flips `gizmoMode` and re-syncs, for whichever node the gizmo is on. `cameraToView()` is `Camera -> View`: it copies the
-     viewport camera's position and quaternion into `project.camera.transform` and onto `mirror.camera`, selects the carrier, and re-syncs —
-     aiming the carrier is what the user came for, so the select is part of the command. `viewToCamera()` is `View -> Camera`: it calls
-     `controls.setViewFrom(project.camera.transform.position, project.camera.transform.quaternion)` and writes nothing at all, which is what
-     makes it a safe way to look at what a render would frame. The first three end with `panels.refresh()`, because each changes what the `Camera`
-     group shows; `viewToCamera` refreshes nothing, because it changes nothing the group displays.
-   - Camera path — `refreshCameraPath()` is the one writer of the drawing and of `cameraPathVisible` (README D47): it clears the flag when the
-     keyframe list holds fewer than two points, hands `sampleCameraTrajectory(project)` and `cameraKeyframePositions(project)` to
-     `cameraPath.setTrajectory`/`setMarkers`, writes `setVisible(cameraPathVisible)` — the path is hidden with the carrier while the
-     viewport already is the output camera — and refreshes the panel, which is what keeps the `Show camera path` box a view of both flags. It is
-     called from the timeline's `onEdited` (a keyframe edit is what changes the trajectory), from its own toggle, and once at
-     boot, and `setCameraPathVisible(visible)` only writes the flag and calls it. The path is a view of the authored camera track: nothing on this
-     path writes a keyframe, a pose, or a transform, and the drawing owns no document data.
-   - Authored-camera writes — the two write helpers end in the same two places: the document's `project.camera.transform` and the mirror's output
-     camera, because `SceneMirror.sync` never touches that camera and the export renders through it (README D17, D46).
-     `applyCameraMatrix(matrix)` is what a carrier drag commits: it decomposes the world matrix into `project.camera.transform`, normalizes the
-     quaternion, and copies position and quaternion onto `mirror.camera`. `setCameraPose(pose)` is the numeric grid's write: a component that is not
-     finite returns before the document is touched, and a zero-length quaternion is refused rather than normalized into a rotation — that check reads the
-     submitted numbers, so it too stops before writing anything, and a refused field therefore leaves the camera exactly as it was.
-     A pose that passes both checks normalizes the quaternion, writes the position, routes the FOV through `setCameraFov` — which owns the clamp and
-     the projection refresh — and copies the pose onto the mirror camera. Both call `panels.refresh()`, so the fields a refused write re-seeds are
-     what the camera then holds.
-   - Raw meshes: `setSourceVisible(enabled)` is the panel's one entry point for the override (D24). It writes `mirror.setSourceVisible(enabled)` and
-     nothing else: the mirror owns the flag, applies it to its layer-2 meshes at once and again on the next `sync()`, and the panel reads it back through
-     `sceneVisible: () => mirror.sourceVisible` — which is also why `main` implements `PanelContext.sceneVisible`, so the checkbox cannot drift from the
-     mirror. No mark-dirty and no refresh are needed, and an export is unaffected either way because it renders layer 0 alone.
-   - Grid — the `Grid` group's one control is the viewport's own flag, so the action and `gridVisible` go through the `worldGrid` instance rather than
-     through `app`: `Panels` refreshes inside its own constructor, and that first refresh runs before `app` is built, so a context built out of `app`
-     would read a variable that is not there yet, while the instance has existed since step 2. `gridVisible: () => worldGrid.visible` is the flag the
-     checkbox is seeded from, and `setGridVisible(visible)` calls `worldGrid.setVisible(visible)` and then `panels.refresh()` — the re-seed is what
-     makes the checkbox a view of the app's state rather than a forward-only control (README D35). The world grid holds no per-frame state beyond its
-     own position, so a commit and a session change now touch no grid at all.
-   - Defaults: `defaults()` seeds the dialog from the retained import's `voxelizeBounds`: `extent` is that box's size per
-     axis, which the dialog reads its count against to print the model's dimensions (README D29, D41). With no import, or when
-     the box it would measure is empty, every axis falls back to `DEFAULT_EXTENT` — the count the prompt already opens at,
-     because one voxel is one world unit (README D41) — so the dialog is usable with no scene. The extent is handed over
-     unrounded: only the readout the dialog prints rounds. The dialog reads it once per `open()` through the `() => defaults()` closure. Those are the bounds of the nodes that are voxelized, not of every
-     displayed node: a stylized export's outline shells are drawn around the model and a little larger, so seeding the extent
-     from them would stretch the printed dimensions for content they do not cover (README D27). A scene of
-     nothing but outlines has no outline-free bounds, so it falls back to `scene.bounds`, which is what framing uses either way
-     because every node is displayed.
-   - Animate: `onEdited` → `playback.rebuild(project)` (the app's `refreshCameraPath` rides the same callback, README D47); `onTransport: togglePlayback`, so the widget's toggle reports the press and the app is what starts or pauses the run (README D48); `adoptViewAsCamera`, which is what makes a camera keyframe record the view the author is aiming (`captureViewAsCamera`, README D46); `onScrub(timeMs)` → `playback.pause()` then `playback.setTime(timeMs / 1000)`, the one place the widget's milliseconds become the clip's seconds — the scrub bar, the exact-time field, and a keyframe row's `key` all seek through it (README D45).
-   - Transport — the transport itself is the app's, not the widget's, because a run of the clip changes the viewport too (README D48).
-     `startPlayback()` is the play press: it returns while a run is already going, captures `playbackView` from `viewportCamera.position`/`quaternion`,
-     `controls.orbit.target`, and `playback.time` (all cloned, so nothing later writes through it), calls `playback.play()`, and refreshes the panel.
-     `pausePlayback()` is the pause: it returns while nothing runs, pauses, and hands the view over with
-     `controls.setViewFrom(mirror.camera.position, mirror.camera.quaternion)`, so the editor camera takes the pose the clip stopped at and the frame can be
-     judged and flown on from there. `finishPlayback()` is the end of a non-looping run: it clears `playbackView`, pauses, and, when there was a run,
-     sets the playhead back with `playback.setTime(restore.time)` and restores the saved view with
-     `controls.setViewFrom(restore.position, restore.quaternion, restore.target)`. `togglePlayback()` is the only transport entry point: `pausePlayback()`
-     while running, `startPlayback()` otherwise. `controls.dispose()` drops the orbit registration, so no separate teardown call exists.
-   - FOV — `setCameraFov(fov)`, the panel's one entry point for the output camera's projection: it ignores non-finite input, clamps to `[1, 179]`,
-     writes `project.camera.fov`, and copies the clamped value onto `mirror.camera` with `updateProjectionMatrix()`, because assigning `fov` alone
-     leaves the projection stale. The next export therefore shows the authored value, and a camera `fov` keyframe records
-     it instead of the value the mirror camera was constructed with.
-   - Export: `exportMp4(options)` refuses while a job is in flight (`if (jobController !== undefined) return`, the app's one export slot), sizes the capture to the requested resolution with `capture.resize(options.width, options.height)` and points the
-     capture at that aspect, then runs `new ExportJob({ mirror }).run({ project, scene: mirror.scene, capture, playback, output: { width:
-     options.width, height: options.height, fps: options.fps, from: options.from, to: options.to, mode: options.mode } }, signal)` →
-     `saveMp4(blob, 'vox-world.mp4')`; failure → `reportFailure(result)`. The slot is released and the gizmo re-attached in a `finally`, so a run that fails or
-     stalls cannot leave the button refusing to start another for the rest of the session. Resolution, frame rate, range, and mask mode are the panel's choices;
-     `main` owns only the capture that must render at them.
-   - Drop: `wireDropTarget(viewport, file => { void importFile(file); })`.
-   - Save / open project — `saveProject()` is `saveJson(toJson(project), PROJECT_FILENAME)`: one call, no state of its own, and the bytes are
-     `document/serialize.ts`'s. `openProject(file)` reads the text and hands it to `readJson`; a refusal goes to `reportFailure(result)` with the
-     file's own literal and detail and writes nothing, and a file that passes goes to `loadProject(data)` (README D51).
-   - The load sequence, `loadProject(data)`, is the one mutation that replaces the whole truth: the `Project` instance, the mirror, the mixer, and the
-     session all survive it, and the previous project is reset in this order — abort the job (`jobController?.abort()`, then undefined), pause the
-     transport and drop `playbackView`, release the carrier and the path (`cameraControlSelected = false`, `cameraPathVisible = false`), drop the
-     raw-mesh layer (each `sourceMeshes` mesh out of its parent, `sourceMeshes.length = 0`, `lastImport = undefined`, `mirror.clearSources()`,
-     `mirror.setSourceVisible(false)`), reset the session (`session.setActiveObject(null)`), write the truth (`project.restore(data)`), publish what
-     `sync()` never writes (`mirror.applySettings()`, `mirror.applyCamera()`), mark every loaded id dirty and `commitDirty()`, force the rebuild with
-     `mirror.frameAll(viewportCamera)`, rebind the mixer with `rebuildBindings()`, `playback.setTime(0)`, and refresh the views
-     (`refreshCameraPath()`, `refreshReadouts()`, `panels.refresh()`, `timelinePanel.refresh()`).
-   - Drop: `wireDropTarget(viewport, ['.glb', '.json'], file => ...)`: a dropped `.json` goes to `openProject(file)`, anything else to
-     `importFile(file)` — one target, two meanings, decided here because this file is the only place that knows both.
-   - Timeline bar — `setTimelineVisible(visible)`, the rail's `Animation` toggle, is a view-only write: it sets `timelineVisible` and calls
-     `timelinePanel.setVisible(visible)`, so the app's flag stays the only state and the panel is told what to show rather than asked; the bar keeps
-     its contents while hidden, because the render loop goes on writing the playhead into it. Beside the window-resize wiring — the `resize`
-     listener whose body is `handleResize() → resizeViewport(renderer, viewport, viewportCamera)` — `barObserver` is a `ResizeObserver` on
-     `timelineRoot` that calls the same `handleResize`: anything that moves the boundary between the canvas and the bar — the bar's visibility, a
-     keyframe row, its message line — changes how much of the column the canvas has, and three's `setSize(w, h, false)` never touches the canvas'
-     style, so without that refit the drawing buffer and the box would disagree and the view would be stretched (README D44).
-7. **Render loop**, one `requestAnimationFrame` callback: `dt = Math.min((now - last) / 1000, 0.1)`; `playback.advance(dt)` for preview (a paused
-   action does not advance, so the transport flag never has to be mirrored here); then the end check — `if (playback.playing && !playback.loop && playback.duration > 0 && playback.time >= playback.duration - 1e-6) finishPlayback()` — because a non-looping run is over at the last frame, and that is where the transport stops and the view goes back (README D48); `mirror.sync()` for dirty objects, then
-   `syncGizmo()` whenever `gizmoNodeNow()` is no longer the node the gizmo is attached to — a rebuild replaced that node,
-   and this is what puts the handles back on the object, then `controls.update()` — navigation always flies the viewport camera, so nothing it does can
-   touch the output camera — and `renderer.render(mirror.scene, viewportCamera)`. Just before the render the loop also drives the carrier
-   (README D46): it reports the output camera as it stands right now — the authored pose, or the sampled one while a clip runs — through
-   `setSelected(cameraControlSelected)`, which follows only the user's selection and only picks the drawing's colour, and `setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport))` — except while the carrier
-   is selected and `controls.gizmoBusy()`, because a drag owns the pose until it commits and the per-frame update stands back for it. It then sets
-   `const viewingDistance = max(viewportCamera.position.distanceTo(cameraControl.node.position), controls.orbit.object.position.distanceTo(controls.orbit.target))`,
-   which now sizes one drawing only: `cameraPath.setScreenScale(viewingDistance)`, the one scalar the path's whole marker set is sized by (README D47).
-   The carrier is not sized here at all — its size is a fixed world size, a constant of its own file (README D46) — and the path's rings need no
-   rotation write here at all, because a point sprite faces the drawing camera by construction:
-   the size comes from how far the drawing camera is, floored at the distance navigation orbits from, because a viewport that sits *on* the carrier —
-   which is exactly what `View -> Camera` produces — would otherwise shrink the rings to a dot, and the orbit radius is the
-   scene's own scale. The grid follows the same camera, one statement before that distance is used:
-   `worldGrid.update(viewportCamera)` puts the shown display's planes on the camera the frame is about to be drawn through — the planes read nothing of
-   it but its position — and it is decoration, so nothing
-   about it reaches the render or the framing (README D49). That floor is the path's alone: `TransformControls` sizes its own handles by the distance to the drawing camera, so
-   with the viewport on the carrier the handles still degenerate, and the flow that follows is to orbit away — a middle-drag moves the viewport off
-   the carrier while the carrier stays where it was — after which the handles are grabbable again. Sizing them the way the object gizmo already does
-   was chosen over special-casing the carrier. Finally `timelinePanel.setTime(playback.time * 1000)` — the clip's seconds into the widget's milliseconds, the mirror image of `onScrub`'s division (README D45) — and a fresh `HudState` into the HUD.
-8. The loop never reads or writes voxel data: no `UniformGrid` method is called and nothing is rasterized. An object is dirty only
-   because an edit or an import changed its data, so `sync()` cannot overwrite a transform the mixer wrote for playback.
-9. `HudState` is assembled here from `project.get(session.activeObjectId)`, `session.resolutionOf(id)` (the `EditResolution`, which
-   now carries the object's `subdivision` beside its `cells`), `session.selection`, `Math.round(playback.time *
-   project.timeline.fps)`, and `project.timeline.fps`.
+   - Edit, Scene, and Ops — every panel action but `detachSelection` is a thin wrapper over one `editor/ops` call on `session.activeObjectId`: group
+     creation, deletion, mask colour, visibility, alignment (which snaps the placement when it is turned on), subdivision (which replaces the payload, so
+     the object keeps its placement and only its cells get smaller), rename (trimmed, an empty name refused), and reparent. Each returns without acting
+     when nothing is active; a failure goes to `reportFailure` and leaves the project untouched; a success marks the object dirty and commits, and the
+     panel is re-read only through that commit. Deleting is per row — the active object need not be the deleted one, and the deleted one is cleared from
+     the session when it was active. Subdivision's refusals belong to the op: `RangeError` for a level that is not a power of two, `'wrong-representation'`
+     for an object with no grid, `'unsupported-subdivision'` below the level the object holds, `'exceeds-grid'` when the refined cells would leave the key
+     space, and `'budget-exceeded'` over `DEFAULT_CELL_BUDGET`, while the level the object already holds is an `ok` that writes no payload.
+     `detachSelection` is the one action that goes through the pointer tool, because the button is a command on the region the `Select` tool already chose
+     rather than a tool choice: it commits exactly as a viewport press would and reports the two objects it wrote through `onProjectChange`, so the app
+     marks them dirty on the edit path and not in this wrapper; it defers the call to click time, which is what lets it name the `pointer` built later.
+   - Gizmo — the attach is exclusive: the carrier's node while the carrier is selected (whatever the session mode), otherwise the active object's mirrored
+     node while the session is in `object` mode, and nothing in `edit` mode or with an empty selection. The mirror's outline follows the same condition,
+     because the outline says which object the handles are on. The pivot is the carrier's own origin — the camera position, since a camera has no content
+     to center on — and the center of the object's own content for an object, so the handles sit on what the user edits rather than at the node origin the
+     document transform means; both carry the one `gizmoMode`. A drag has two halves and writes the document once. The live half writes no document: the
+     carrier's node takes the reported matrix directly, since the carrier *is* the node the gizmo derives from, and an object's mirrored node takes the
+     world matrix the gesture asks for with the very rule the commit stores — preview and commit must match, or the release would step the object back onto
+     the grid. The commit half is the one write, from the world matrix the gizmo reports and not from the node it was attached to; the rebuild that write
+     triggers discards the preview and replaces the node, which is why the render loop compares `gizmoNodeNow()` against the attached node and re-attaches
+     (see 7).
+   - Camera carrier — the four `Camera` group commands. Both toggles flip their flag and re-sync, so selecting the carrier takes the gizmo from the active
+     object and deselecting it gives the gizmo back from the session alone. `Camera -> View` authors the viewport's pose into both the document and the
+     output camera and selects the carrier, because aiming it is what the user came for. `View -> Camera` moves the viewport to the authored shot and
+     writes nothing, which is what makes it a safe way to look at what a render would frame. Only a command that changes what the `Camera` group shows
+     refreshes it: `View -> Camera` refreshes nothing.
+   - Camera path — `refreshCameraPath` is the one writer of the drawing and of `cameraPathVisible`: it clears the flag when the track holds fewer than two
+     keyframes, and hands the sampled trajectory and the keyframe positions to the drawing, which is what keeps the `Show camera path` box a view of both.
+     It runs on the timeline's `onEdited` (a keyframe edit is what changes the trajectory), from the toggle — which only writes the flag and calls it — and
+     once at boot. The path is a view of the authored camera track and writes nothing: no keyframe, no pose, no transform, no document data of its own.
+   - Authored-camera writes — the two write helpers end in the same two places, the document's `project.camera.transform` and the mirror's output camera,
+     because `SceneMirror.sync` never touches that camera and every export renders through it. A carrier drag commits through `applyCameraMatrix`: the
+     world matrix decomposed into the document transform, quaternion normalized, position and quaternion copied onto `mirror.camera`. The numeric grid
+     writes through `setCameraPose`, which refuses rather than reports — a non-finite component, or a zero-length quaternion that is not to be normalized
+     into a rotation, returns before the document is touched, so a refused field leaves the camera exactly as it was — and, past both checks, normalizes,
+     writes the position, routes the FOV through `setCameraFov` (which owns the clamp and the projection refresh), and copies the pose onto the mirror
+     camera. Both refresh the panel, so a refused field is re-seeded from what the camera then holds.
+   - Raw meshes — `setSourceVisible` is the panel's one entry point for the override, and it writes the mirror's flag and nothing else: the mirror owns it,
+     applies it at once and again on the next `sync()`, and the panel reads it back through `sceneVisible`, so the checkbox cannot drift from the mirror;
+     no dirty mark or refresh is needed, and an export is unaffected either way.
+   - Grid — the `Grid` group's one control is the viewport's flag, so the action and the view go through the `worldGrid` instance rather than through
+     `app`: `Panels` refreshes inside its own constructor, before `app` is built, while the instance already exists. `setGridVisible` writes that one
+     instance and refreshes, and the re-seed is what makes the checkbox a view of the app's state rather than a forward-only control. The grid holds no
+     per-frame state beyond its own position, so a commit or a session change touches no grid at all.
+   - Defaults — `defaults` seeds the dialog from the retained import's `voxelizeBounds`: that box's size per axis, which the dialog reads its count against
+     to print the model's dimensions, handed over unrounded — only the printed readout rounds — and read once per `open()`. With no import, or an empty
+     box, every axis falls back to `DEFAULT_EXTENT`, the count the prompt already opens at, because one voxel is one world unit, so the dialog is usable
+     with no scene. Those bounds are the nodes that are voxelized, not every displayed node: a stylized export's outline shells are drawn around the model
+     and a little larger, so seeding from them would stretch the printed dimensions for content they do not cover. A scene of nothing but outlines has no
+     outline-free bounds, so it falls back to `scene.bounds`, which is what framing uses either way, because every node is displayed.
+   - Animate — `onEdited` rebuilds the mixer, and the path refresh rides the same callback; `onTransport` is `togglePlayback`, so the widget's toggle
+     reports the press and the app is what starts or pauses the run; `adoptViewAsCamera` is `captureViewAsCamera`, which is what makes a camera keyframe
+     record the view the author is aiming; `onScrub` pauses and then seeks, the one place the widget's milliseconds become the clip's seconds — the scrub
+     bar, the exact-time field, and a keyframe row's `key` all seek through it.
+   - Transport — the transport is the app's, not the widget's, because a run of the clip changes the viewport too. `startPlayback` returns while a run is
+     already going and captures `playbackView` before anything moves, cloning every value so nothing later writes through it. `pausePlayback` returns while
+     nothing runs, pauses, and hands the view over to the editor camera at the pose the clip stopped at, so the frame can be judged and flown on from
+     there. `finishPlayback`, the end of a non-looping run, clears `playbackView`, pauses, and, when there was a run, puts the playhead back and restores
+     the saved view with its target, so the return is exact. `togglePlayback` is the only entry point — pause while running, start otherwise — and
+     `controls.dispose()` drops the orbit registration, so no separate teardown call exists.
+   - FOV — `setCameraFov` is the panel's one entry point for the output camera's projection: it ignores non-finite input, clamps to `[1, 179]`, writes the
+     document's `fov`, and copies the clamped value onto `mirror.camera` with its projection refreshed, because assigning `fov` alone leaves the projection
+     stale — so the next export shows the authored value and a `fov` keyframe records it.
+   - Export — `exportMp4` refuses while a job is in flight (the app's one export slot), sizes the capture to the resolution the panel asked for, and runs
+     the export job → `saveMp4`; a failure goes to `reportFailure`. The slot is released and the gizmo re-attached in a `finally`, so a run that fails or
+     stalls cannot leave the button refusing to start another for the rest of the session. Resolution, frame rate, range, and mask mode are the panel's
+     choices; `main` owns only the capture that must render at them.
+   - Save / open project — `saveProject` is one call whose bytes are `document/serialize.ts`'s: no state of its own. `openProject` reads the text and hands
+     it to `readJson`; a refusal goes to `reportFailure` with the file's own literal and detail and writes nothing, and a file that passes goes to
+     `loadProject`.
+   - The load sequence — `loadProject` is the one mutation that replaces the whole truth, and it is a sequence rather than a new `Project`: the project,
+     the mirror, the mixer, and the session all survive it, so the state the replaced project left behind is reset in this order, and the order is the
+     point. Abort the job — nothing may be in flight; pause the transport and drop `playbackView`, because a run's saved view belongs to the project that
+     started it; release the carrier and the path, both being views of the project being replaced; drop the raw-mesh layer, its records before any id can
+     be reused, since a source is recorded under an object id and the mirror's own pass would otherwise re-parent the replaced import's meshes under a
+     loaded object, and reset the override with it; reset the session *before* the objects, because its setters validate against the project and must not
+     see the load half-applied; write the truth; publish the two things no `sync()` writes, the scene settings and the output camera; mark every loaded id
+     dirty and commit, because `sync()` keeps the node of an id it already has and a load normally reuses ids, so without the mark the replaced project's
+     geometry would stay on screen; force the rebuild, so the rebinding sees the nodes the load just made; rebind the mixer explicitly, because the loop's
+     own check only compares id sets, which reused ids satisfy, so the loop would never rebind on its own; put the playhead at zero; and refresh the views
+     — the camera path, the readouts, the panels, and the timeline.
+   - Drop — one drop target, two meanings: a dropped `.json` goes to `openProject`, anything else to `importFile`. It is decided here because this file is
+     the only place that knows both.
+   - Timeline bar — `setTimelineVisible`, the rail's `Animation` toggle, is a view-only write: it sets the app's flag and tells the panel what to show
+     rather than asking, so the flag stays the only state, and the bar keeps its contents while hidden, because the render loop goes on writing the
+     playhead into it. Beside the window `resize` listener, an observer on `timelineRoot` calls the same refit: anything that moves the boundary between
+     the canvas and the bar — the bar's visibility, a keyframe row, its message line — changes how much of the column the canvas has, and the renderer's
+     `setSize` never touches the canvas' style, so without that refit the drawing buffer and the box would disagree and the view would be stretched.
+7. **Render loop.** One `requestAnimationFrame` callback drives everything, once a frame: it advances the transport by the elapsed time, clamped, a paused
+   action not advancing, so the transport flag never has to be mirrored here; ends a non-looping run at its last frame, which is where the transport stops
+   and the view goes back; syncs the mirror's dirty objects; re-attaches the gizmo whenever the node it should be on is no longer the one it is attached
+   to, because a rebuild replaced it; rebuilds the bindings when they were flagged; and updates navigation, which always flies the viewport camera and so
+   can never touch the output camera. It renders through the output camera while a clip previews the shot and through the viewport camera otherwise. Just
+   before the render it drives the carrier: hidden while a run previews the shot, otherwise reporting the output camera as it stands right now — the
+   authored pose, or the sampled one while a clip runs — with its colour following only the user's selection, and standing back while the carrier is
+   selected and the gizmo is busy, because a drag owns the pose until it commits. The path's marker size comes from the viewing distance, floored at the
+   distance navigation orbits from — the orbit radius is the scene's own scale — because a viewport that sits *on* the carrier, which is exactly what
+   `View -> Camera` produces, would otherwise shrink the rings to a dot; the rings need no rotation write, because a point sprite faces the drawing camera
+   by construction. The carrier needs none of that: its size is a fixed world size. The floor is the path's alone — `TransformControls` sizes its own
+   handles by the distance to the drawing camera, so with the viewport on the carrier the handles still degenerate, and the flow that follows is to orbit
+   away (a middle-drag moves the viewport off the carrier while the carrier stays where it was), after which they are grabbable again; sizing them the way
+   the object gizmo already does was chosen over special-casing the carrier. The grid follows the same camera the frame is drawn through — it reads only
+   that camera's position — and it is decoration, so nothing about it reaches the render or the framing. The frame ends by writing the clip's seconds into
+   the widget's milliseconds, the mirror image of `onScrub`'s division, and a fresh `HudState` into the HUD.
+8. The loop never reads or writes voxel data: no `UniformGrid` method is called and nothing is rasterized. An object is dirty only because an edit or an
+   import changed its data, so `sync()` cannot overwrite a transform the mixer wrote for playback.
+9. `HudState` is assembled here from the active object, its `EditResolution` (which carries the object's `subdivision` beside its `cells`), the session
+   selection, `Math.round(playback.time * project.timeline.fps)`, and `project.timeline.fps`.
 10. **Ownership.** `main` constructs and disposes every long-lived object and passes each dependency in; no module below it builds another module's
-    dependencies (`Panels` never creates a `Project`, `PointerTool` receives its `Picker` and `Overlay`). The imported raw meshes are the same kind of
-    app-owned object: they live in a `main`-local array, and teardown detaches them from the scene graph the mirror just released without disposing the
-    geometry or materials they share with the imported scene. Disposal cancels the frame and the in-flight job, detaches the drop target, calls
-    `voxelizeDialog.dispose()` — which settles a prompt still on screen as a cancel, so no `promptVoxelize` call is left waiting — disconnects the
-    bar's resize observer, and disposes
-    everything in `AppContext` plus the renderer, controls, capture, overlay, and the world grid; `app.cameraControl.dispose()` releases the carrier's
-    geometries, materials, and node and `app.cameraPath.dispose()` the path's two geometries, two materials, and root (README D47), so no decoration is
-    left in the scene the mirror releases; the orbit-change registration lives in the controls, so disposing them
-    unregisters it.
+    dependencies (`Panels` never creates a `Project`, `PointerTool` receives its `Picker` and `Overlay`). The imported raw meshes are app-owned like the
+    rest: they live in a `main`-local array, and teardown detaches them from the scene graph the mirror just released without disposing the geometry or
+    materials they share with the imported scene. Disposal leaves nothing registered: the frame and the in-flight job are cancelled, the drop target
+    detached, the dialog settled (a prompt still on screen is disposed as a cancel, so no prompt call is left waiting), the bar's observer disconnected,
+    and everything in `AppContext` plus the renderer, the controls, the capture, the overlay, and the world grid disposed — each decoration releasing its
+    own geometries, materials, and nodes, so nothing is left in the scene the mirror releases, and the controls releasing the gizmo's listeners and helper
+    together with the orbit controls.
 
 ## Invariants
 - `main()` creates the renderer, the mirror, and every listed object once, and schedules exactly one render loop.
 - Project mutations get `mirror.markDirty` plus `panels.refresh()`, every session change refreshes the mode bar, the panels, and the timeline, and
   timeline edits go through `onEdited` → `playback.rebuild`; one job at a time. A commit re-aims nothing: the grid follows the camera in the loop
-  rather than the document, so the per-object lattice's refresh and its `objectGridKey` are gone (README D49).
+  rather than the document.
 - Every path that can make geometry measurable re-fits the **viewport** camera: the import path fits right after `commitDirty()`, on the raw meshes the
   user is about to answer the dialog about, and a confirmed prompt fits again through `runVoxelizeJob`, whose success path fits after
   `applyVoxelizeResult` and `commitDirty()`, because a payload can only be measured once it is attached. No other path moves the camera, and the output
   camera is never framed.
-- A project load is the app's own sequence rather than a new `Project` (README D51), and it is safe only because of what it resets: the raw-mesh
+- A project load is the app's own sequence rather than a new `Project`, and it is safe only because of what it resets: the raw-mesh
   records before any id can be reused, the session before the objects, a dirty mark for every loaded id (`sync()` keeps the node of an id it already
   has), an explicit `rebuildBindings()` (the loop's own `bindingsCurrent()` compares id sets, which reusing ids satisfies), and
   `mirror.applySettings()`/`applyCamera()` for the two things no `sync()` publishes. `readJson` runs first, so a refused file leaves the editor as it
   was.
-- Importing and voxelizing are two steps, and the second one is the user's (README D26): a successful import ends with the model adopted, displayed as
+- Importing and voxelizing are two steps, and the second one is the user's: a successful import ends with the model adopted, displayed as
   raw meshes, fitted, and listed, and with the settings dialog open — never with a job. Only `{ kind: 'run', cellsAcross }` starts one, through the one job body
   `runVoxelizeJob`, so a cancelled dialog is a state the app supports rather than a failure: the object stays `'empty'` with its source meshes
-  displayed, and nothing reports the cancel. A cancelled import is re-run by importing the file again
-  only prompt, so a retained import is never re-asked about. There is no per-object or per-scope voxelize path, and a single prompt is on screen at a
+  displayed, and nothing reports the cancel. A cancelled import is re-run by importing the file again —
+  the dialog that follows a successful parse is the only prompt — so a retained import is never re-asked about. There is no per-object or per-scope
+  voxelize path, and a single prompt is on screen at a
   time because the dialog owns it. One import is one object, one
-  payload, and one row in the object list; an outline shell contributes no cells but is still displayed as one of that object's source meshes
-  (README D27), and an import of nothing but outlines has no source at all: the object stays `'empty'` and the job returns after the abort, which is the
+  payload, and one row in the object list; an outline shell contributes no cells but is still displayed as one of that object's source meshes,
+  and an import of nothing but outlines has no source at all: the object stays `'empty'` and the job returns after the abort, which is the
   one confirmation that ends without a payload.
 - The two bounds an import reports are used for exactly one thing each: `voxelizeBounds` gives `defaults()` its per-axis extent (and with it the
   whole dialog through the `() => defaults()` closure), `bounds` is what framing fits, and neither is ever mixed up. A shell that sticks out past the
   model therefore cannot stretch the dimensions the dialog prints while framing still fits what the user can see.
 - One voxelization job runs at a time: `jobController` is aborted before a new job takes ownership, so a superseded confirmation can never attach its
-  payloads after the newer one. A job that was aborted reports `'cancelled'`; a job that fails leaves the project untouched (D12) — `applyVoxelizeResult` is
+  payloads after the newer one. A job that was aborted reports `'cancelled'`; a job that fails leaves the project untouched — `applyVoxelizeResult` is
   only reached on `ok: true`.
 - The dialog is the only place the voxelization settings exist, and the dialog after an import is the only way in: `main` holds no target, voxel
   size, or count of its own, never reads one back out of the dialog's fields, and acts on the outcome verbatim — a confirm scales the import by
-  `cellsAcross`, the model's length in voxels, which it neither rounds nor re-derives (README D41). The panel cannot open the prompt again, so
+  `cellsAcross`, the model's length in voxels, which it neither rounds nor re-derives. The panel cannot open the prompt again, so
   `main` exposes no retained-import query to it.
-- One voxel is one world unit (README D41), so an import is put on the lattice instead of being given a voxel size: as it arrives it is scaled to
+- One voxel is one world unit, so an import is put on the lattice instead of being given a voxel size: as it arrives it is scaled to
   `DEFAULT_VOXELS_ACROSS` — which is what makes the count the prompt asks for the model's length in voxels — and a confirm scales the same scene
   again, to the count the user answered with. Both go through `scaleImportedScene`, whose factor is absolute against the file's `authoredExtent`, so
   the second call replaces the first rather than compounding, and the fitted view, the raw meshes, and the payload are all in that one unit.
@@ -323,75 +240,73 @@ function main(): void;
   transform back into the document while the mixer is running.
 - A run of the clip is the app's transport and it is reversible: `togglePlayback` is the only entry point, `startPlayback` captures `playbackView` before
   anything moves, and the frame loop ends a non-looping run at its last frame through `finishPlayback` — so every run either pauses on the frame it
-  stopped at or ends with the playhead and the view back at the values it started from (README D48).
+  stopped at or ends with the playhead and the view back at the values it started from.
 - A playback end writes no authored data: handing the view over and restoring the saved view both go through `controls.setViewFrom`, which touches no
-  document, so neither a running clip nor a handoff can drift the authored camera pose (README D17, D48).
-- `viewportCamera` (app-owned) drives rendering, navigation, picking, and fitting, and it is the only camera navigation ever moves. Picking asks for
+  document, so neither a running clip nor a handoff can drift the authored camera pose.
+- `viewportCamera` (app-owned) renders every frame a run is not previewing, drives navigation, picking, and fitting, and it is the only camera navigation ever moves. Picking asks for
   it through `getCamera()`, and the output camera never gains layer 1 or layer 2, so neither a decoration nor a raw mesh can reach an export.
 - Every imported node gets exactly one raw mesh on layer 2, attached by `attachSourceMeshes` right after `adoptImportedScene` to the import's single object
-  and handed that node's own baked `node.matrixWorld` (D25); the meshes share the imported geometry and materials, the app keeps
+  and handed that node's own baked `node.matrixWorld`; the meshes share the imported geometry and materials, the app keeps
   them in `lastImport.meshes` (and so in `sourceMeshes` for teardown), the mirror never disposes them, and teardown detaches them.
   A rescale moves the matrices, not the meshes: `attachSourceMeshes` reuses the mesh a node already has, so one node stays one mesh however often the
-  import is scaled to the confirmed count (README D41). The matrix is what keeps every raw mesh on its imported pose — before
+  import is scaled to the confirmed count. The matrix is what keeps every raw mesh on its imported pose — before
   the payload the object is at the identity, after it at the payload's translation, and `applySources` re-derives each mesh's local matrix from it: the app
   never re-parents a mesh, never computes a placement, and never writes a mesh matrix itself. Whether they are shown is the mirror's flag and the panel's
   checkbox (`setSourceVisible` + `sceneVisible`) — `main` keeps no copy of it and never toggles `visible` on a mesh itself.
 - The `Grid` group's flag lives on the viewport's grid and never in the document: `panelContext.gridVisible` reads `WorldGrid.visible` and
   `setGridVisible` writes that one instance, so the panel and the grid it displays cannot disagree; no grid flag ever reaches `project`, a
   timeline track, or an export.
-- The grid is put on the camera the frame is drawn through: the loop calls `worldGrid.update(viewportCamera)` once a frame, before the render
-  (README D35). It is decoration on layer 1, which
+- The grid is put on the camera the frame is drawn through: the loop calls `worldGrid.update(renderCamera)` once a frame, before the render. It is decoration on layer 1, which
   `frameAll` does not measure — it reads layers 0 and 2 — so its quad can never widen an import's framing, and the export camera's layer 0
   never sees it.
 - The timeline bar's visibility is the app's `timelineVisible` flag alone, and the bar is never shown or hidden without the canvas following:
   `index.html` carries the `hidden` attribute so the first paint is already collapsed, `setVisible` is the panel's only view of the flag and the
   rail's `Animation` button its only writer through `setTimelineVisible`, and the observer on `timelineRoot` refits the drawing buffer to the
-  canvas' box whenever the boundary between the two moves (README D44). The bar's own contents are untouched by hiding it: the loop keeps writing
+  canvas' box whenever the boundary between the two moves. The bar's own contents are untouched by hiding it: the loop keeps writing
   the playhead through `setTime`.
 - The authoring clock is whole milliseconds and the clip is seconds, and this file owns both conversions between them: `onScrub` divides the
   widget's milliseconds by 1000 on the way to `playback.setTime`, and the render loop multiplies `playback.time` by 1000 on the way into
   `setTime`. Every other time the app touches is already on its own side of that boundary — the export range and the HUD's frame count are the
-  clip's seconds, and `project.timeline.durationMs` and every keyframe are the document's milliseconds (README D45).
+  clip's seconds, and `project.timeline.durationMs` and every keyframe are the document's milliseconds.
 - The gizmo is attached to exactly one node at a time: the carrier's node while `cameraControlSelected` is set — whatever the session mode, so a selected
   carrier keeps the handles even in `edit` mode — and otherwise the active object's
-  mirrored node while the session is in `object` mode, so the carrier and an object can never both carry handles (README D39, D46). It pivots at the
-  carrier's own origin, the camera position, for the carrier, and at that object's content center for an object (README D37). A gesture moves the
+  mirrored node while the session is in `object` mode, so the carrier and an object can never both carry handles. It pivots at the
+  carrier's own origin, the camera position, for the carrier, and at that object's content center for an object. A gesture moves the
   object through `previewTransform`, which writes no document, and produces exactly one document write on release, from the matrix the gizmo reports
   and not from the node it was attached to; that write rebuilds the object, so the loop's identity comparison is what re-attaches the gizmo, and no
   gesture can leave the handles on a released node. The live transform and the committed one come from the same matrix, which is why the release
   moves nothing on screen.
 - The carrier is a runtime-only handle on the output camera and never document data: its node is unnamed and on layer 1 with the rest of the
-  decoration, so the raycaster cannot pick it, no export frame contains it, and the mixer's binding walk cannot reach it (README D22, D24, D46). It is
+  decoration, so the raycaster cannot pick it, no export frame contains it, and the mixer's binding walk cannot reach it. It is
   never serialized, never a keyframe target, and never a second camera: it draws `mirror.camera`'s pose and writes back into `project.camera`. The
   pose lives on the node and a fixed world-size scale on its helper, never both on one, because the gizmo derives its drag from the node's own matrix.
   A drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose` stands back for it and the commit is the single write the gesture makes,
-  and the carrier is drawn whenever the lock is off, in one colour or the other. Its size is one world unit per helper unit, so it is a scene-sized
-  object that no view can inflate (README D46); the gizmo's own handles, which `TransformControls` sizes by the distance to the drawing camera, still
+  and the carrier is drawn from the first frame, in one colour or the other, and hidden only while a run previews the shot. Its size is one world unit per helper unit, so it is a scene-sized
+  object that no view can inflate; the gizmo's own handles, which `TransformControls` sizes by the distance to the drawing camera, still
   degenerate in a viewport sitting on the carrier: the remedy is to orbit away, which moves the viewport off the carrier and leaves the carrier where it was.
 - The camera path is a runtime-only view of the authored camera track and writes nothing: `refreshCameraPath` is its only writer, the drawing holds
   no document data, and `cameraPathVisible` is the app's flag with the panel's `Show camera path` box as its view. Fewer than two camera position
-  keyframes is not a path, so the flag is cleared then and the box is disabled and unchecked; while the lock is on, the path is hidden with the
-  carrier, because the viewport already is the output camera and the drawing would sit on it. The drawing is on layer 1 and unnamed, so it is never
-  picked, never in an export frame, and never bound by the mixer (README D22, D24, D47).
+  keyframes is not a path, so the flag is cleared then and the box is disabled and unchecked; that one flag governs the drawing, and a run needs no rule of its own — the preview renders through the output camera, which enables layer 0 alone, so the drawing is simply not in the preview frames. The drawing is on layer 1 and unnamed, so it is never
+  picked, never in an export frame, and never bound by the mixer.
 - The pointer tool receives both live lookups it needs as closures — `getCamera()` for the render camera, `getGizmoBusy()` → `controls.gizmoBusy()` for
   the gizmo's claim — so neither is cached across frames. A left press therefore reaches `Picker.pick` whenever the gizmo is not dragging and no handle
   is hovered, which is what keeps cell selection reachable while the gizmo is attached to the active object.
 
 ## Errors
 `importGlb`, `voxelize`, `applyVoxelizeResult`, and `ExportJob.run` failures reach `reportFailure`, which writes the `Result`'s `error` literal and
-`detail` to the console — the panel has had no message area since D38 — and a failed import or voxelization leaves the project untouched (D12);
+`detail` to the console — the panel has no message area — and a failed import or voxelization leaves the project untouched;
 inner-ring programmer errors propagate. A cancelled settings dialog is not an error: `promptVoxelize` returns without a message, leaving the retained
 import `'empty'` and displayed. There is deliberately no re-run path: the panel has no voxelize control and `main`
-implements no `openVoxelizeDialog`, so a cancelled or regretted voxelization is redone by importing the file again — or by deleting the raw object and
+implements no action that reopens the dialog, so a cancelled or regretted voxelization is redone by importing the file again — or by deleting the raw object and
 dropping the file anew — and never by re-opening the prompt. That is the requested behaviour, not an oversight. A retained import whose every node is an outline has no source, which
 `runVoxelizeJob`
 treats the same way: it aborts the superseded job and returns. An aborted job's own `'cancelled'` result is reported like any
-other failure, because `jobController` is the only thing that knows the job was superseded. The
+other failure, because `jobController` is the only thing that knows the job was superseded.
 The carrier's writes refuse rather
 than report: `setCameraPose` returns before writing anything when any component is non-finite or the quaternion is zero-length, so a refused field never
 becomes a partial pose on the document or the mirror camera; the `panels.refresh()` that follows — or the next frame —
 re-seeds the fields from what the document then holds. `applyCameraMatrix` takes the matrix the gizmo derived from a real node transform, so it has
-nothing to refuse (README D46).
+nothing to refuse.
 
 ## Dependencies
 - `../document/project.js`, `../editor/{session,ops,pointer}.js` — `Project`, `EditorSession`, `EditResolution`, `applyVoxelizeResult`,
@@ -399,32 +314,30 @@ nothing to refuse (README D46).
   `setObjectSubdivision`, `reparentObject`, `PointerTool`.
 - `../voxels/voxelize/voxelize.js` — `voxelize`, `DEFAULT_CELL_BUDGET`, `VoxelizeSource`; `../three-runtime/import.js` — `importGlb`,
   `adoptImportedScene`, `scaleImportedScene`, `buildVoxelizeSource`, and `ImportedScene` for the retained import's type. There is no
-  `VoxelizeTarget` to import any more: the confirmed count is baked into the scaled scene (README D41).
-- `../voxels/uniform/grid.js` — `UniformGrid` for the demo cube's unit cells (README D41), and `HexColor`, `IntBox3` for the mask-color action
+  `VoxelizeTarget` to import any more: the confirmed count is baked into the scaled scene.
+- `../voxels/uniform/grid.js` — `UniformGrid` for the demo cube's unit cells, and `HexColor`, `IntBox3` for the mask-color action
   and the selection text.
 - `../three-runtime/{scene,picking,controls,capture,overlay,grid}.js` — `SceneMirror`, `Picker`, `ViewportControls`, `Capture`,
-  `Overlay`, and `WorldGrid`, whose `visible` flag and `setVisible` are the panel's one grid control (README D35); and
-  `../three-runtime/cameraControl.js` — `CameraControl`, the runtime-only carrier the gizmo aims the output camera with
-  (README D46); `../three-runtime/cameraPath.js` — `CameraPath`, the runtime-only drawing of the authored camera's trajectory, and
-  `../animation/trajectory.js` — `sampleCameraTrajectory` and `cameraKeyframePositions`, the points it is handed (README D47); `../animation/playback.js` and `../export/job.js` — `Playback`, `ExportJob`.
+  `Overlay`, and `WorldGrid`, whose `visible` flag and `setVisible` are the panel's one grid control; and
+  `../three-runtime/cameraControl.js` — `CameraControl`, the runtime-only carrier the gizmo aims the output camera with;
+  `../three-runtime/cameraPath.js` — `CameraPath`, the runtime-only drawing of the authored camera's trajectory, and
+  `../animation/trajectory.js` — `sampleCameraTrajectory` and `cameraKeyframePositions`, the points it is handed; `../animation/playback.js` and `../export/job.js` — `Playback`, `ExportJob`.
 - `../ui/{panels,timeline,hud,dom}.js` — `Panels`, `TimelinePanel`, `Hud`, `el`, and the `CameraPose` type its `setCameraPose` action takes;
   `../ui/voxelizeDialog.js` — `VoxelizeDialog`,
   `DEFAULT_VOXELS_ACROSS` (the count an arriving import is scaled to) and its `VoxelizeDialogDefaults` seed type; `./files.js` — `pickGlbFile`,
-  `pickProjectFile`, `saveJson`, `saveMp4`, `wireDropTarget`; `../document/serialize.js` — `toJson` and `readJson`, the project file's whole boundary
-  (README D51);
+  `pickProjectFile`, `saveJson`, `saveMp4`, `wireDropTarget`; `../document/serialize.js` — `toJson` and `readJson`, the project file's whole boundary;
   `three` — `WebGLRenderer`, `PerspectiveCamera`, and the `Matrix4` type `applyCameraMatrix` takes. Nothing may import this file: the dependency direction stops here.
 
 ## Tests
-None of its own: it is the smoke target of the slice, verified by `npm run dev` plus a walk through Scenario A and Scenario B (README section 9).
-Saving and loading is part of that walk (README D51): rename an object, press `Save project…`, reload the page, drop the downloaded `.json` back onto
+None of its own: it is the smoke target of the slice, verified by `npm run dev` plus a walk through Scenario A (README section 9).
+Saving and loading is part of that walk: rename an object, press `Save project…`, reload the page, drop the downloaded `.json` back onto
 the viewport, and the object with its cells, mask color, and placement plus the timeline (duration, fps, and any keyframe rows) must come back, with the
 demo object gone, the panel showing one row, and nothing on the console.
-Importing is now the first assertion of every walk (README D26): dropping a GLB must first show the model itself — `imported <scene name> (N
+Importing is now the first assertion of every walk: dropping a GLB must first show the model itself — `imported <scene name> (N
 with the one imported object listed as `empty`, its node meshes attached and visible, and the camera fitted to the raw meshes, all of them scaled onto
-the unit lattice so the model's longest axis is `DEFAULT_VOXELS_ACROSS` cells (README D41) — and then open the
+the unit lattice so the model's longest axis is `DEFAULT_VOXELS_ACROSS` cells — and then open the
 settings dialog, seeded from that model, with no voxelize setting anywhere in the panel; `Voxelize` must run the job at what the dialog shows, replacing
-the raw meshes with voxels, while `Cancel` and Escape must leave the object `'empty'` with its raw meshes displayed. None of it is announced in text
-(D38): the object list, the HUD, and the viewport are the evidence. The panel must offer no voxelize control at all: the prompt that follows a successful parse is the only way
+the raw meshes with voxels, while `Cancel` and Escape must leave the object `'empty'` with its raw meshes displayed. None of it is announced in text: the object list, the HUD, and the viewport are the evidence. The panel must offer no voxelize control at all: the prompt that follows a successful parse is the only way
 in, so a second look at the settings — a different voxel count — means importing the
 file again, and `lastImport` retains the cancelled model only for the dialog's extent and for teardown. The
 dialog's seeds must come from the outline-free bounds: importing `public/forest.glb` (79 nodes, 22 of them `*_Line _0` shells
@@ -432,11 +345,11 @@ holding 6410 of its 17628 triangles) opens the prompt at the constant `Voxels ac
 dimensions in voxels — 96 along its longest axis — instead of a length; confirming it reports `voxelized 28893 cell(s) from 11218 triangle(s)` —
 exactly the 57 non-outline nodes, in one payload — beside the boot demo cube; the 22 shells are drawn as that object's raw
 meshes and their cells are nowhere in the payload. That confirmation is also the rescale walk: the model must be scaled again to the count the field
-holds — the same raw meshes re-placed on it, not a second copy — before the job runs (README D41).
+holds — the same raw meshes re-placed on it, not a second copy — before the job runs.
 The same file is the measurement of the one-payload rule: the same 11218 triangles used to voxelize into 57 payloads holding 32854 cells, and the 3961 cells
 of the difference are the ones two or more meshes claimed (the stones inside the soil box, the barbecue and the fire inside each other) — two objects whose
 boxes overlapped drew exactly coincident cubes in different colours, and the first part now keeps such a cell. The repo's demo GLBs have
-identity node transforms, so the placement half (D25) needs real content: a Sketchfab export whose root chain and mesh nodes carry a rotation and
+identity node transforms, so the placement half — every raw mesh carrying its own baked node matrix — needs real content: a Sketchfab export whose root chain and mesh nodes carry a rotation and
 non-uniform scales must land with the object translation-only and every raw mesh exactly where the import put it — through the object's identity transform
 before the payload and the payload's `-origin` offset after it — with every voxel grid axis-aligned in world space, and `Show raw meshes` must bring the raw
 meshes back exactly on top of their voxels — before the fix those meshes landed rotated, sheared, and mis-scaled relative to them.
@@ -449,31 +362,29 @@ selection or overlay, hovering must change nothing at all
 `Show raw meshes` must bring them back over them and take them away again, and an export taken while they are shown must contain voxels only — the
 output camera and `Capture` never test layer 2.
 
-The carrier is walked on the same run (README D46): with the lock off, `Select` in the `Camera` group must show the carrier on the output camera and
+The carrier is walked on the same run: with the viewport not previewing the shot, `Select` in the `Camera` group must show the carrier on the output camera and
 put the gizmo on it, and a drag on the gizmo must aim the output camera — the numeric fields must land on the committed pose and an export must frame
 it — while the live drag writes the document only on release. Typing any of the seven fields must move the shot and re-seed the others, a cleared or
 non-numeric field must come back as what the camera holds rather than a partial pose, `Camera -> View` must author the pose the viewport shows,
 `View -> Camera` must move the viewport to the authored shot and change no field, and `Deselect` must hand the gizmo back to the active object.
-Two facts to check explicitly: the carrier is drawing the output camera rather than a second one — it moves with the authored pose, tracks the
-sampled pose while a clip runs, and appears in no exported frame and in no pick — and the size floor is what `View -> Camera` needs: after the jump
+Two facts to check explicitly: the carrier is drawing the output camera rather than a second one — it moves with the authored pose, is off screen while a clip previews the shot, and appears in no exported frame and in no pick — and the size floor is what `View -> Camera` needs: after the jump
 the carrier is still visible while the gizmo's handles have degenerated to a dot on it, and a middle-drag away restores grabbable handles without the
 carrier moving.
 
-The path is walked on the same run (README D47): with two camera keyframes in the track, ticking `Show camera path` in the `Camera` group must draw the
+The path is walked on the same run: with two camera keyframes in the track, ticking `Show camera path` in the `Camera` group must draw the
 white polyline through the sampled trajectory with one hollow ring per keyframe, following the camera as it is aimed and resizing as the viewport
 orbits, and unticking it must take the drawing away; with fewer than two camera keyframes the box must be disabled and unchecked and nothing must be
-drawn, and deleting a keyframe from a two-keyframe track must clear both again. since the viewport then *is* the output camera, and an exported frame must contain no part of the drawing — it is on layer 1 and unreachable by a pick.
+drawn, and deleting a keyframe from a two-keyframe track must clear both again; an exported frame must contain no part of the drawing — it is on layer 1 and unreachable by a pick.
 
-The follow flow is walked on the same run (README D48): with follow on — its default — pressing play must engage the lock, take the viewport with the
-clip; pausing must stop the transport (the toggle reads `play`), hand the editor camera the frame the clip stopped at, and letting a non-looping run reach its end must stop the transport, return the playhead to
-the run's start value, and put the view back where the run started from — with follow's own captured target, so the return is exact rather than
-re-aimed. With follow off, a run must leave the editor camera exactly where it was — the only change is the transport's own overlay — while the
-carrier is drawn for the length of the run so the camera can be seen moving along the clip, and the box must be enabled again once the run ends. Two
-orders are worth checking explicitly: the pause's handoff must leave `project.camera.transform` untouched, and a run that starts while the lock is
-already on must restore only the playhead.
+The transport is walked on the same run: pressing play must render the viewport through the output camera for the length of the run — the shot
+itself, which is what makes a camera animation visible — with the carrier hidden while it previews; pausing must stop the transport (the toggle reads `play`) and
+hand the editor camera the pose the clip stopped at, and letting a non-looping run reach its end must stop the transport, return the playhead to
+the run's start value, and put the view back where the run started from — with the target the run captured, so the return is exact rather than
+re-aimed. Nothing is locked: the viewport is the author's again the moment the run pauses or ends. Two orders are worth checking explicitly: the
+pause's handoff must leave `project.camera.transform` untouched, and a play pressed while a run is already going must change nothing — the captured
+view stays the one the run started from.
 
 ## Open questions
-- Brief section 4 has animation "mark mirrored objects dirty"; rebuilding from project truth while the mixer's transforms are animated would clobber
-  them, so dirty marking stays on the edit and import paths.
+- Dirty marking stays on the edit and import paths: rebuilding from project truth while the mixer's transforms are animated would clobber them.
 - The `FOV (deg)` field authors `mirror.camera.fov` directly, so a `fov` track that is running overwrites the typed value on the next mixer
   sample while the document keeps it — the same ownership split the pose copy guards with `playback.playing`, but the projection has no such guard.

@@ -4,15 +4,15 @@ Ring: 2 · Layer: three-runtime · Depends on: `three`, `./shaderPatch.js`
 
 ## Responsibility
 The per-voxel face border: one thin line around every face of every voxel, which is what makes a mass of cubes read as
-countable cells instead of one coloured blob. It is the reference product's default voxel appearance — its `Grid`
-texture — reproduced as a shader term rather than a texture: each face's own colour darkened along the face's UV
+countable cells instead of one coloured blob. It is the default voxel appearance reproduced as a shader term
+rather than a texture: each face's own colour darkened along the face's UV
 border. The line is a screen-space quantity, because a face's UV runs 0..1 whatever its cell's world size, so the same
 one-pixel border appears at subdivision 1 and at subdivision 128 with no per-object or per-subdivision work.
 
-It patches a material instead of replacing one. The voxel instances share one `MeshLambertMaterial` (README D24's
-derived-mesh rule), so the border is a term on top of the existing shading rather than a second shading model; the mask
-pass swaps in a `MeshBasicMaterial` of its own and stays flat (README D11), and the raw imported meshes belong to the
-importer (README D24), so neither carries the border.
+It patches a material instead of replacing one. The voxel instances share one `MeshLambertMaterial`, so the border
+is a term on top of the existing shading rather than a second shading model; the mask
+pass swaps in a `MeshBasicMaterial` of its own and stays flat, and the raw imported meshes belong to the
+importer, so neither carries the border.
 
 ## Public interface
 ```ts
@@ -21,7 +21,7 @@ function applyFaceBorder(material: THREE.Material): void;   // installs the hook
 ```
 
 ## Internal logic
-1. `BORDER_STRENGTH = '0.22'` is the reference's `line * 0.22`: the share of a face's own colour the border takes away.
+1. `BORDER_STRENGTH = '0.22'` is the share of a face's own colour the border takes away.
    `VERTEX_VARYING`/`VERTEX_WRITE` are the varying and the write that fills it; `FRAGMENT_VARYING` is the same varying
    on the fragment side; `FRAGMENT_BORDER` is the border block; `FRAGMENT_ANCHOR` is `#include <opaque_fragment>`, the
    chunk that writes the shaded colour, which is where the border has to have been applied.
@@ -31,7 +31,7 @@ function applyFaceBorder(material: THREE.Material): void;   // installs the hook
 3. The border block: `border = abs(fract(vFaceUv - 0.5) - 0.5) / fwidth(vFaceUv)` is the distance to the face's edge in
    pixels on each axis; `edge = 1.0 - min(min(border.x, border.y), 1.0)` is a one-pixel ramp at that edge; the ramp is
    then multiplied by `clamp(1.0 / (length(vec2(dFdx(vFaceUv.x), dFdy(vFaceUv.y))) * 1.41421356 + 1.0) - 0.1, 0.0, 1.0)`
-   — the same anisotropy clamp the reference's grid plane uses — so faces whose borders pack closer than a few pixels
+   — the same anisotropy clamp the ground grid's material applies — so faces whose borders pack closer than a few pixels
    dim out instead of turning solid dark; and the result darkens the shaded colour with
    `outgoingLight = mix(outgoingLight, vec3(0.0), edge * 0.22)`.
 4. `applyFaceBorder(material)` assigns `material.onBeforeCompile`, which runs `withFaceBorder` over the two strings
@@ -49,7 +49,7 @@ function applyFaceBorder(material: THREE.Material): void;   // installs the hook
 - The border is expressed entirely in the face's UV space plus screen-space derivatives: it needs no world position, no
   per-instance data, and no second buffer, so it works for every object at every subdivision through one material.
 - The border takes a share of the face's own colour rather than writing a fixed colour, so a dark voxel gets a darker
-  edge and a light one a lighter edge, which is what the reference does.
+  edge and a light one a lighter edge.
 - The mask pass and the raw imported meshes are untouched: the material this patches is the one the beauty pass draws
   voxels through, and no other material in the runtime gets the hook.
 - `outgoingLight` is the name the patch reads: it exists in three's lambert fragment program and in no other program
@@ -70,7 +70,7 @@ GPU stays app-verified (README §10): the borders on screen, one pixel wide up c
 seen from far away, and absent from a mask frame.
 
 ## Open questions
-- `0.22` is the reference's strength. If borders read too strong over the editor's slate background, this constant is
+- `0.22` is the border's strength. If borders read too strong over the editor's slate background, this constant is
   the single knob; nothing else depends on it.
 - The line is one pixel at every distance by construction. A user who wants the border to thicken with the cell (a
   "drawn" look rather than a screen-space grid) would need the cell's world size, which the material does not carry

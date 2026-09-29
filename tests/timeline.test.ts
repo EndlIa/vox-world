@@ -65,7 +65,7 @@ const CAMERA: TrackTarget = { kind: 'camera' };
 
 /**
  * A mirror shaped like `SceneMirror`: one scene root, one node per project object, and the output
- * camera as a child of that root. `Playback.bind` names the nodes after their ids (D22).
+ * camera as a child of that root. `Playback.bind` names the nodes after their ids.
  */
 function mirrorFor(project: Project, objectId: ObjectId) {
   const root = new Object3D();

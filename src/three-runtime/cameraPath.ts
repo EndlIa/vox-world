@@ -3,7 +3,7 @@
  *
  * It is presentational and runtime-only, like the grid and the overlay: it holds points the app hands it and knows
  * nothing about the document. Its whole subtree is on layer 1, so the picker cannot hit it and no export frame
- * contains it (README D24), and nothing here is named, so the mixer's binding walk never reaches it (D22).
+ * contains it, and nothing here is named, so the mixer's binding walk never reaches it.
  *
  * Both halves are three's own. The polyline is a `Line` over a buffer that grows on demand, and the rings are one
  * `Points` set whose material is a ring built once into a small `DataTexture` — so a marker faces the drawing camera
@@ -14,7 +14,7 @@
 
 import * as THREE from 'three';
 
-/** The viewport decoration layer (README D24); the grid, overlay, gizmo, and carrier use the same number. */
+/** The viewport decoration layer; the grid, overlay, gizmo, and carrier use the same number. */
 const OVERLAY_LAYER = 1;
 const DECORATION_RENDER_ORDER = 1000;
 
@@ -111,7 +111,7 @@ export class CameraPath {
     this.markers.renderOrder = DECORATION_RENDER_ORDER;
 
     this.root.add(this.line, this.markers);
-    // The root takes the layer too, so a later child cannot escape it (README D24).
+    // The root takes the layer too, so a later child cannot escape it.
     this.root.traverse((child) => {
       child.layers.set(OVERLAY_LAYER);
     });

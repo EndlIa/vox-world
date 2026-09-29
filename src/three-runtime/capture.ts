@@ -30,7 +30,7 @@ export class Capture {
     this.frameHeight = opts.height;
 
     // The same logarithmic depth buffer the viewport uses: an exported frame must not fight where the
-    // viewport does not, and the output camera's own near and far are the document's business (README D40).
+    // viewport does not, and the output camera's own near and far are the document's business.
     this.renderer = new THREE.WebGLRenderer({
       antialias: false,
       alpha: false,
@@ -61,7 +61,7 @@ export class Capture {
    * Draws one frame at the export size.
    *
    * The capture owns the export aspect; `fov`, `near`, `far`, and the transform stay the caller's
-   * data, so the camera passed here is the output camera derived from `project.camera` (README D17).
+   * data, so the camera passed here is the output camera derived from `project.camera`.
    */
   render(scene: THREE.Scene, camera: THREE.PerspectiveCamera): void {
     this.requireUsable();

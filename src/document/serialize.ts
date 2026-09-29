@@ -1,5 +1,5 @@
 /**
- * The file boundary of the document: the project truth as one versioned JSON document, and back (README D51).
+ * The file boundary of the document: the project truth as one versioned JSON document, and back.
  *
  * `toJson` reads a `Project` and writes what a file carries of it. `readJson` validates a file completely —
  * format, version, structure, hierarchy, cell payloads, keyframes, and the voxel budget — and hands back a
@@ -155,7 +155,7 @@ function readVarints(bytes: Uint8Array): number[] | undefined {
 
 /**
  * One grid as a payload: keys sorted ascending with each color carried along, a palette in the order the
- * cells first use a color, one palette index per cell, and both byte streams base64-encoded (README D51).
+ * cells first use a color, one palette index per cell, and both byte streams base64-encoded.
  */
 export function encodeCells(grid: UniformGrid): CellPayload {
   const ordered: { key: number; color: HexColor }[] = [];
@@ -541,7 +541,7 @@ function readTimeline(value: unknown, objectIds: ReadonlySet<ObjectId>): Read<Ti
   return { durationMs, fps, tracks };
 }
 
-/** The project as one JSON document: the whole truth, no derived resource, no session state (README D51). */
+/** The project as one JSON document: the whole truth, no derived resource, no session state. */
 export function toJson(project: Project): string {
   const data = project.snapshot();
   return JSON.stringify({

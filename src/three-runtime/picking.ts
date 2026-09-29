@@ -2,10 +2,10 @@
  * Picking.
  *
  * Turns a viewport pointer position into voxel identity by raycasting the mirrored meshes and
- * resolving the hit's `instanceId` through `SceneMirror.lookupOf()` — no CPU voxel traversal
- * (README D5). A hit on an imported raw mesh (layer 2) has no instances and no lookup, so it resolves
- * to the object its mesh was attached to instead (README D24). The camera that rendered the viewport
- * is a parameter, never the mirror's output camera (README D17).
+ * resolving the hit's `instanceId` through `SceneMirror.lookupOf()` — no CPU voxel traversal.
+ * A hit on an imported raw mesh (layer 2) has no instances and no lookup, so it resolves
+ * to the object its mesh was attached to instead. The camera that rendered the viewport
+ * is a parameter, never the mirror's output camera.
  *
  * It never mutates the scene graph, the document, or voxel data, and holds no state beyond a reused
  * `Raycaster`.
@@ -27,7 +27,7 @@ export type PickHit =
       normal: THREE.Vector3 | undefined;
     }
   | {
-      /** An imported raw mesh: the hit names its object and nothing finer (README D24). */
+      /** An imported raw mesh: the hit names its object and nothing finer. */
       kind: 'object';
       objectId: ObjectId;
       point: THREE.Vector3;
@@ -45,9 +45,9 @@ type Candidate = {
   payload: Payload;
 };
 
-/** The voxel-content layer (README D24); layer 1 is viewport feedback, layer 2 the raw meshes. */
+/** The voxel-content layer; layer 1 is viewport feedback, layer 2 the raw meshes. */
 const SCENE_LAYER = 0;
-/** The imported-source-mesh layer (README D24), enabled alongside layer 0 on the raycaster. */
+/** The imported-source-mesh layer, enabled alongside layer 0 on the raycaster. */
 const SOURCE_LAYER = 2;
 
 export class Picker {
@@ -57,7 +57,7 @@ export class Picker {
   constructor(mirror: SceneMirror) {
     this.mirror = mirror;
     // Layers 0 and 2: voxel content and the imported raw meshes. Layer 1 holds the viewport
-    // decorations and the gizmo, which can never be picked (README D24).
+    // decorations and the gizmo, which can never be picked.
     this.raycaster.layers.set(SCENE_LAYER);
     this.raycaster.layers.enable(SOURCE_LAYER);
   }
@@ -167,7 +167,7 @@ function isVisible(object: THREE.Object3D): boolean {
 }
 
 /**
- * The fixed overlap order (README D5): the nearer hit, then ascending `objectId`, then ascending
+ * The fixed overlap order: the nearer hit, then ascending `objectId`, then ascending
  * `(x, y, z)`, which keeps the comparator total, geometry-free and deterministic — the same ray always
  * yields the same hit.
  *

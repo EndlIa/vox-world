@@ -5,7 +5,7 @@ import type { ObjectId, Project } from '../document/project.js';
 
 const CAMERA_NAME = 'camera';
 
-/** Topmost ancestor: the mirror's scene root, which is the single mixer root (D22). */
+/** Topmost ancestor: the mirror's scene root, which is the single mixer root. */
 function sceneRootOf(object: Object3D): Object3D {
   let root = object;
   while (root.parent !== null) root = root.parent;
@@ -15,7 +15,7 @@ function sceneRootOf(object: Object3D): Object3D {
 /**
  * Thin `AnimationMixer` wrapper. It owns transport state and the frame-exact `setTime` the export
  * loop drives; the authored keyframes stay in `document/timeline.ts` and the clip is derived by
- * `./compile.js`. Nothing here writes back into the project (D1, D4).
+ * `./compile.js`. Nothing here writes back into the project.
  */
 export class Playback {
   private readonly camera: PerspectiveCamera;
@@ -33,7 +33,7 @@ export class Playback {
 
   /**
    * Points the mixer at the mirror's scene root and names the bound nodes after their `ObjectId`,
-   * which is what makes the compiled track names resolve (D22). Re-binding releases the old root.
+   * which is what makes the compiled track names resolve. Re-binding releases the old root.
    */
   bind(objects: Map<ObjectId, Object3D>): void {
     this.objects = objects;
@@ -134,7 +134,7 @@ export class Playback {
   /**
    * Whether the clip repeats. The transport's own setting rather than the clip's, and read by the app to tell a
    * clip that reached its end from one that wrapped: a run of a non-looping clip is over at the last frame, which
-   * is where the app hands the view back and stops the transport (README D48).
+   * is where the app hands the view back and stops the transport.
    */
   get loop(): boolean {
     return this.looping;

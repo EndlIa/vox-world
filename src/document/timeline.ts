@@ -34,7 +34,7 @@ const KEYFRAME_ID_PATTERN = /^keyframe-(\d+)$/;
 
 /**
  * Clamps a time onto the clip: whole milliseconds inside `[0, durationMs]`. Every entry point funnels through
- * this, which is what makes a keyframe outside the duration unrepresentable (README D45) — the author's time is
+ * this, which is what makes a keyframe outside the duration unrepresentable — the author's time is
  * rounded rather than rejected. A non-finite time is a programmer error and throws.
  */
 function clampTime(timeMs: number, durationMs: number): number {
@@ -86,7 +86,7 @@ export function ensureTrack(
 
 /**
  * The latest keyframe time anywhere in the clip, or 0 with no keyframes. The timeline widget reads it as the
- * floor of the duration field, which is what keeps the duration from cutting the clip short (README D45).
+ * floor of the duration field, which is what keeps the duration from cutting the clip short.
  */
 export function maxKeyframeTime(timeline: Timeline): number {
   let latest = 0;
@@ -169,7 +169,7 @@ export function moveKeyframe(
 /**
  * Removes one keyframe, named by id. The track stays even when it is left empty: a channel that has been keyed
  * once keeps its interpolation and its slot in the clip, and re-adding a keyframe to it does not disturb the
- * widget (README D45). The empty track contributes nothing to a compiled clip.
+ * widget. The empty track contributes nothing to a compiled clip.
  */
 export function removeKeyframe(
   timeline: Timeline,
@@ -247,7 +247,7 @@ export function channelValueSize(channel: TrackChannel): number {
 }
 
 /**
- * Restore hook (README D51): raises the minting counter above every id the timeline already holds, so a keyframe
+ * Restore hook: raises the minting counter above every id the timeline already holds, so a keyframe
  * loaded from a file can never be minted a second time. An id of another shape is skipped, because ids are opaque
  * to every caller but this module and a foreign one must not be able to set the counter.
  */

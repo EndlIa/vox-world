@@ -65,7 +65,7 @@ const DEFAULT_VERTEX_COLOR_SIZE = 3;
  *
  * The factor is already the exchange format, so a source with neither texture nor vertex colors is
  * returned bit-exact, without a re-encoding round trip. Every other path converts through
- * `THREE.Color` (README D1/D14): the factor is decoded from sRGB by `setHex`, the vertex components
+ * `THREE.Color`: the factor is decoded from sRGB by `setHex`, the vertex components
  * are linear sRGB — the working color space glTF `COLOR_0` arrives in — straight into the working
  * components, and the texel is decoded from the sRGB bytes an image readback yields by
  * `setRGB(..., SRGBColorSpace)`. The product is therefore linear, and `getHex()`'s default

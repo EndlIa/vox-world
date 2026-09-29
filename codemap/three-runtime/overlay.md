@@ -35,7 +35,7 @@ class Overlay {
    matrix, so a pointer-move drag allocates nothing and creates no geometry or material.
 3. `showBox(boxLocal, matrixWorld, cell, color?)`: normalize the inclusive `IntBox3` with `normalizeBox(boxLocal.min,
    boxLocal.max)` and write the min-corner convention's extents into the box as `min * cell` to `(max + 1) * cell` —
-   one cell is `cell` world units, the owning object's own cell size (README D41, D43) — then copy `matrixWorld` onto
+   one cell is `cell` world units, the owning object's own cell size — then copy `matrixWorld` onto
    the group's matrix and set `matrixWorldNeedsUpdate`, because a matrix written directly is not the one
    `updateMatrix()` would produce. The helper's own `updateMatrixWorld` reads the box and places the frame inside that
    space, so the frame shows exactly the voxel space the edit will write, in the owning object's space and orientation
@@ -72,11 +72,11 @@ No outer-ring import: the overlay knows nothing about tools, sessions, ops, or p
 ## Tests
 - `tests/overlay.test.ts` pins the frame's placement — the inclusive cell box at the owning object's cell size, in that
   object's world space, including a rotated and non-uniformly scaled one — the one visible/hidden rule, the colour
-  write, the argument errors, and `dispose`, in the node environment; see `codemap/tests/overlay.md`.
+  write, the argument errors, and `dispose`, in the node environment.
 - The corner handling `showBox` relies on is already pinned by `tests/uniform.test.ts` (`normalizeBox`, box counts).
 - What needs a GPU stays app-verified (README §10): the frame on screen over the voxels while a drag runs, following the
   object's orientation, and its absence from a pick and from an exported frame — layer 1 is what the picker's and the
   export camera's layer sets already exclude.
 
 ## Open questions
-- The brief fixes no default feedback color; `0x38bdf8` is chosen here and the caller may override it. If a shared palette appears later, the default should come from it.
+- No shared palette fixes a default feedback color; `0x38bdf8` is chosen here and the caller may override it. If a shared palette appears later, the default should come from it.

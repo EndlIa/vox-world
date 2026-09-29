@@ -6,7 +6,7 @@ Ring: 4 · Layer: app · Depends on: none
 The browser file boundary: ask the user for a GLB or a project file, accept either dropped on a target, and
 download the produced MP4 or project JSON. It moves `File` and `Blob` values across the page boundary and
 holds no project state; what a file *means* is the composition root's decision, and what a project file
-*contains* belongs to `document/serialize.ts` (README D51), while content validation, decoding, and
+*contains* belongs to `document/serialize.ts`, while content validation, decoding, and
 encoding belong to `three-runtime/import.ts` and `export/`.
 
 ## Public interface

@@ -64,10 +64,10 @@ include: ['tests/**/*.test.ts'], globals: false }`, so tests import `describe`/`
 `<div id="hud">`, `<div id="modebar">`, and `<script type="module" src="/src/app/main.ts">`. `main.ts` resolves the four ids
 once and passes the elements to `Panels`, `TimelinePanel`, `Hud`, and the renderer setup. The timeline bar carries `hidden`
 in the markup because it starts collapsed — the rail's `Animation` button is the only thing that shows it — and the attribute
-is here rather than set by the module so the bar cannot flash while the bundle loads (README D44). For the same decision
+is here rather than set by the module so the bar cannot flash while the bundle loads. For the same reason
 `#viewport` carries `min-height: 0`: a canvas' intrinsic size comes from its drawing-buffer attributes, and a grid item's
 automatic minimum would floor the row with it, which pushes the `auto` timeline row past the bottom of the `100vh` column
-where `body { overflow: hidden }` clips it away — the bar would exist and be unreachable (README D44). The `:root`
+where `body { overflow: hidden }` clips it away — the bar would exist and be unreachable. The `:root`
 declaration `--scene` and the `html`/`body`/`#viewport` backgrounds use it, so nothing darker shows
 behind or beside the canvas; the value must equal `DEFAULT_BACKGROUND` in `src/document/project.ts`,
 which is the definition the 3D scene and the exported frames actually use. The stylesheet also owns the
@@ -98,7 +98,7 @@ surface, `allowJs` stays off, and everything in it is TypeScript.
 ## Invariants
 - No dependency version carries a caret or range; the six pinned versions equal README section 3.
 - `type` is `"module"`, and every source file is ESM with `.js` extensions in relative imports.
-- `check` runs `typecheck` and then `test`, and nothing else (README D16).
+- `check` runs `typecheck` and then `test`, and nothing else.
 - No linter or formatter is configured in this slice: no `eslint`, `prettier`, `biome`, or config file
   for them exists, and no script pretends to run one.
 - Typechecking and tests are GPU-free and DOM-free; only `index.html` plus the ring-2/4 runtime modules
@@ -115,7 +115,7 @@ surface, `allowJs` stays off, and everything in it is TypeScript.
 import of `src/app/main.ts`. No module under `src/` imports any of these files.
 
 ## Tests
-No unit test pins them. They are verified by `npm run check` (typecheck plus tests, D16), by
+No unit test pins them. They are verified by `npm run check` (typecheck plus tests), by
 `npm run build` producing the bundle from `index.html`, and by `npm run dev` loading the page and
 mounting panels, timeline, and HUD into the four elements above.
 

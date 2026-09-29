@@ -5,10 +5,10 @@
  * It holds no transform, identity, or scene state, allocates no Three.js object per cell, and never
  * converts to world space — that is the owning object's transform. Min-corner convention on the world
  * lattice: cell `(x, y, z)` occupies `[x / subdivision, (x + 1) / subdivision]` of a world unit on each
- * axis, so a cell coordinate is a world coordinate times the subdivision the grid carries (README D41, D43).
+ * axis, so a cell coordinate is a world coordinate times the subdivision the grid carries.
  */
 
-/** The world unit: the base cell size a grid subdivides, one voxel at `subdivision = 1` (README D41, D43). */
+/** The world unit: the base cell size a grid subdivides, one voxel at `subdivision = 1`. */
 export const CELL_SIZE = 1;
 
 function assertSubdivision(value: number): void {
@@ -27,7 +27,7 @@ export const KEY_MAX = 511;
 /** Cells per axis in the key space: 1024^3 keys, all exact 32-bit integers. */
 const AXIS_SPAN = KEY_MAX - KEY_MIN + 1;
 
-/** True for a legal subdivision: an integer power of two, so a cell is an exact binary fraction (D43). */
+/** True for a legal subdivision: an integer power of two, so a cell is an exact binary fraction. */
 export function isSubdivision(value: number): boolean {
   return Number.isInteger(value) && value >= 1 && Number.isInteger(Math.log2(value));
 }
@@ -108,7 +108,7 @@ function containsCell(box: IntBox3, x: number, y: number, z: number): boolean {
 }
 
 export class UniformGrid {
-  /** A grid at `subdivision = 1` is the unit lattice; any other level is a power of two (README D43). */
+  /** A grid at `subdivision = 1` is the unit lattice; any other level is a power of two. */
   static create(subdivision = 1): UniformGrid {
     assertSubdivision(subdivision);
     return new UniformGrid(subdivision);
@@ -117,7 +117,7 @@ export class UniformGrid {
   /** How many cells one world unit spans: the object's own grid level, fixed for the life of the grid. */
   readonly subdivision: number;
 
-  /** The world size of one cell, derived from the world unit so no length is stored (README D41, D43). */
+  /** The world size of one cell, derived from the world unit so no length is stored. */
   get cellSize(): number {
     return CELL_SIZE / this.subdivision;
   }
@@ -224,7 +224,7 @@ export class UniformGrid {
   /**
    * A copy of this grid one or more levels finer: every cell becomes a `2^levels` cube of itself, in the same
    * color and at the same world position, because the new grid's subdivision is `2^levels` times this one's and
-   * both keep the same placement (README D43). Block replication adds no detail; it makes the cells smaller.
+   * both keep the same placement. Block replication adds no detail; it makes the cells smaller.
    *
    * Coordinates outside the packed key space throw from `packKey`, so a caller that can be asked for too fine a
    * level checks the result it would need first and refuses with data (see `editor/ops.ts`).

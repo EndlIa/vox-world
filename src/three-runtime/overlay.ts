@@ -4,7 +4,7 @@
  * Draws the box-drag preview frame with three's own `Box3Helper`, which supplies the box's 12 edges and puts
  * them on the box it is handed. It is strictly presentational: one wireframe object and one box, rewritten per
  * update, holding no persistent state, no document reference, and no source data. Layer 1 keeps it out of both
- * consumers — the picker's raycaster tests layer 0 only and the export camera enables layer 0 only (README D24).
+ * consumers — the picker's raycaster tests layer 0 only and the export camera enables layer 0 only.
  *
  * A `Box3Helper` draws an axis-aligned box in the space it sits in, so it is parented into the group that
  * carries the owning object's world matrix rather than added to the scene: a rotated or scaled object then
@@ -17,7 +17,7 @@ import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
 import { normalizeBox } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
 
-/** The viewport decoration layer (README D24); `controls.ts` uses the same number for its gizmo. */
+/** The viewport decoration layer; `controls.ts` uses the same number for its gizmo. */
 const OVERLAY_LAYER = 1;
 const DEFAULT_COLOR: HexColor = 0x38bdf8;
 const OVERLAY_RENDER_ORDER = 1000;
@@ -47,7 +47,7 @@ export class Overlay {
     this.space = new THREE.Group();
     this.space.matrixAutoUpdate = false;
     this.space.add(this.helper);
-    // The group takes the layer too, so a child added later cannot escape it (README D24).
+    // The group takes the layer too, so a child added later cannot escape it.
     this.space.traverse((child) => {
       child.layers.set(OVERLAY_LAYER);
     });
@@ -58,7 +58,7 @@ export class Overlay {
   /**
    * Shows the inclusive integer box an edit will write, in the owning object's space.
    *
-   * The box is min-corner indexed in cells and one cell is `cell` world units (README D41, D43), so the box runs
+   * The box is min-corner indexed in cells and one cell is `cell` world units, so the box runs
    * from `min * cell` to `(max + 1) * cell` in the owning object's space, and the space is put on the world matrix
    * the caller hands over: the frame follows the object's own position, orientation, and scale, at the object's own
    * cell size, whatever its subdivision.

@@ -37,7 +37,7 @@ function uniformFixture() {
 
 /**
  * The world position of a cell center, in the object's own frame: cell `i` spans `[i, i + 1]` cells and a cell is
- * `CELL_SIZE / subdivision` world units (D41, D43), so its center is half a cell past its index.
+ * `CELL_SIZE / subdivision` world units, so its center is half a cell past its index.
  */
 function cellCenterWorld(project: Project, object: SceneObject, x: number, y: number, z: number) {
   const cell = object.uniform?.cellSize ?? CELL_SIZE;
@@ -116,7 +116,7 @@ describe('detachUniformBox', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const part = project.get(result.objectId)!;
-    // The region stays exactly where D23 put it, between cells, so the object is not claimed to be on the
+    // The region stays exactly where the detach placed it, between cells, so the object is not claimed to be on the
     // lattice — and it was not moved onto it either.
     expect(part.alignToGrid).toBe(false);
     const expected = cellCenterWorld(project, source, -2, -1, 0);

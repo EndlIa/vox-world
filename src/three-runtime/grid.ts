@@ -1,18 +1,16 @@
 /**
  * The viewport's world grid: one horizontal plane of shader-drawn lines on the world's ground.
  *
- * It is the only grid. The vertical displays the previous rewrite offered — `volume`'s two walls and the movable
- * `multi` plane — are gone, and so is the second copy of the ground the volume display carried: vox-world places and
- * aligns content on the world lattice itself (README D41, D42), and a wall of grid is a reference nothing here is
- * built against. The active object's own lattice is gone as well (README D49).
+ * It is the only grid. Content is placed and aligned on the world lattice itself, so no vertical work plane
+ * and no second copy of the ground is needed, and the active object's own lattice is gone as well.
  *
- * The look is the reference viewport's floor plane (README D35, D49): one white line per world cell, a brighter one
+ * The look: one white line per world cell, a brighter one
  * every `GRID_SECTION_SIZE` cells, drawn by `@pmndrs/vanilla`'s shader grid with three pure patches — three's
- * logarithmic-depth chunks, the reference's derivative-based line attenuation (without it a unit grid beats against
- * the pixel grid at the horizon), and no distance fade at all, because the reference's grid does not fade with
- * distance: what ends a line there is how tightly it packs on screen. There is deliberately no fill colour and no
- * overall plane alpha: the reference's floor is a dark translucent surface, and over this viewport's slate
- * background that would only darken what is already there.
+ * logarithmic-depth chunks, a derivative-based line attenuation (without it a unit grid beats against
+ * the pixel grid at the horizon), and no distance fade at all: what ends a line is how tightly it packs on
+ * screen, not the distance to the camera. There is deliberately no fill colour and no
+ * overall plane alpha: a dark translucent surface over this viewport's slate
+ * background would only darken what is already there.
  *
  * The quad lies in the world's `xz` plane without any turn of its own: the library's vertex program swizzles the
  * geometry (`localPosition = position.xzy`) before the model matrix, so an unturned `PlaneGeometry` already lies in
@@ -21,7 +19,7 @@
  * while the quad is moved instead, by whole cells.
  *
  * The whole grid is decoration: layer 1, so the picker's raycaster (layers 0 and 2) never hits it and no export
- * frame contains it (README D24), and `depthWrite = false`, so it cannot occlude a voxel below the plane. The camera
+ * frame contains it, and `depthWrite = false`, so it cannot occlude a voxel below the plane. The camera
  * moves the quad, never the lines: `update` re-centres it on the camera snapped to whole cells, so the lines stay on
  * the world's cell boundaries however far the viewport travels.
  */
@@ -30,22 +28,21 @@ import * as THREE from 'three';
 import { Grid } from '@pmndrs/vanilla/core/Grid';
 import { insertChunks } from './shaderPatch.js';
 
-/** The viewport decoration layer (README D24); `overlay.ts`, `controls.ts`, and the drawings share the number. */
+/** The viewport decoration layer; `overlay.ts`, `controls.ts`, and the drawings share the number. */
 const OVERLAY_LAYER = 1;
 
 /** Below the decorations drawn on top of it — the box preview and the camera path draw at 1000. */
 const GRID_RENDER_ORDER = 0;
 
-/** The plane's finer spacing: the world unit itself, so the lines are the cell boundaries (README D41). */
+/** The plane's finer spacing: the world unit itself, so the lines are the cell boundaries. */
 export const GRID_CELL_SIZE = 1;
 
-/** Every this many cells the brighter line is drawn, which is the reference material's `majorUnitFrequency`. */
+/** Every this many cells the brighter line is drawn. */
 export const GRID_SECTION_SIZE = 20;
 
 /**
  * Side of the quad, in world units. With no distance fade the grid has to end at the quad's own edge, so this is
- * large enough that the edge stays off screen in any view of demo-scale content; the reference answers the same
- * problem with a disc of radius 5100.
+ * large enough that the edge stays off screen in any view of demo-scale content.
  */
 export const GRID_PLANE_EXTENT = 4096;
 
@@ -61,7 +58,7 @@ const GRID_LINE_COLOR = 0xffffff;
  *
  * The renderer defines `USE_LOGARITHMIC_DEPTH_BUFFER` for every material and sets `logDepthBufFC` for every
  * program, but only these chunks read them: a custom shader without them writes a depth nothing else in the
- * scene can be compared against (README D40). Pure, so the injection is checked without a GPU.
+ * scene can be compared against. Pure, so the injection is checked without a GPU.
  */
 export function withLogDepth(
   vertexShader: string,
@@ -88,8 +85,8 @@ export function withLogDepth(
  *
  * The library saturates a line as its spacing shrinks (`min(line, 1.0)`), which stops it flickering but leaves the
  * far field as a flat wash that beats against the pixel grid: neighbouring unit lines interfere and the horizon
- * reads as a dark cross-hatch. Attenuating by the screen-space derivative — the reference grid material's own
- * anisotropy clamp — removes those lines instead, so what survives at distance is the coarse spacing and what reads
+ * reads as a dark cross-hatch. Attenuating by the screen-space derivative removes those lines instead, so what
+ * survives at distance is the coarse spacing and what reads
  * up close is the fine one. Pure, and a no-op on any source that does not carry the library's grid function.
  */
 export function withAnisotropicAttenuation(fragmentShader: string): string {
@@ -103,8 +100,8 @@ export function withAnisotropicAttenuation(fragmentShader: string): string {
  * Drops the library's distance fade.
  *
  * The library multiplies a line's alpha by `pow(1 - min(dist / fadeDistance, 1), fadeStrength)`, which dissolves the
- * whole grid past a fixed distance from the camera's own point on the plane. The reference has no such term — its
- * grid reaches the plane's edge, and only the derivative clamp above thins it — so the fade factor is replaced by
+ * whole grid past a fixed distance from the camera's own point on the plane. The grid reaches the plane's edge
+ * instead, and only the derivative clamp above thins it, so the fade factor is replaced by
  * the constant it approaches at the camera. Pure, and a no-op on any source that does not carry the library's fade.
  */
 export function withoutDistanceFade(fragmentShader: string): string {
@@ -131,7 +128,7 @@ export class WorldGrid {
       sectionColor: new THREE.Color(GRID_LINE_COLOR),
       // Both of these move the grid inside the shader, which is the one thing the display must not do: the quad is
       // moved instead, by whole cells, so the lines stay on the world's boundaries and the mesh stays where the
-      // grid it draws is (README D49).
+      // grid it draws is.
       followCamera: false,
       infiniteGrid: false,
       side: THREE.DoubleSide,
@@ -154,7 +151,7 @@ export class WorldGrid {
     this.root.add(mesh);
   }
 
-  /** Whether the grid is drawn. The app's `World grid` checkbox is the one writer (README D35). */
+  /** Whether the grid is drawn. The app's `World grid` checkbox is the one writer. */
   get visible(): boolean {
     return this.root.visible;
   }

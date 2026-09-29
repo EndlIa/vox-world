@@ -85,17 +85,17 @@ const VIEWPORT_FAR = 5000;
 const DEFAULT_EXPORT_WIDTH = 1280;
 const DEFAULT_EXPORT_HEIGHT = 720;
 const EXPORT_FILENAME = 'vox-world.mp4';
-/** The project file's default name: one JSON document holding the whole truth (README D51). */
+/** The project file's default name: one JSON document holding the whole truth. */
 const PROJECT_FILENAME = 'vox-world-project.json';
-/** The carrier pivots about its own origin, which is the camera position (README D46). */
+/** The carrier pivots about its own origin, which is the camera position. */
 const CAMERA_CONTROL_PIVOT = new Vector3(0, 0, 0);
-/** Clip length before the author edits it, in the authoring unit: whole milliseconds (README D45). */
+/** Clip length before the author edits it, in the authoring unit: whole milliseconds. */
 const DEFAULT_DURATION_MS = 10_000;
 const DEFAULT_FPS = 30;
 /** The dialog's extent seed before any import. */
 /**
  * The extent the dialog seeds from when there is no import to measure: one default model's worth, in
- * voxels. One voxel is one world unit (README D41), so an extent and a voxel count are the same kind of
+ * voxels. One voxel is one world unit, so an extent and a voxel count are the same kind of
  * number, and the dialog's fallback is the count it already opens at.
  */
 const DEFAULT_EXTENT = DEFAULT_VOXELS_ACROSS;
@@ -115,7 +115,7 @@ function canvasById(id: string): HTMLCanvasElement {
   return element;
 }
 
-/** The canvas' layout aspect: it drives the viewport camera, and the locked output camera. */
+/** The canvas' layout aspect: it drives the viewport camera, and the output camera while a clip plays. */
 function canvasAspect(canvas: HTMLCanvasElement): number {
   return Math.max(1, canvas.clientWidth) / Math.max(1, canvas.clientHeight);
 }
@@ -142,7 +142,7 @@ function buildDemoGrid(): UniformGrid {
   return grid;
 }
 
-/** Width x height x depth and the cell count of an inclusive integer box, for status text. */
+/** Width x height x depth and the cell count of an inclusive integer box, for the HUD's selection readout. */
 function boxText(box: IntBox3): string {
   const width = box.max[0] - box.min[0] + 1;
   const height = box.max[1] - box.min[1] + 1;
@@ -171,14 +171,14 @@ export function main(): void {
   // 2. Viewport: renderer, mirror and its output camera, navigation, decorations, capture.
   const viewportCamera = new PerspectiveCamera(VIEWPORT_FOV, 1, VIEWPORT_NEAR, VIEWPORT_FAR);
   // The overlay and the gizmo live on camera layer 1 and the imported raw meshes on layer 2
-  // (README D24), so the viewport camera draws both while the raycaster tests layers 0
+  // so the viewport camera draws both while the raycaster tests layers 0
   // and 2 and the export camera — and the `Capture` that renders through it — stays on layer 0 alone.
   viewportCamera.layers.enable(1);
   viewportCamera.layers.enable(2);
   // The logarithmic depth buffer is what keeps a scene of any size drawable: an imported file is metres
   // per unit as authored, which for a centimetre-authored model is a scene kilometres across, and a linear
   // depth buffer with the near plane at 1e-4 spends its whole precision in the first metres — surfaces far
-  // away then fight each other (README D40). It costs the depth test's early-out, which nothing here needs.
+  // away then fight each other. It costs the depth test's early-out, which nothing here needs.
   const renderer = new WebGLRenderer({ canvas: viewport, antialias: true, logarithmicDepthBuffer: true });
   renderer.setPixelRatio(window.devicePixelRatio);
   resizeViewport(renderer, viewport, viewportCamera);
@@ -194,10 +194,10 @@ export function main(): void {
   const worldGrid = new WorldGrid();
   mirror.scene.add(worldGrid.root);
   // The camera carrier: a runtime-only handle on the output camera that the edit gizmo can move, so a shot can be
-  // aimed from third person instead of by flying the viewport (README D46). It is decoration like the grid, so it
+  // aimed from third person instead of by flying the viewport. It is decoration like the grid, so it
   // lives on layer 1 and no export frame contains it.
   const cameraControl = new CameraControl(mirror.scene);
-  // The camera path: the trajectory of the authored camera, drawn as a polyline with one ring per keyframe (D47).
+  // The camera path: the trajectory of the authored camera, drawn as a polyline with one ring per keyframe.
   const cameraPath = new CameraPath(mirror.scene);
   const capture = new Capture({ width: DEFAULT_EXPORT_WIDTH, height: DEFAULT_EXPORT_HEIGHT });
   mirror.sync();
@@ -218,7 +218,7 @@ export function main(): void {
   let timelineVisible = false;
   /** Whether the camera carrier is selected: while it is, the gizmo drives the output camera instead of an object. */
   let cameraControlSelected = false;
-  /** The gizmo's mode for whatever it is attached to; the carrier and an object share the one toggle (README D46). */
+  /** The gizmo's mode for whatever it is attached to; the carrier and an object share the one toggle. */
   let gizmoMode: 'translate' | 'rotate' = 'translate';
   /** Whether the camera path is drawn. A track with fewer than two keyframes has no path, so this is cleared then. */
   let cameraPathVisible = false;
@@ -226,14 +226,11 @@ export function main(): void {
   let playbackView: { position: Vector3; quaternion: Quaternion; target: Vector3; time: number } | undefined;
   let lastImport: ImportedAssets | undefined;
   let jobController: AbortController | undefined;
-  /** The raw meshes on layer 2, one per imported node: app-owned, kept for teardown (README D24). */
+  /** The raw meshes on layer 2, one per imported node: app-owned, kept for teardown. */
   const sourceMeshes: Mesh[] = [];
 
   // 4. UI over the actions of step 5; `pickImportFile` stays in app/. The voxelize settings live in the
-  // dialog alone (README D26), so it is the fourth UI element, mounted like the panels into `panelsRoot`.
-  // The status line starts empty rather than with a placeholder word: an empty status box is not shown at
-  // all (`#panels > div:empty` in `index.html`), so the editor opens with the rail and nothing else, and
-  // the line appears with the first operation that has something to say.
+  // dialog alone, so it is the fourth UI element, mounted like the panels into `panelsRoot`.
   const voxelizeDialog = new VoxelizeDialog(panelsRoot, () => defaults());
 
   const panelContext: PanelContext = {
@@ -243,7 +240,7 @@ export function main(): void {
     gridVisible: () => worldGrid.visible,
     timelineVisible: () => timelineVisible,
     // The carrier's controls are a view of the app's own flags and of the authored camera, never of the carrier
-    // node: what the fields show is what a keyframe would record (README D46).
+    // node: what the fields show is what a keyframe would record.
     cameraControl: () => ({
       selected: cameraControlSelected,
       mode: gizmoMode,
@@ -295,7 +292,7 @@ export function main(): void {
     project,
     playback,
     session,
-    // The widget seeks in milliseconds, the authoring unit; the mixer's clip is seconds (README D45).
+    // The widget seeks in milliseconds, the authoring unit; the mixer's clip is seconds.
     onTransport: togglePlayback,
     onScrub: (timeMs) => {
       playback.pause();
@@ -303,18 +300,17 @@ export function main(): void {
     },
     onEdited: () => {
       playback.rebuild(project);
-      // A keyframe edit is what changes the camera's trajectory, so the path is redrawn here (README D47).
+      // A keyframe edit is what changes the camera's trajectory, so the path is redrawn here.
       refreshCameraPath();
     },
-    // A camera key records the view the author is aiming, which is how the reference product's camera animation reads
-    // it too (README D46).
+    // A camera key records the view the author is aiming.
     adoptViewAsCamera: captureViewAsCamera,
   };
 
   const panels = new Panels(panelsRoot, panelContext);
   const timelinePanel = new TimelinePanel(timelineRoot, timelineContext);
   // The markup carries `hidden` so the bar cannot flash while the bundle loads; this is what makes the app's flag
-  // and that attribute agree from the first frame (README D44).
+  // and that attribute agree from the first frame.
   timelinePanel.setVisible(timelineVisible);
   const hud = new Hud(hudRoot);
   // The mode switch is a view of the session like the panels are, so it takes no state of its own.
@@ -353,13 +349,13 @@ export function main(): void {
   // 5. Flow wiring: the only place the modules meet.
   /**
    * The dialog's seed, derived from the retained import's voxelize bounds: their per-axis extent, which the
-   * count is read against to print the model's dimensions (README D29, D41). Before any import the extent
+   * count is read against to print the model's dimensions. Before any import the extent
    * falls back to `DEFAULT_EXTENT`, so the dialog is usable with no scene.
    *
    * Those bounds are the nodes that are voxelized, not the nodes that are displayed: a stylized
    * export's outline shells are drawn around the model and a little larger than it, so letting them in
    * would inflate that extent for content they do not cover. A scene of
-   * nothing but outlines has no outline-free bounds and falls back to the displayed ones (README D27);
+   * nothing but outlines has no outline-free bounds and falls back to the displayed ones;
    * framing uses those displayed bounds regardless, because every node is shown.
    */
   function defaults(): VoxelizeDialogDefaults {
@@ -380,8 +376,8 @@ export function main(): void {
   }
 
   /**
-   * Puts one raw mesh per imported node into the mirror, on layer 2 (README D24), all of them under the
-   * import's single object. The mesh is handed its node's own baked world matrix (README D25): the mirror
+   * Puts one raw mesh per imported node into the mirror, on layer 2, all of them under the
+   * import's single object. The mesh is handed its node's own baked world matrix: the mirror
    * places it by that matrix relative to the object node, so the mesh reproduces the import exactly,
    * before and after a payload makes the object translation-only. That is what lets one object stand for
    * a whole file: the model's placement lives in the mesh matrices, not in the object's transform. The
@@ -389,7 +385,7 @@ export function main(): void {
    * `sourceMeshes` so teardown can detach them.
    *
    * `meshes` is filled on the first call for a scene and reused afterwards: confirming the dialog rescales
-   * the import to the model's voxel count (README D41) and the same meshes are re-placed by their new node
+   * the import to the model's voxel count and the same meshes are re-placed by their new node
    * matrices, which the mirror's per-mesh records accept as a refresh rather than a second copy.
    */
   function attachSourceMeshes(scene: ImportedScene, objectId: ObjectId, meshes: Mesh[]): void {
@@ -411,7 +407,7 @@ export function main(): void {
       reportFailure(result);
       return;
     }
-    // One voxel is one world unit (README D41), so the model is scaled onto the lattice before anything
+    // One voxel is one world unit, so the model is scaled onto the lattice before anything
     // sees it: the dialog's count then says how long it is, and both the raw meshes and the payload the
     // job later attaches are placed in the same unit.
     const scene = scaleImportedScene(result.scene, DEFAULT_VOXELS_ACROSS);
@@ -422,21 +418,21 @@ export function main(): void {
     dirtyIds.add(adopted.objectId);
     bindingsDirty = true;
     // The object has to exist and its bounds have to be measurable before the settings can be asked in
-    // context, so the view is fitted here, on the raw meshes (D24): `frameAll` syncs, creates the node,
+    // context, so the view is fitted here, on the raw meshes: `frameAll` syncs, creates the node,
     // and measures layers 0 and 2. Nothing has voxelized it yet, so it is still `'empty'`.
     mirror.frameAll(viewportCamera);
     commitDirty();
-    // The resolution is a per-model decision made when the model arrives (README D26), so the settings
+    // The resolution is a per-model decision made when the model arrives, so the settings
     // dialog comes last: confirming voxelizes this import, cancelling leaves it as the raw model the
     // user is looking at.
     await promptVoxelize(scene, adopted.objectId);
   }
 
   /**
-   * Asks for the voxelization settings of one retained import (README D26) and runs the shared job when
+   * Asks for the voxelization settings of one retained import and runs the shared job when
    * the user confirms. The dialog is the only place the count exists, so nothing is derived here: a confirm
    * scales the import to that count — the model's length in voxels — re-places its raw meshes so they stay
-   * glued to the content the job voxelizes (README D24, D41), and runs the shared job on the scaled source;
+   * glued to the content the job voxelizes, and runs the shared job on the scaled source;
    * a cancel leaves the object `'empty'` with its raw meshes displayed, which is what the user is looking
    * at.
    */
@@ -455,7 +451,7 @@ export function main(): void {
   }
 
   /**
-   * The one voxelization job, run for the import a confirmed settings dialog was about (README D26). It
+   * The one voxelization job, run for the import a confirmed settings dialog was about. It
    * cancels whatever was in flight — a superseded job must not attach its payloads — then voxelizes the
    * source of one import at `target` and attaches its payload to `objectId`, the object
    * `adoptImportedScene` created for that import, through an `attachTo` map built from the source's own
@@ -465,7 +461,7 @@ export function main(): void {
    * refreshes the panels, and re-frames the viewport; framing belongs here, after the payload: an object
    * that rendered as raw meshes until this call renders as voxels now, and `frameAll` syncs first, so
    * the instance meshes rebuilt for the id just marked dirty are what it measures. Nothing is written while
-   * it runs, and a failure reaches `reportFailure` with the `Result` literal and detail (D38).
+   * it runs, and a failure reaches `reportFailure` with the `Result` literal and detail.
    */
   async function runVoxelizeJob(source: VoxelizeSource | undefined, objectId: ObjectId): Promise<void> {
     // The abort comes first: it is what keeps a superseded job from attaching its payloads, and an
@@ -495,7 +491,7 @@ export function main(): void {
     mirror.frameAll(viewportCamera);
   }
 
-  /** Writes the whole project — objects, cells, camera, settings, timeline — to one JSON download (D51). */
+  /** Writes the whole project — objects, cells, camera, settings, timeline — to one JSON download. */
   function saveProject(): void {
     saveJson(toJson(project), PROJECT_FILENAME);
   }
@@ -509,7 +505,7 @@ export function main(): void {
 
   /**
    * Reads a project file and loads it. Nothing is written until the file has passed every check, so a
-   * refused file leaves the editor exactly as it was (README D51).
+   * refused file leaves the editor exactly as it was.
    */
   async function openProject(file: File): Promise<void> {
     const result = readJson(await file.text());
@@ -521,9 +517,9 @@ export function main(): void {
   }
 
   /**
-   * Loads validated project data in place (README D51). The project instance, the mirror, the mixer, and the
-   * session all survive, so this is what the previous project left behind has to be reset in: the job, the
-   * transport, the camera lock, the raw-mesh layer, the gizmo, the selection, and finally the derived state
+   * Loads validated project data in place. The project instance, the mirror, the mixer, and the
+   * session all survive, so this is where the state the replaced project left behind has to be reset: the job, the
+   * transport, the view, the raw-mesh layer, the gizmo, the selection, and finally the derived state
    * that no `sync()` writes.
    */
   function loadProject(data: ProjectData): void {
@@ -533,13 +529,13 @@ export function main(): void {
     jobController = undefined;
     playback.pause();
     playbackView = undefined;
-    // 2. The view: the carrier and the camera path are views of the previous project, so both are released.
+    // 2. The view: the carrier and the camera path are views of the project being replaced, so both are released.
     //    Navigation needs no reset of its own: the viewport renders through the output camera only while a run
-    //    is playing (README D48), and the transport is paused above.
+    //    is playing, and the transport is paused above.
     cameraControlSelected = false;
     cameraPathVisible = false;
     // 3. The raw-mesh layer goes. A source is recorded under an object id, so the records have to be dropped
-    //    before ids are reused: the mirror's own pass would otherwise re-parent the previous import's meshes
+    //    before ids are reused: the mirror's own pass would otherwise re-parent the replaced import's meshes
     //    under a loaded object. The meshes themselves are the app's, and it detaches them.
     for (const mesh of sourceMeshes) mesh.removeFromParent();
     sourceMeshes.length = 0;
@@ -554,7 +550,7 @@ export function main(): void {
     mirror.applySettings();
     mirror.applyCamera();
     // 6. Every loaded object is rebuilt. `sync()` keeps the node of an id it already has, and a load normally
-    //    reuses ids, so without a dirty mark the previous project's geometry would stay on screen.
+    //    reuses ids, so without a dirty mark the replaced project's geometry would stay on screen.
     for (const id of project.objects.keys()) dirtyIds.add(id);
     bindingsDirty = true;
     commitDirty();
@@ -573,7 +569,7 @@ export function main(): void {
   }
 
   /**
-   * Reports a failed `Result`. The panel has no message area any more (D37), so the console is the only
+   * Reports a failed `Result`. The panel has no message area any more, so the console is the only
    * channel a failure has; the text is the same literal-and-detail pair the UI used to show.
    */
   function reportFailure(result: { error: string; detail: string }): void {
@@ -630,7 +626,7 @@ export function main(): void {
 
   /**
    * Writes the authored vertical FOV and applies it to the output camera at once: the projection
-   * matrix is refreshed here because assigning `fov` alone leaves it stale. The locked viewport and
+   * matrix is refreshed here because assigning `fov` alone leaves it stale. A run's viewport and
    * the next export then both show the authored value, and a `fov` keyframe records it instead of
    * whatever the camera was constructed with.
    */
@@ -647,7 +643,7 @@ export function main(): void {
    * the bar keeps whatever it holds while it is hidden: the render loop goes on writing the playhead into it.
    *
    * Hiding or showing the bar changes the size of the canvas it sits above; the observer on the bar is what refits
-   * the drawing buffer for that, so this writes the flag and the view and nothing else (README D44).
+   * the drawing buffer for that, so this writes the flag and the view and nothing else.
    */
   function setTimelineVisible(visible: boolean): void {
     timelineVisible = visible;
@@ -656,8 +652,8 @@ export function main(): void {
 
   /**
    * Writes a world matrix into the authored camera, which is what a drag on the carrier commits. Both the document
-   * and the mirror take it: the mirror's camera is the instance the locked view and an export render through, and
-   * `SceneMirror.sync` never touches it (README D17, D46).
+   * and the mirror take it: the mirror's camera is the instance a run's viewport and every export render through, and
+   * `SceneMirror.sync` never touches it.
    */
   function applyCameraMatrix(matrix: Matrix4): void {
     const transform = project.camera.transform;
@@ -665,7 +661,7 @@ export function main(): void {
     transform.quaternion.normalize();
     mirror.camera.position.copy(transform.position);
     mirror.camera.quaternion.copy(transform.quaternion);
-    // The editor view follows, so the next camera keyframe captures the pose the drag just committed (README D46).
+    // The editor view follows, so the next camera keyframe captures the pose the drag just committed.
     controls.setViewFrom(transform.position, transform.quaternion);
     panels.refresh();
   }
@@ -691,19 +687,19 @@ export function main(): void {
     mirror.camera.position.copy(transform.position);
     mirror.camera.quaternion.copy(transform.quaternion);
     // The editor view follows the authored pose, so a camera keyframe — which captures that view — records the pose
-    // the author typed rather than overwriting it with wherever they happened to be looking (README D46).
+    // the author typed rather than overwriting it with wherever they happened to be looking.
     controls.setViewFrom(transform.position, transform.quaternion);
     panels.refresh();
   }
 
   /**
    * Selects or deselects the carrier. Selecting it takes the gizmo from the active object; deselecting it gives the
-   * gizmo back, which `syncGizmo` resolves from the session alone (README D46).
+   * gizmo back, which `syncGizmo` resolves from the session alone.
    */
   /**
    * Redraws the camera path from the authored camera track, and clears the toggle when there is no path to draw.
    * Fewer than two position keyframes is not a path, so the panel disables the box and this clears the flag, which
-   * is what a shorter track leaves behind (README D47).
+   * is what a shorter track leaves behind.
    */
   function refreshCameraPath(): void {
     const markers = cameraKeyframePositions(project);
@@ -738,7 +734,7 @@ export function main(): void {
   /**
    * Pauses a run. Handing the view over is what makes a paused frame editable: the editor camera takes the pose the clip
    * stopped at, so the shot can be judged from there and flown on without the clip pulling it back — the authored data
-   * is untouched either way (README D48).
+   * is untouched either way.
    */
   function pausePlayback(): void {
     if (!playback.playing) return;
@@ -749,7 +745,7 @@ export function main(): void {
 
   /**
    * Ends a run: a non-looping clip that reached its last frame stops the transport, and the viewport goes back to
-   * the state the run started from (README D48).
+   * the state the run started from.
    */
   function finishPlayback(): void {
     const restore = playbackView;
@@ -784,10 +780,10 @@ export function main(): void {
 
   /**
    * Captures the editor's current view as the authored camera pose, which is what a camera keyframe records: the
-   * viewport is what the author aims with, and the reference product's camera animation works the same way — a key
-   * takes the view, it does not read a stale document pose. The authored `fov` is left alone, because the shot's field
-   * of view is its own value and not the viewport's (README D46). Skipped while a clip runs: the view is not what the
-   * author is aiming then, and the clip owns the output camera's pose for the length of the run.
+   * viewport is what the author aims with: a key takes the view, it does not read a stale document pose. The authored
+   * `fov` is left alone, because the shot's field of view is its own value and not the viewport's. Skipped while a
+   * clip runs: the view is not what the author is aiming then, and the clip owns the output camera's pose for the
+   * length of the run.
    */
   function captureViewAsCamera(): void {
     if (playback.playing) return;
@@ -860,7 +856,7 @@ export function main(): void {
   /**
    * Detaches the selected region into a new object, through the pointer tool so the button and a viewport press
    * commit the same operation and end the same way: the new object active, the region cleared, both objects
-   * rebuilt (README D19, D23).
+   * rebuilt.
    */
   function applyDetachSelection(): void {
     pointer.detachSelection();
@@ -881,7 +877,7 @@ export function main(): void {
 
   /**
    * Raises the active object's subdivision through the op: the payload is replaced by block replication, so the
-   * object moves nowhere and only its cells get smaller (README D43).
+   * object moves nowhere and only its cells get smaller.
    */
   function applySetActiveSubdivision(subdivision: number): void {
     const objectId = session.activeObjectId;
@@ -909,7 +905,7 @@ export function main(): void {
   }
 
   /**
-   * Shows or hides every imported raw mesh at once (README D24). The mirror owns the flag — the panel's
+   * Shows or hides every imported raw mesh at once. The mirror owns the flag — the panel's
    * checkbox is a view of `mirror.sourceVisible` — and applies it on its next `sync()`. An export is
    * unaffected either way: it renders layer 0 alone.
    */
@@ -960,13 +956,13 @@ export function main(): void {
     timelinePanel.refresh();
   }
 
-  /** Grid group: whether the world grid is drawn (README D35). */
+  /** Grid group: whether the world grid is drawn. */
   function setGridVisible(visible: boolean): void {
     worldGrid.setVisible(visible);
     panels.refresh();
   }
 
-  /** The objects an operation rewrote: they are the ones whose derived geometry is rebuilt (README D4). */
+  /** The objects an operation rewrote: they are the ones whose derived geometry is rebuilt. */
   function projectChanged(ids: readonly ObjectId[]): void {
     for (const id of ids) dirtyIds.add(id);
     bindingsDirty = true;
@@ -995,12 +991,12 @@ export function main(): void {
 
   /**
    * Puts the gizmo on the active object, pivoting at the center of its content so the handles sit on what
-   * the user edits rather than at the node origin, which is the payload's min corner (`contentCenterOf`,
-   * README D37). Called on every session change and whenever the node under the gizmo was replaced.
+   * the user edits rather than at the node origin, which is the payload's min corner (`contentCenterOf`).
+   * Called on every session change and whenever the node under the gizmo was replaced.
    */
   function syncGizmo(): void {
     // The outline is object mode's affordance for the same choice the gizmo makes: it marks the object the gizmo is on,
-    // and it is cleared in edit mode and while the carrier holds the gizmo (README D39, D46).
+    // and it is cleared in edit mode and while the carrier holds the gizmo.
     mirror.setSelected(session.mode === 'object' && !cameraControlSelected ? session.activeObjectId : null);
     const node = gizmoNodeNow();
     const objectId = session.activeObjectId;
@@ -1010,7 +1006,7 @@ export function main(): void {
       return;
     }
     // The carrier pivots about its own origin, which is the camera position; an object pivots about the center of
-    // its content, so the handles sit on what the user edits (README D37).
+    // its content, so the handles sit on what the user edits.
     const pivot = cameraControlSelected || objectId === null ? CAMERA_CONTROL_PIVOT : mirror.contentCenterOf(objectId);
     controls.attachGizmo(node, gizmoMode, pivot);
     gizmoNode = node;
@@ -1064,7 +1060,7 @@ export function main(): void {
     };
   }
 
-  // 6. Gizmo, camera lock, session, drop target, resize, and the render loop.
+  // 6. Gizmo, camera, session, drop target, resize, and the render loop.
   /**
    * Live drag feedback: the object follows the pointer through the mirror, not the document, so a gesture
    * that is abandoned or cancelled has written nothing. The document write happens once, on commit.
@@ -1072,13 +1068,13 @@ export function main(): void {
   controls.onGizmoChange((matrix) => {
     if (cameraControlSelected) {
       // The carrier is the node the gizmo derives from, so the preview is that node's own transform: the drawing
-      // follows the pointer, and the document is written once on release like every other drag (README D46).
+      // follows the pointer, and the document is written once on release like every other drag.
       matrix.decompose(cameraControl.node.position, cameraControl.node.quaternion, cameraControl.node.scale);
       return;
     }
     const objectId = session.activeObjectId;
     // The preview takes the same aligned matrix the commit will, so a drag steps the object from cell to
-    // cell and the release writes the pose already on screen (README D42).
+    // cell and the release writes the pose already on screen.
     if (objectId !== null) mirror.previewTransform(objectId, project.alignWorldMatrix(objectId, matrix));
   });
   controls.onGizmoCommit((matrix) => {
@@ -1101,7 +1097,7 @@ export function main(): void {
 
   const unsubscribeSession = session.subscribe(sessionChanged);
   const detachDrop = wireDropTarget(viewport, ['.glb', '.json'], (file) => {
-    // One drop target, two meanings; the composition root is the only place that knows which is which (D51).
+    // One drop target, two meanings; the composition root is the only place that knows which is which.
     if (file.name.toLowerCase().endsWith('.json')) void openProject(file);
     else void importFile(file);
   });
@@ -1113,7 +1109,7 @@ export function main(): void {
   // Anything that moves the boundary between the canvas and the timeline bar changes how much of the column the
   // canvas has — the bar's visibility, a keyframe row, its message line — and three's `setSize` never touches the
   // canvas' style, so the drawing buffer has to be refitted whenever that happens or the buffer and the box
-  // disagree and the view is stretched. Observing the bar is what makes that automatic (README D44).
+  // disagree and the view is stretched. Observing the bar is what makes that automatic.
   const barObserver = new ResizeObserver(() => handleResize());
   barObserver.observe(timelineRoot);
 
@@ -1125,7 +1121,7 @@ export function main(): void {
     const dt = Math.min((now - lastTime) / 1000, 0.1);
     lastTime = now;
     playback.advance(dt);
-    // A non-looping run is over at the last frame, which is where the transport stops and the view goes back (D48).
+    // A non-looping run is over at the last frame, which is where the transport stops and the view goes back.
     if (
       playback.playing &&
       !playback.loop &&
@@ -1147,7 +1143,7 @@ export function main(): void {
     // While a clip runs the viewport *is* the shot, which is what makes a camera animation visible at all: the loop
     // renders through the output camera and hands navigation nothing but the editor camera, so nothing can re-aim the
     // pose the mixer just applied — the failure the removed camera lock had, where `OrbitControls.update()` ended with
-    // `object.lookAt(target)` on the very camera the clip owned (README D46, D48).
+    // `object.lookAt(target)` on the very camera the clip owned.
     const previewing = playback.playing;
     const renderCamera = previewing ? mirror.camera : viewportCamera;
     if (previewing) {
@@ -1160,7 +1156,7 @@ export function main(): void {
       }
     }
     // The carrier reports the output camera as it stands right now — the authored pose, or the sampled one while a
-    // clip runs — in one colour or the other, so the author can always see where that camera is (README D46). A drag
+    // clip runs — in one colour or the other, so the author can always see where that camera is. A drag
     // owns the pose until it commits, so the per-frame update stands back for it.
     cameraControl.setSelected(cameraControlSelected);
     // A camera cannot see itself: the carrier and the outline are viewport decoration, and the preview draws the shot.
@@ -1171,7 +1167,7 @@ export function main(): void {
     // The path's marker size comes from how far the drawing camera is, floored at the distance navigation orbits from: a
     // viewport that sits *on* the carrier — which is exactly what `View -> Camera` produces — would otherwise shrink the
     // rings to a dot, and the orbit radius is the scene's own scale. The carrier needs none of this: its size is a fixed
-    // world size, so it scales with the scene rather than with the view (README D46, D47).
+    // world size, so it scales with the scene rather than with the view.
     const viewingDistance = Math.max(
       viewportCamera.position.distanceTo(cameraControl.node.position),
       controls.orbit.object.position.distanceTo(controls.orbit.target),
@@ -1180,7 +1176,7 @@ export function main(): void {
     worldGrid.update(renderCamera);
     cameraPath.setScreenScale(viewingDistance);
     renderer.render(mirror.scene, renderCamera);
-    // The outline goes over the finished frame in a pass of its own, so the selected object alone cuts it (README D50).
+    // The outline goes over the finished frame in a pass of its own, so the selected object alone cuts it.
     // It is viewport decoration like the carrier, so the shot never contains it.
     if (!previewing) mirror.renderSelectionOutline(renderer, renderCamera);
     timelinePanel.setTime(playback.time * 1000);

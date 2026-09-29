@@ -6,7 +6,7 @@
  * It builds its nodes once and re-seeds every prompt — the count from `DEFAULT_VOXELS_ACROSS` and the
  * extent from `defaults()` — resolves `{ kind: 'run', cellsAcross }` when the user confirms, and
  * `{ kind: 'cancel' }` when the user cancels.
- * The prompt asks how many voxels long the model is (README D29, D41); the dimensions it prints beside the
+ * The prompt asks how many voxels long the model is; the dimensions it prints beside the
  * field are an orientation readout, never the value handed to the job.
  *
  * The prompt is the platform's own `<dialog>`, opened with `showModal()`: the platform puts it in the top
@@ -20,9 +20,9 @@
 import { el, fmt } from './dom.js';
 
 /**
- * The count the prompt opens at: how many voxels long the model is. One voxel is one world unit
- * (README D41), so the count is also the model's size in the world, and — unlike a length — it does not
- * depend on the file, so every prompt starts here whatever was imported (README D29).
+ * The count the prompt opens at: how many voxels long the model is. One voxel is one world unit,
+ * so the count is also the model's size in the world, and — unlike a length — it does not
+ * depend on the file, so every prompt starts here whatever was imported.
  */
 export const DEFAULT_VOXELS_ACROSS = 96;
 
@@ -38,7 +38,7 @@ export type VoxelizeDialogDefaults = {
   /**
    * The per-axis extent of the import's voxelize bounds, in world units. The count is a length along the
    * longest axis, so these give the rest of the model's shape: the readout beside the field is what that
-   * count makes the model's three dimensions (README D41).
+   * count makes the model's three dimensions.
    */
   extent: { readonly x: number; readonly y: number; readonly z: number };
 };

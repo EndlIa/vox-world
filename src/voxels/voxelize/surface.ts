@@ -17,7 +17,7 @@ type SurfaceOptions = {
 /** What a pass reports instead of cells; both mean the caller must drop the whole run. */
 type SurfaceFailure = { error: 'budget-exceeded' | 'cancelled'; detail: string };
 
-/** Triangles between two progress reports; the repository chunking convention (README §11). */
+/** Triangles between two progress reports; long operations yield to the host every this many items. */
 const CHUNK = 512;
 
 /** Values per axis in the container's key layout, which `grid.unpackKey` inverts. */
@@ -67,9 +67,9 @@ function separatedBy(ax: number, ay: number, az: number): boolean {
  * apart, so a cell the surface merely passes near is never kept. A face lying exactly on a lattice
  * plane therefore claims the cell on each side of it that its AABB reaches.
  *
- * Cells are the world unit (README D41), so a candidate cell is the floor of a vertex and a cell's
+ * Cells are the world unit, so a candidate cell is the floor of a vertex and a cell's
  * cube is that cell's unit cube. Cell indices are neither clamped nor aligned here: `voxelize.ts`
- * aligns the soup so the payload container's coordinate range holds (README D20).
+ * aligns the soup so the payload container's coordinate range holds.
  */
 export function voxelizeSurface(soup: TriangleSoup, opts: SurfaceOptions): SurfaceCells | SurfaceFailure {
   const budget = opts.budget;
@@ -175,7 +175,7 @@ export function voxelizeSurface(soup: TriangleSoup, opts: SurfaceOptions): Surfa
           if (separatedBy(-e2z, 0, e2x)) continue;
           if (separatedBy(e2y, -e2x, 0)) continue;
 
-          // Checked before the write, so the map never grows past the budget (README D12).
+          // Checked before the write, so the map never grows past the budget.
           if (cells.size + 1 > budget) {
             return {
               error: 'budget-exceeded',

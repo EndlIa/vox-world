@@ -4,11 +4,11 @@
  * It edits authoring data through the mutators of `document/timeline.ts`, delegates seeking to `onScrub`, and
  * asks the app to rebuild the clip through `onEdited`; it never touches the mixer.
  *
- * Times are whole milliseconds throughout, which is the unit the authoring data is in too (README D45), so the
+ * Times are whole milliseconds throughout, which is the unit the authoring data is in too, so the
  * widget never converts: the panel reads and writes `timeMs` and the clip is the only place that becomes seconds.
  *
  * Its host is the bar along the bottom of the page, which starts collapsed: whether the bar is on screen is the
- * app's flag, and `setVisible` is the view of it, the way `setTime` is the view of the playhead (README D44).
+ * app's flag, and `setVisible` is the view of it, the way `setTime` is the view of the playhead.
  */
 
 import { el, fmt } from './dom.js';
@@ -36,14 +36,14 @@ export type TimelineContext = {
   onScrub(timeMs: number): void;
   onEdited(): void;
   /**
-   * Captures the editor's current view as the output camera's pose, if the app can (README D46). The viewport is what
+   * Captures the editor's current view as the output camera's pose, if the app can. The viewport is what
    * the author aims with, so a camera keyframe has to record it: without this a key would read a document pose that
    * nothing keeps current, and every camera key would record the same stale value.
    */
   adoptViewAsCamera?(): void;
   /**
    * Starts or pauses playback. The app owns the transport because a run of the clip changes the viewport too
-   * (README D48), so the widget reports the press and reads `playback.playing` back for its label.
+   * so the widget reports the press and reads `playback.playing` back for its label.
    */
   onTransport(): void;
 };
@@ -77,7 +77,7 @@ export class TimelinePanel {
     this.root = root;
 
     // One toggle rather than three buttons: the label is the state, `setTime` keeps it in step with the transport
-    // every frame, and going back to the start is what the scrub bar is for (README D45).
+    // every frame, and going back to the start is what the scrub bar is for.
     this.playToggle = el('button', {
       text: 'play',
       title: 'play or pause the clip',
@@ -109,7 +109,7 @@ export class TimelinePanel {
     this.timeReadout = el('span', { class: 'dim', text: '0 ms' });
 
     // The exact time, which is the one thing a range input cannot be precise about: whole milliseconds, the same
-    // unit as the keyframe rows (README D45).
+    // unit as the keyframe rows.
     this.timeInput = el('input', {
       type: 'number',
       min: '0',
@@ -155,8 +155,8 @@ export class TimelinePanel {
     scrubWrap.append(this.scrub, this.markerLayer);
 
     this.keyframeList = el('div');
-    // The list is capped and scrolls, the way the reference product's is: a bar of rows that grew with every
-    // keyframe would otherwise eat the viewport it sits under (README D47).
+    // The list is capped and scrolls: a bar of rows that grew with every keyframe would otherwise eat the
+    // viewport it sits under.
     this.keyframeList.style.maxHeight = '100px';
     this.keyframeList.style.overflowY = 'auto';
     this.message = el('div');
@@ -214,7 +214,7 @@ export class TimelinePanel {
 
     this.durationInput.value = String(timeline.durationMs);
     // The duration cannot cut the clip short: its floor is the latest keyframe anywhere in the timeline, and
-    // `setDuration` clamps anyway if a keyframe ever lands past it (README D45).
+    // `setDuration` clamps anyway if a keyframe ever lands past it.
     this.durationInput.min = String(maxKeyframeTime(timeline));
     this.fpsInput.value = String(timeline.fps);
     this.scrub.max = String(timeline.durationMs);
@@ -256,7 +256,7 @@ export class TimelinePanel {
 
   /**
    * One keyframe: seek to it, retime it in place, delete it. Each row acts on its own keyframe by id, so a rebuild
-   * that reorders the list cannot make a press land on a neighbour (README D45).
+   * that reorders the list cannot make a press land on a neighbour.
    */
   private keyframeRow(
     durationMs: number,
@@ -326,13 +326,13 @@ export class TimelinePanel {
     if (channel === 'fov') {
       return target.kind === 'camera' ? [this.context.project.camera.fov] : undefined;
     }
-    // A camera key records the pose the author is aiming, so the app captures the editor's view first when it can
-    // (README D46); an object key records the object, which the session already selected and can be seen moving.
+    // A camera key records the pose the author is aiming, so the app captures the editor's view first when it can.
+    // An object key records the object, which the session already selected and can be seen moving.
     if (target.kind === 'camera') this.context.adoptViewAsCamera?.();
     const transform =
       target.kind === 'camera' ? this.context.project.camera.transform : this.context.project.get(target.objectId)?.transform;
     if (transform === undefined) return undefined;
-    // An aligned object's keyframes land on the lattice (README D42) even while its live placement is a
+    // An aligned object's keyframes land on the lattice even while its live placement is a
     // sampled one, which interpolation between two cells is free to produce.
     if (channel === 'position') {
       const position = this.context.project.keyframePosition(target, transform.position);
@@ -365,7 +365,7 @@ export class TimelinePanel {
 
   /**
    * Retimes one keyframe from its row's field. A refused move — that millisecond already holds a keyframe, or the
-   * row went stale — changes nothing, and the rebuild puts the field back to what the clip holds (README D45).
+   * row went stale — changes nothing, and the rebuild puts the field back to what the clip holds.
    */
   private writeKeyframeTime(
     target: TrackTarget,
@@ -407,7 +407,7 @@ export class TimelinePanel {
       return;
     }
     // The field's own `min` is the latest keyframe; the model clamps every keyframe as well, so a duration that
-    // ever does come in short drags the clip onto it instead of losing the keyframes (README D45).
+    // ever does come in short drags the clip onto it instead of losing the keyframes.
     setDuration(this.context.project.timeline, durationMs);
     this.refresh();
     this.context.onEdited();

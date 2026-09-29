@@ -12,7 +12,7 @@ import type * as THREE from 'three';
  * The teardown waits for the encoder's own queue to drain and for its flush, and an encoder that has accepted frames
  * and stopped answering leaves that wait pending forever: measured here, an export then walks its whole range and
  * never returns, reports nothing, and holds the one job slot the app has — so the deadline turns a silent hang into a
- * reported failure (README D7, D38).
+ * reported failure.
  */
 const FINISH_DEADLINE_MS = 20_000;
 
@@ -101,7 +101,7 @@ export class ExportJob {
    * frames and stopped answering leaves both pending for good: the export then walks its whole range, returns
    * nothing, and holds the app's one job slot. A deadline that expires cancels the writer — which closes its frames,
    * drops its muxer, and closes the encoder, so the wait inside resolves instead of staying pending — and reports the
-   * failure with the number of frames the run reached (README D7, D38).
+   * failure with the number of frames the run reached.
    */
   private async finishWriter(writer: Mp4Writer, frames: number): Promise<FinishResult> {
     let timer: ReturnType<typeof setTimeout> | undefined;

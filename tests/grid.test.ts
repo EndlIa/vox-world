@@ -47,7 +47,7 @@ describe('world grid', () => {
     expect(grid.root.children).toHaveLength(1);
     expect(plane(grid).layers.mask).toBe(1 << 1);
     expect(material(grid).depthWrite).toBe(false);
-    // Shown from construction: the app's checkbox is a view of this flag (README D35).
+    // Shown from construction: the app's checkbox is a view of this flag.
     expect(grid.visible).toBe(true);
     grid.dispose();
   });
@@ -56,7 +56,7 @@ describe('world grid', () => {
     const grid = new WorldGrid();
     expect(uniform(grid, 'cellSize')).toBe(GRID_CELL_SIZE);
     expect(uniform(grid, 'sectionSize')).toBe(GRID_SECTION_SIZE);
-    // The reference material's `majorUnitFrequency` (README D35): a coarser level every twenty cells, not every ten.
+    // A coarser level every twenty cells, not every ten.
     expect(GRID_SECTION_SIZE).toBe(20);
     expect((uniform(grid, 'cellColor') as THREE.Color).getHex()).toBe(0xffffff);
     expect((uniform(grid, 'sectionColor') as THREE.Color).getHex()).toBe(0xffffff);

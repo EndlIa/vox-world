@@ -7,10 +7,10 @@ Draws the authored camera's trajectory in the viewport: a white polyline through
 ring per authored keyframe, as one runtime-only root. It is strictly presentational, like the grid and the overlay:
 it is handed points, holds no document reference, and knows nothing about the timeline. Its whole subtree — the root
 included, so a child added later cannot escape — is on layer 1, so `Picker` cannot hit it and no export frame
-contains it (README D24), and nothing in it is named, so the mixer's binding walk never reaches it (README D22). It is
+contains it, and nothing in it is named, so the mixer's binding walk never reaches it. It is
 never serialized, never a keyframe target, and never a camera: it is the picture of the track
-`animation/trajectory.ts` hands it (README D47), and it shares the viewing distance and the hidden-with-the-carrier rule with
-`three-runtime/cameraControl.ts`, the carrier it pairs with (README D46).
+`animation/trajectory.ts` hands it, and it shares the viewing distance and the hidden-with-the-carrier rule with
+`three-runtime/cameraControl.ts`, the carrier it pairs with.
 
 Both halves are three's own primitives: a `Line` over a buffer it grows on demand, and one `Points` set whose material
 draws the ring from a `DataTexture` rather than a mesh per keyframe. A point sprite faces the drawing camera by
@@ -31,7 +31,7 @@ class CameraPath {
 
 ## Internal logic
 1. Constants: `OVERLAY_LAYER = 1`, the decoration layer `grid.ts`, `overlay.ts`, `controls.ts`, and `cameraControl.ts`
-   share (README D24); `DECORATION_RENDER_ORDER = 1000`; the ring's `MARKER_INNER_RATIO = 0.62` and the
+   share; `DECORATION_RENDER_ORDER = 1000`; the ring's `MARKER_INNER_RATIO = 0.62` and the
    `MARKER_TEXTURE_SIZE = 64` texels it is drawn into; the size rule's `MARKER_SCALE = 0.036` — the ring's diameter as
    a share of the viewing distance, which is the 1.8 helper units the old per-marker scale added up to — clamped into
    `[1.8e-4, 1.8e6]`; and the one colour, `0xffffff`.
@@ -70,9 +70,9 @@ class CameraPath {
 
 ## Invariants
 - The whole subtree is on layer 1 at every moment: the construction walk covers the root and both children, and nothing
-  is ever moved off it, so the raycaster's layers and the export camera's cannot reach the drawing (README D24).
+  is ever moved off it, so the raycaster's layers and the export camera's cannot reach the drawing.
 - Nothing is named — the root, the line, and the point set carry no name — so the mixer's binding walk, which resolves
-  `<ObjectId>` nodes and `camera`, can never bind a path object (README D22).
+  `<ObjectId>` nodes and `camera`, can never bind a path object.
 - The line and the points use `depthTest: false` at `DECORATION_RENDER_ORDER`, so the path draws over the scene
   rather than being buried in it — the same decoration choice the grid, the overlay, and the carrier make.
 - Position and size are separate: `setScreenScale` writes the material and never a point, and `setMarkers` never sizes
@@ -101,7 +101,7 @@ exactly as it does for `Overlay` and `CameraControl`, and `app/main.ts` is the o
 ## Tests
 `tests/cameraPath.test.ts` pins the layer and naming invariants, the polyline buffer and its draw range, the marker set
 and its draw range, the ring the material draws from its texture data, the position/size separation, and `dispose`, in
-the node environment — no DOM, no GPU — see `codemap/tests/cameraPath.md`. What needs a GPU stays app-verified
+the node environment — no DOM, no GPU. What needs a GPU stays app-verified
 (README §10): the white polyline and its rings on screen over the scene, staying readable as the viewport orbits and as
 the viewing distance changes, following the toggle, and absent from an exported frame and from a pick.
 

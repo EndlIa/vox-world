@@ -2,7 +2,7 @@
  * The browser file boundary: ask for a GLB or a project file, accept either as a drop, and download the
  * produced MP4 or project JSON. It moves `File` and `Blob` values across the page boundary and holds no
  * project state: what a file means is the composition root's decision, and what a project file contains is
- * `document/serialize.ts`'s (README D51).
+ * `document/serialize.ts`'s.
  */
 
 const DROP_HIGHLIGHT_CLASS = 'drop-active';
@@ -108,7 +108,7 @@ export function saveMp4(blob: Blob, filename: string): void {
   download(blob, filename);
 }
 
-/** Offers the project's JSON text as a download (README D51). */
+/** Offers the project's JSON text as a download. */
 export function saveJson(text: string, filename: string): void {
   download(new Blob([text], { type: JSON_MIME }), filename);
 }

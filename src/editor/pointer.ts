@@ -12,7 +12,7 @@ import type { PerspectiveCamera } from 'three';
 export type PointerCallbacks = {
   onSessionChange(): void;
   /**
-   * The objects an operation wrote, so the caller can rebuild exactly their derived geometry (README D4). A
+   * The objects an operation wrote, so the caller can rebuild exactly their derived geometry. A
    * region edit touches one; a detach touches two — the object the region left and the object it became.
    */
   onProjectChange(ids: readonly ObjectId[]): void;
@@ -21,7 +21,7 @@ export type PointerCallbacks = {
 /**
  * The tools that drag a box. The `select` tool consumes that box as the selection and writes nothing (see
  * `commit`); the others apply an operation to it. Every one of them reads the same region, in the same cells,
- * from the same gesture (README D19). A detach is not one of them: it is a command on the region the selection
+ * from the same gesture. A detach is not one of them: it is a command on the region the selection
  * already holds (`detachSelection`), so it can never be left armed for the next press.
  */
 const BOX_TOOLS: Record<ActiveTool, boolean> = {
@@ -55,12 +55,12 @@ type DragState = {
   toLocal: Matrix4;
 };
 
-/** Holds one cell inside the packed key space, the only range a cell may come from at all (README D41, D43). */
+/** Holds one cell inside the packed key space, the only range a cell may come from at all. */
 function holdCell(value: number): number {
   return Math.min(KEY_MAX, Math.max(KEY_MIN, value));
 }
 
-/** The cell a local point addresses: min-corner convention (README D20), floored after dividing by the cell size. */
+/** The cell a local point addresses: min-corner convention, floored after dividing by the cell size. */
 function cellOfLocal(pointLocal: Vector3, cell: number): [number, number, number] {
   return [
     holdCell(Math.floor(pointLocal.x / cell)),
@@ -70,8 +70,8 @@ function cellOfLocal(pointLocal: Vector3, cell: number): [number, number, number
 }
 
 /**
- * The cell the `add` tool steps out of the pressed face: the face normal's dominant axis, one cell out
- * (shithill's `posNorm`). Every other tool takes the cell the pick named, so `paint` and `remove` address what
+ * The cell the `add` tool steps out of the pressed face: the face normal's dominant axis, one cell out.
+ * Every other tool takes the cell the pick named, so `paint` and `remove` address what
  * the user sees while `add` writes the empty layer in front of it — a press on a face of a solid adds a cell
  * instead of repainting one. A hit whose raycast reported no face has no outward direction to step in, so the
  * offset is `[0, 0, 0]` and the press takes the cell it named.
@@ -88,7 +88,7 @@ function outerCell(tool: ActiveTool, normal: Vector3 | undefined): [number, numb
 
 /**
  * The box a press commits: the cells the pick named, stepped out of the pressed face by `outer`, and — for a
- * tracked drag with `height > 1` — stretched along that same axis to `height` cells (README D19: the add wall).
+ * tracked drag with `height > 1` — stretched along that same axis to `height` cells.
  * A click (`tracked` false) is one cell whatever the height says, so point editing needs no second mode.
  */
 function dragBox(
@@ -123,8 +123,8 @@ const _viewNormal = new Vector3();
 /**
  * All pointer handling in the viewport: point pick, box drag, and the commit of the active tool.
  * Every voxel write goes through `./ops.js`; every pick resolves `getCamera()` at call
- * time, so it always uses the camera that rendered the frame the user is looking at — the app-owned
- * viewport camera, or `SceneMirror.camera` while the camera lock is on (README D17).
+ * time, so it always uses the app-owned viewport camera — the one navigation moves, never the
+ * authored output camera.
  */
 export class PointerTool {
   private readonly dom: HTMLElement;
@@ -180,7 +180,7 @@ export class PointerTool {
   /**
    * A left press the gizmo is not using selects what it hit and, for a box-consuming tool, arms the
    * box drag. A raw source mesh selects its object and nothing else, because it has no cells to edit
-   * yet (README D24). The gizmo is the one claim that outranks the tool, and `getGizmoBusy()` is that claim:
+   * yet. The gizmo is the one claim that outranks the tool, and `getGizmoBusy()` is that claim:
    * `TransformControls` calls `setPointerCapture` on this shared element on *every* press, whether or
    * not a handle was hit, so neither a capture nor `defaultPrevented` marks a press as the gizmo's —
    * only its own dragging/hover state does. Buttons 1 and 2 stay navigation and touch nothing here.
@@ -201,8 +201,7 @@ export class PointerTool {
     this.session.setActiveObject(hit.objectId);
     if (this.session.mode === 'object' || hit.kind === 'object') {
       // Object mode transforms whole objects through the gizmo, and a raw source mesh has no voxel identity to
-      // select or edit yet: either way the press only chooses whose gizmo is shown, and it commits no operation
-      // (README D24, D39).
+      // select or edit yet: either way the press only chooses whose gizmo is shown, and it commits no operation.
       this.drag = null;
       this.session.setSelection({ kind: 'none' });
       this.overlay.clear();
@@ -210,7 +209,7 @@ export class PointerTool {
       return;
     }
     // The shape the select tool is set to is what the press selects; the region is one cell until a drag
-    // extends it, and `add` steps that cell out of the pressed face so its press writes empty space (README D19).
+    // extends it, and `add` steps that cell out of the pressed face so its press writes empty space.
     const outer = outerCell(this.session.activeTool, hit.normal);
     this.session.setSelection({
       kind: this.session.selectionShape,
@@ -264,7 +263,7 @@ export class PointerTool {
     if (grid === undefined) return;
     // The anchor is the cell the instance lookup named, so a press on a face addresses the cell the user sees
     // rather than its neighbour: a face hit reports a point on that face's own plane, and flooring such a point
-    // names the cell past the face (README D20). `outer` is what `dragBox` steps that box out with for `add`.
+    // names the cell past the face. `outer` is what `dragBox` steps that box out with for `add`.
     const worldMatrix = this.project.worldMatrix(hit.objectId);
     const worldNormal =
       hit.normal === undefined
@@ -305,8 +304,7 @@ export class PointerTool {
       }
     }
     // The box the drag has drawn so far: inclusive on both corners, in the anchor object's cells, stepped out of
-    // the pressed face when the tool is `add` and stretched to the session's wall height once a move happened
-    // (D19).
+    // the pressed face when the tool is `add` and stretched to the session's wall height once a move happened.
     drag.dragging = true;
     const box = dragBox(drag.anchorCell, drag.cornerCell, drag.outer, drag.dragging, this.session.addHeight);
     this.overlay.showBox(box, this.project.worldMatrix(drag.objectId), drag.cell);
@@ -316,7 +314,7 @@ export class PointerTool {
    * Runs the detach on the current selection, without a press: the panel's `detach` button is a command on the
    * region the `Select` tool already chose rather than a tool choice, so it commits the same operation a viewport
    * press would and ends the same way — the new object active, the region no longer selected, its box gone
-   * (README D19, D23). It is why that button is disabled while there is no selection.
+   * It is why that button is disabled while there is no selection.
    */
   detachSelection(): void {
     this.commit('detach');
@@ -342,7 +340,7 @@ export class PointerTool {
             ? removeBox(this.project, selection.objectId, selection.box)
             : detachSelection(this.project, selection);
     // Both halves of a detach change geometry, and only reporting the object that gained cells would leave the
-    // source drawing cells it no longer holds (README D4, D23).
+    // source drawing cells it no longer holds.
     const changed: ObjectId[] = [selection.objectId];
     if (tool === 'detach' && result.objectId !== undefined) changed.push(result.objectId);
     this.settle(result, changed, tool === 'detach');
@@ -350,7 +348,7 @@ export class PointerTool {
 
   private settle(result: OpResult & { objectId?: ObjectId }, changed: readonly ObjectId[], detached: boolean): void {
     if (!result.ok) {
-      // The panel has no message area any more (D38), so a refused operation — a budget refusal, a grid
+      // The panel has no message area any more, so a refused operation — a budget refusal, a grid
       // refusal — goes to the console instead of nowhere.
       console.error(`${result.error}: ${result.detail}`);
       return;

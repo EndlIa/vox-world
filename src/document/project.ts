@@ -21,9 +21,9 @@ export type SceneObject = {
   visible: boolean;
   /**
    * While set, the object's own placement holds whole cells of its own grid, so its voxels sit on the world grid
-   * the lattice is (README D42, on D41's unit and D43's subdivision). Switched off, the object may sit between
-   * cells. A voxel object is created with the flag already set when the placement it was given is whole, and
-   * unset when it is not.
+   * instead of half a cell off it: a cell is `CELL_SIZE / subdivision` world units and the world unit is the base.
+   * Switched off, the object may sit between cells. A voxel object is created with the flag already set when the
+   * placement it was given is whole, and unset when it is not.
    */
   alignToGrid: boolean;
 };
@@ -35,12 +35,12 @@ export type CameraSettings = {
 };
 export type ProjectSettings = { background: HexColor; ambientIntensity: number };
 /**
- * The minters, saved so a restore re-mints nothing (README D51): `nextId` is the counter `allocateId` reads and
+ * The minters, saved so a restore re-mints nothing: `nextId` is the counter `allocateId` reads and
  * `maskCursor` the palette walk's position.
  */
 export type ProjectCounters = { nextId: number; maskCursor: number };
 /**
- * The project as plain data — what a file carries of it and what `restore` takes back (README D51). Payload grids
+ * The project as plain data — what a file carries of it and what `restore` takes back. Payload grids
  * are shared by reference: they are read-only where a file is concerned, and copying millions of cells to answer a
  * read is not worth it.
  */
@@ -52,7 +52,7 @@ export type ProjectData = {
   counters: ProjectCounters;
 };
 
-/** The only id shape this file mints, so a restore can tell a loaded id from a foreign one (README D51). */
+/** The only id shape this file mints, so a restore can tell a loaded id from a foreign one. */
 const OBJECT_ID_PATTERN = /^obj-(\d+)$/;
 
 /** True for the one id shape this file mints: the reader's half of the same rule `restore` enforces. */
@@ -72,14 +72,13 @@ const DEFAULT_FAR = 2000;
 const DEFAULT_FPS = 30;
 /**
  * The scene background, and the one place it is defined. `index.html` mirrors it as `--scene`, so the
- * page behind the canvas matches and a sub-pixel seam is not a darker line; the previous project's
- * editor uses the same slate, where the value is read from its stylesheet as `COL_SCENE_BG`. It is kept
+ * page behind the canvas matches and a sub-pixel seam is not a darker line. It is kept
  * here rather than read from the stylesheet so that editing CSS cannot change an exported video.
  */
 const DEFAULT_BACKGROUND: HexColor = 0x3d4250;
 
 /**
- * Whether a placement is already whole `cell`-sized cells, which is what an aligned object holds (README D42, D43).
+ * Whether a placement is already whole `cell`-sized cells, which is what an aligned object holds.
  * An object whose placement an operation derived — detach, under a parent that is turned or off the lattice — is
  * created unaligned rather than snapped: snapping it would move content that operation promised to leave in place.
  */
@@ -99,7 +98,7 @@ function identityTransform(): Transform {
   };
 }
 
-/** A copy of one object record: fresh transform values, payload by reference (README D51). */
+/** A copy of one object record: fresh transform values, payload by reference. */
 function copySceneObject(object: SceneObject): SceneObject {
   const copy: SceneObject = {
     id: object.id,
@@ -144,7 +143,7 @@ function copyTimeline(timeline: Timeline): Timeline {
 /**
  * Project truth: objects, identity, hierarchy, transforms, representation binding, mask colors,
  * camera and project settings, and the one `Timeline` instance. Payloads are held by reference; no
- * scene object is stored here (README D1).
+ * scene object is stored here.
  */
 export class Project {
   readonly objects: Map<ObjectId, SceneObject> = new Map();
@@ -215,7 +214,7 @@ export class Project {
   /**
    * The only mutator that writes `representation` and the payload fields. It touches nothing else:
    * `transform`, `name`, `parentId`, `maskColor`, `visible`, and `alignToGrid` are left as they were, and
-   * no dirty flag is set — the caller marks the object dirty for the mirror (D4).
+   * no dirty flag is set — the caller marks the object dirty for the mirror.
    */
   setPayload(id: ObjectId, payload: { kind: 'uniform'; grid: UniformGrid } | undefined): void {
     const object = this.get(id);
@@ -288,7 +287,7 @@ export class Project {
 
   /**
    * `M_root · … · M_parent · M_local`. Nothing is cached: transforms are mutable value objects and
-   * the mirror owns invalidation (D4).
+   * the mirror owns invalidation.
    */
   worldMatrix(id: ObjectId): Matrix4 {
     const chain: SceneObject[] = [];
@@ -311,8 +310,8 @@ export class Project {
   }
 
   /**
-   * The placement an aligned object may take (README D42, D43): the nearest whole cell of its own grid, per axis.
-   * A cell is `CELL_SIZE / subdivision` world units and the world unit is the base (README D41), so rounding to the
+   * The placement an aligned object may take: the nearest whole cell of its own grid, per axis.
+   * A cell is `CELL_SIZE / subdivision` world units and the world unit is the base, so rounding to the
    * object's own cell is what puts its voxels on the world grid, whatever level of subdivision it carries.
    *
    * An object that does not align, and an unknown id, get a copy of `position`, so a caller can route every
@@ -330,7 +329,7 @@ export class Project {
   }
 
   /**
-   * The placement a keyframe may store for a target (README D42, D43). An object that aligns gets its own whole
+   * The placement a keyframe may store for a target. An object that aligns gets its own whole
    * cells, exactly as a direct transform write does, so everything a track holds is on its lattice; every other
    * target keeps the placement it was given.
    *
@@ -344,7 +343,7 @@ export class Project {
 
   /**
    * The world matrix an aligned object may take: `alignedPosition`'s rule applied in the object's own frame,
-   * so a gizmo drag previews exactly what its commit will store instead of jumping on release (README D42).
+   * so a gizmo drag previews exactly what its commit will store instead of jumping on release.
    *
    * Returns `matrix` itself for an object that does not align and for an unknown id, and never mutates it.
    */
@@ -364,7 +363,7 @@ export class Project {
   }
 
   /**
-   * The project as plain data (README D51): one copied record per object in `objects` order, the camera and the
+   * The project as plain data: one copied record per object in `objects` order, the camera and the
    * settings copied by the same rule, and the timeline as one copied record. Payload grids are shared, so the
    * result must not be written to; the file boundary reads it and encodes what it finds.
    */
@@ -388,7 +387,7 @@ export class Project {
   }
 
   /**
-   * Replaces the truth in place (README D51). Like `setPayload`, it validates before it writes, so a rejected
+   * Replaces the truth in place. Like `setPayload`, it validates before it writes, so a rejected
    * restore leaves the project exactly as it was; and it keeps instance identity — the `objects` map, `camera`,
    * `settings`, `timeline`, and `timeline.tracks` are the objects every holder already has — because the mirror,
    * the mixer, and the editor hold this project rather than a copy of it.
@@ -445,7 +444,7 @@ export class Project {
     this.timeline.fps = timeline.fps;
     this.timeline.tracks.splice(0, this.timeline.tracks.length, ...timeline.tracks);
     // The floor is what keeps identity unique in both directions: above every loaded id, and never below the
-    // counter the file recorded (README D51). The keyframe minter gets the same treatment.
+    // counter the file recorded. The keyframe minter gets the same treatment.
     this.nextId = Math.max(data.counters.nextId, highestId + 1);
     this.maskCursor = data.counters.maskCursor;
     adoptKeyframeIds(this.timeline);

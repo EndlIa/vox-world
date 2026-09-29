@@ -7,7 +7,7 @@ import { UniformGrid } from '../src/voxels/uniform/grid.js';
 
 /**
  * The mirror's derived geometry is where a cell size can go wrong without any document value changing: the cell
- * coordinate is in cells and the offset it is drawn at is in world units (README D41, D43), so a misplaced factor
+ * coordinate is in cells and the offset it is drawn at is in world units, so a misplaced factor
  * shows up as blocks that drift apart as the subdivision rises.
  */
 function voxelObject(subdivision: number, cells: [number, number, number][]): { project: Project; id: string } {
@@ -46,7 +46,7 @@ function outlineOf(mirror: SceneMirror, id: string): THREE.Group | undefined {
   );
 }
 
-/** The depth the outline pass clips the hull against: the object's own instances with colour off (README D50). */
+/** The depth the outline pass clips the hull against: the object's own instances with colour off. */
 function outlineDepthOf(mirror: SceneMirror, id: string): THREE.InstancedMesh | undefined {
   const node = mirror.objectOf(id);
   if (!(node instanceof THREE.InstancedMesh)) return undefined;
@@ -61,7 +61,7 @@ describe('selection outline', () => {
     const outline = outlineOf(mirror, id);
     if (outline === undefined) throw new Error('the object has no outline');
     // Hidden until the app says this object is the selected one: the outline is object mode's affordance, not a
-    // decoration every object carries (README D39).
+    // decoration every object carries.
     expect(outline.visible).toBe(false);
 
     const hull = outline.children[0];
@@ -74,13 +74,13 @@ describe('selection outline', () => {
     expect(hull.instanceMatrix).toBe(mesh.instanceMatrix);
     expect(hull.count).toBe(mesh.count);
     // The outline's own layer, so the pass that draws it can be restricted to it and the layer-1 decorations, every
-    // other object, and the frame itself stay out (README D24, D50).
+    // other object, and the frame itself stay out.
     expect(outline.layers.mask).toBe(1 << 3);
     expect(hull.layers.mask).toBe(1 << 3);
 
     // The depth the hull is cut against: the same instances with colour off, so the pass that draws the outline sees
     // this object's silhouette and no other object's — an adjacent object's depth is not in it, which is what keeps the
-    // rim whole along a shared boundary (README D50).
+    // rim whole along a shared boundary.
     const depth = outlineDepthOf(mirror, id);
     if (depth === undefined) throw new Error('the object has no outline depth');
     expect(depth.instanceMatrix).toBe(mesh.instanceMatrix);
@@ -134,12 +134,12 @@ describe('selection outline', () => {
     expect(outlineOf(mirror, first.id)?.visible).toBe(true);
     expect(outlineOf(mirror, second.id)?.visible).toBe(false);
     // The depth copy goes with it, and that is what keeps the pass honest: a second object's depth in it would clip the
-    // selected object's rim again, which is the whole reason the pass exists (README D50).
+    // selected object's rim again, which is the whole reason the pass exists.
     expect(outlineDepthOf(mirror, first.id)?.visible).toBe(true);
     expect(outlineDepthOf(mirror, second.id)?.visible).toBe(false);
 
     // A rebuild replaces the node and its outline together, so the mirror has to re-apply the selection itself:
-    // otherwise any payload edit would drop the outline the user is looking at (README D4).
+    // otherwise any payload edit would drop the outline the user is looking at.
     mirror.markDirty(first.id);
     mirror.sync();
     expect(outlineOf(mirror, first.id)?.visible).toBe(true);

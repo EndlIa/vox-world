@@ -12,9 +12,9 @@ export type DetachResult =
     };
 
 /**
- * D23 placement: `parentWorld⁻¹ ∘ regionWorld ∘ T(+localMin · cell)`, read as a position. The payload was
+ * The new object's placement: `parentWorld⁻¹ ∘ regionWorld ∘ T(+localMin · cell)`, read as a position. The payload was
  * rebased to a zero min corner, so this is the matrix that puts the extracted region back where it was,
- * expressed in the frame the new object inherits; `cell` is the source grid's own cell size (README D43).
+ * expressed in the frame the new object inherits; `cell` is the source grid's own cell size.
  */
 function placementFor(project: Project, source: SceneObject, localMin: Vector3, cell: number): Vector3 {
   const parentWorld =
@@ -35,9 +35,9 @@ function partName(project: Project, sourceName: string): string {
 
 /**
  * Turns an inclusive integer box of a uniform object into a new object: the extracted cells are
- * re-indexed to a zero min corner, the new object is placed per D23, and the source no longer holds
- * those cells. The new grid keeps the source's subdivision, so the slice is exactly as fine as the model it
- * came from (README D43).
+ * re-indexed to a zero min corner, the new object is placed so the region keeps its world position, and the
+ * source no longer holds those cells. The new grid keeps the source's subdivision, so the slice is exactly as
+ * fine as the model it came from.
  */
 export function detachUniformBox(project: Project, sourceId: ObjectId, box: IntBox3): DetachResult {
   const source = project.get(sourceId);
@@ -67,7 +67,7 @@ export function detachUniformBox(project: Project, sourceId: ObjectId, box: IntB
     const [x, y, z] = unpackKey(key);
     grid.set(x - minX, y - minY, z - minZ, color);
   }
-  // A cell is `cell` world units (README D41, D43), so the extracted region's local min corner times that is its
+  // A cell is `cell` world units, so the extracted region's local min corner times that is its
   // world offset inside the source.
   const position = placementFor(project, source, new Vector3(minX, minY, minZ), cell);
   const object = project.createVoxelObject({

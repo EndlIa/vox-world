@@ -29,7 +29,7 @@ describe('face border', () => {
     expect(border).toBeGreaterThan(0);
     expect(border).toBeLessThan(patched.fragmentShader.indexOf('#include <opaque_fragment>'));
     // The line is a screen-space quantity, so it is the same width at any subdivision, and it takes 22% of the face's
-    // own colour — the reference's `Grid` texture.
+    // own colour.
     expect(patched.fragmentShader).toContain('fract(vFaceUv - 0.5)');
     expect(patched.fragmentShader).toContain('fwidth(vFaceUv)');
     expect(patched.fragmentShader).toContain('* 0.22');

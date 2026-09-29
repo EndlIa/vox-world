@@ -5,7 +5,7 @@ Ring: 4 · Layer: ui · Depends on: `./dom.js`, `../editor/session.js`
 ## Responsibility
 The viewport's mode switch: two buttons, `Object` and `Edit`, pinned to the bottom centre of the canvas. They are the only way to set
 `EditorSession.mode`, which is what the composition root reads to decide whether the gizmo is shown and what the pointer tool reads to decide
-whether a press may write voxels (README D39). It renders `session.mode` and forwards a click; it holds no state, reads no project data, and
+whether a press may write voxels. It renders `session.mode` and forwards a click; it holds no state, reads no project data, and
 never touches the document, the scene, or the gizmo.
 
 ## Public interface
@@ -24,7 +24,7 @@ class ModeBar {
    `index.html` places at the bottom centre of the canvas, and the bar draws no frame or background of its own.
 2. `refresh()` puts `on` on the button of the mode the session is in, takes it off the other, and sets `disabled` on `Edit` while
    `session.activeObjectId` is `null` — that mode edits one object's voxels, so there is nothing to enter it for until the viewport or the
-   Scene list has chosen one (README D39). The composition root calls it from its session
+   Scene list has chosen one. The composition root calls it from its session
    listener, so the bar is a view of the session and never a second copy of it; a click that changes the mode therefore comes back as a refresh
    rather than being reflected here.
 3. It stores the session and the two buttons and nothing else; like `Panels`, it registers its listeners through `el`'s `on` and they live for

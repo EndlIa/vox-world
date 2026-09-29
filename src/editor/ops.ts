@@ -9,7 +9,7 @@ import type { Matrix4, Vector3 } from 'three';
 /**
  * What an edit did. A user-facing failure is data here, never an exception; detach's own literals
  * pass through unchanged so the vocabulary of ring 0 is what the UI reports.
- * There is no undo and no command object (README D9): a command layer wraps these functions later.
+ * There is no undo and no command object: a command layer wraps these functions later.
  */
 export type OpResult = { ok: true; detail: string; cells?: number } | { ok: false; error: string; detail: string };
 
@@ -39,7 +39,7 @@ function requireUniform(project: Project, objectId: ObjectId): UniformLookup {
 }
 
 /**
- * Places an object that has just been given a voxel payload (README D21, D25): the payload's cells are
+ * Places an object that has just been given a voxel payload: the payload's cells are
  * axis-aligned in world space, because `voxelize` bakes every node transform into the triangle soup, so
  * the object may keep only the translation `origin` that positions them — its payload's world-space
  * local min corner. An imported quaternion or a non-uniform scale left in place would transform the
@@ -56,7 +56,7 @@ function placePayload(object: SceneObject, origin: Vector3): void {
  * Adopts a successful voxelization: an output whose `sourceId` maps through `opts.attachTo` to an
  * existing object keeps that object's id, name, parent, and mask color and only gains the payload
  * and the world position; every other output becomes a new voxel object. Either way the object is
- * left translation-only, because the payload is world space (README D21, D25) — see `placePayload`.
+ * left translation-only, because the payload is world space — see `placePayload`.
  * Ids come back in output order. Success carries no `OpResult` union because the failure already
  * happened inside `voxelize`.
  */
@@ -153,7 +153,7 @@ export function reparentObject(project: Project, objectId: ObjectId, parentId: O
   return { ok: true, detail: `reparented ${objectId} to ${parentId ?? 'the root'}` };
 }
 
-/** Assigns the identity channel (README D11); never a cell color, and never a voxel write. */
+/** Assigns the identity channel; never a cell color, and never a voxel write. */
 export function setObjectMaskColor(project: Project, objectId: ObjectId, color: HexColor): OpResult {
   const object = project.get(objectId);
   if (object === undefined) return missingObject(objectId);
@@ -168,7 +168,7 @@ export function setObjectMaskColor(project: Project, objectId: ObjectId, color: 
  * — so the parent's world matrix is divided out first: a gizmo reports the world matrix its drag derived,
  * which for a child of a moved parent is not the local one the object has to keep.
  *
- * An aligned object lands on the lattice (README D42), and it does so in two steps, both needed: the
+ * An aligned object lands on the lattice, and it does so in two steps, both needed: the
  * placement is snapped on the world matrix first, exactly as the drag preview snapped the same matrix, so
  * the pose that was on screen is the pose this writes; then the decomposed placement is snapped again, so
  * what the document stores is whole cells rather than a value a matrix round trip left at 1.9999999999999998.
@@ -202,8 +202,8 @@ export function setObjectVisible(project: Project, objectId: ObjectId, visible: 
 }
 
 /**
- * Raises one object's subdivision to `subdivision`, a power of two at or above the level its grid already holds
- * (README D43). The payload is replaced by block replication, so the object's placement and the world extent of its
+ * Raises one object's subdivision to `subdivision`, a power of two at or above the level its grid already holds.
+ * The payload is replaced by block replication, so the object's placement and the world extent of its
  * content are unchanged and it stays exactly as aligned as it was.
  *
  * Refused with data when the object has no grid (`'wrong-representation'`), when the level is below the one it
@@ -258,7 +258,7 @@ export function setObjectSubdivision(project: Project, objectId: ObjectId, subdi
 /**
  * Sets the flag behind the panel's `Grid align` checkbox. Switching it on pulls the object onto the lattice
  * there and then, because the flag is a property the object has to satisfy from that moment on, not a mode a
- * later edit applies (README D42); switching it off writes nothing but the flag.
+ * later edit applies; switching it off writes nothing but the flag.
  */
 export function setObjectAlignToGrid(project: Project, objectId: ObjectId, alignToGrid: boolean): OpResult {
   const object = project.get(objectId);

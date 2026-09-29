@@ -6,10 +6,10 @@ Ring: 1 · Layer: animation · Depends on: ./compile.js, ../document/timeline.js
 Turns the authored camera position track into the two plain point lists the viewport drawing needs: the sampled
 polyline of where the camera travels, and one point per authored keyframe, which is where the rings go. The sampling
 is not a second interpolation — it runs the compiled track through a scratch `AnimationMixer`, so the curve between
-keyframes is three's own, discrete, linear, or the smooth spline exactly as the track was built (README D2) — and the
+keyframes is three's own, discrete, linear, or the smooth spline exactly as the track was built — and the
 only thing decided here is the set of times to ask for: an even walk over the clip's length. It stores nothing, holds
 no mixer, and writes nothing into the project; every call builds fresh points and releases the mixer it built
-(`animation/playback.ts` is the long-lived one, this is a throwaway). It exists for the camera path drawing (README D47).
+(`animation/playback.ts` is the long-lived one, this is a throwaway). It exists for the camera path drawing.
 
 ## Public interface
 ```ts
@@ -24,7 +24,7 @@ function cameraKeyframePositions(project: Project): Vector3[];
 2. `sampleCameraTrajectory` compiles the timeline with `buildClip(project)` and looks for the track named `camera` +
    `channelBinding('position').path`, i.e. `camera.position`. That lookup is written against the two literals of the
    binding contract `compile.ts` and `playback.ts` share: the camera target's binding name is `'camera'` and the
-   channel path is `channelBinding`'s (README D22).
+   channel path is `channelBinding`'s.
 3. No such track returns `[]`. A camera with no authored position keyframes has no path to draw, which is a normal
    state rather than a failure.
 4. Sampling runs the one track, not the whole clip: a fresh `AnimationClip` carries the compiled clip's name and
@@ -49,7 +49,7 @@ function cameraKeyframePositions(project: Project): Vector3[];
 ## Invariants
 - Interpolation is entirely three's: no easing, no curve math, and no keyframe arithmetic happens here. `step` holds
   the earlier keyframe, `linear` lands between two, and `smooth` follows the spline, because that is what the compiled
-  track interpolates (README D2).
+  track interpolates.
 - `points.length === Math.max(1, Math.floor(segments)) + 1`; the first point is the clip's start and the last is the
   clip's length, so a path always spans the whole clip rather than ending at the last keyframe.
 - Every returned point is a fresh `Vector3`: mutating one reaches neither the project, the clip, nor a later sample,
@@ -66,10 +66,10 @@ drawing turns into nothing. `segments` is floored and floored at one, so a calle
 still gets a drawable two-point line rather than an exception.
 
 ## Dependencies
-- `./compile.js` — `buildClip` for the clip and `channelBinding` for the `'.position'` path of the D22 name.
+- `./compile.js` — `buildClip` for the clip and `channelBinding` for the `'.position'` path of the mirror's object name.
 - `../document/timeline.js` — `findTrack` and the `TrackTarget` type for the marker list.
 - `../document/project.js` — `Project`.
-- `three` — `AnimationClip`, `AnimationMixer`, `LoopOnce`, `Object3D`, `Vector3`; allowed in ring 1 (D1, D2).
+- `three` — `AnimationClip`, `AnimationMixer`, `LoopOnce`, `Object3D`, `Vector3`; allowed in ring 1.
 
 ## Tests
 - `tests/trajectory.test.ts` — even sampling with both ends included, the sampler following the track's interpolation

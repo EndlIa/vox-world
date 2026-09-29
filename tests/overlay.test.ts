@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { Overlay } from '../src/three-runtime/overlay.js';
 import type { IntBox3 } from '../src/voxels/uniform/grid.js';
 
-/** The viewport decoration layer (README D24). */
+/** The viewport decoration layer. */
 const OVERLAY_LAYER = 1;
 
 function helperOf(scene: THREE.Scene): THREE.Box3Helper {

@@ -500,7 +500,7 @@ describe('snapshot / restore', () => {
     expect(copied?.name).toBe('car');
     expect(copied?.transform.position.toArray()).toEqual([1, 0, 0]);
     expect(data.timeline.durationMs).toBe(0);
-    // The payload is the one thing shared: a grid is read-only where the file is concerned (README D51).
+    // The payload is the one thing shared: a grid is read-only where the file is concerned.
     expect(copied?.uniform).toBe(grid);
   });
 
@@ -571,7 +571,7 @@ describe('snapshot / restore', () => {
 
     const target = new Project();
     target.restore(data);
-    // The palette walk resumes where the file left it, so mask colors stay stable across a load (D11): the two
+    // The palette walk resumes where the file left it, so mask colors stay stable across a load: the two
     // loaded objects already consumed the first two entries.
     const fresh = new Project();
     fresh.nextMaskColor();

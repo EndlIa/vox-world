@@ -7,20 +7,20 @@ The output camera's stand-in in the viewport: three's own `CameraHelper` draws t
 vertical field of view and the viewport's aspect, and the triangle the library puts above its near plane is what marks
 which way is up. The drawing hangs off a runtime-only pose node, and that node is what the edit gizmo moves while the
 carrier is selected; `app/main.ts` gives it the output camera's pose and writes a drag or a field back into
-`project.camera` (README D46), so it is a handle on the authored camera and never a second camera: it renders nothing,
+`project.camera`, so it is a handle on the authored camera and never a second camera: it renders nothing,
 is no mixer target, is never serialized, and holds no document state of its own.
 
 `CameraHelper` derives its frame from a `Camera`'s projection, so the carrier owns a display-only `PerspectiveCamera`:
 it is never added to a scene, never rendered, never read for a matrix, and exists so the library can be handed the two
 display planes `FRUSTUM_NEAR = 1` and `FRUSTUM_FAR = 2` and the current projection. Those planes are constants rather
-than the authored camera's own near and far, which a kilometre-scale world (README D40) would turn into a frustum
+than the authored camera's own near and far, which a kilometre-scale world would turn into a frustum
 spanning the whole scene; the near plane is where the library draws the marker frame and the up triangle, and the far
 plane is a second frame behind it, which is the depth cue its frustum comes with.
 
 Everything it draws is on layer 1 — the node itself included, so a child added later cannot escape the layer — which
-keeps it out of the `Picker`'s raycast (layers 0 and 2) and out of every export frame (layer 0 alone, README D24).
+keeps it out of the `Picker`'s raycast (layers 0 and 2) and out of every export frame (layer 0 alone).
 The node carries no name, so the mixer's binding walk, which reaches `<ObjectId>`-named nodes and `camera`, can
-never bind it (README D22).
+never bind it.
 
 ## Public interface
 ```ts
@@ -43,7 +43,7 @@ class CameraControl {
    `DECORATION_RENDER_ORDER = 1000`, its material is taken from the library (narrowed once, because the library types
    it as a generic `Material`) and given `depthTest: false` and `transparent: true`; the constructor appends the node
    to the scene it was given (`mirror.scene`), paints the idle colour, hides it, and walks `node.traverse` to put every
-   child, the node itself included, on `OVERLAY_LAYER` — layer 1 (README D24), the number `overlay.ts`, `grid.ts`, and
+   child, the node itself included, on `OVERLAY_LAYER` — layer 1, the number `overlay.ts`, `grid.ts`, and
    `controls.ts` share.
 2. `setPose(position, quaternion, fovDegrees, aspect)` copies the pose onto the node unconditionally and returns
    before touching the projection when the FOV and aspect both equal the ones the current frustum was built for
@@ -53,7 +53,7 @@ class CameraControl {
    cone from the apex, the up triangle, the axis and the two crosses — into the geometry it already owns. No vertex is
    built here: the frustum math is three's.
 4. `setVisible(visible)` writes the node's `visible`, so the carrier is hidden from the frame it is called for; the app drives it with
-   `true` from the app's first frame, and selecting the carrier only changes its colour (D46): it is the only thing that shows where the output
+   `true` from the app's first frame, and selecting the carrier only changes its colour: it is the only thing that shows where the output
    camera is, and a run moves that camera whether or not the author is aiming it.
 5. `setSelected(selected)` paints the whole helper one colour — `SELECTED_COLOR = 0x4da3ff` while selected, the idle
    grey `0x9aa2ad` otherwise — by calling the library's `setColors` with the same `Color` for all five of its parts
@@ -64,7 +64,7 @@ class CameraControl {
    `CARRIER_SCALE = 1`, one world unit per helper unit, so the near frame the pose is read from is one lattice cell across
    and the far one is two. Nothing rescales it afterwards — `setPose` writes the projection on the helper's display camera
    and never its scale — so the carrier is scene-sized rather than screen-sized: pulling the view back shrinks it with
-   everything else instead of inflating it (**revised**, README D46: the group used to be rescaled every frame from the
+   everything else instead of inflating it (**revised**: the group used to be rescaled every frame from the
    distance to the drawing camera, which held its *screen* size constant and grew its world size without bound).
 7. `dispose()` calls the helper's own `dispose()` — which releases the geometry and the material it built — and
    removes the node from its parent. It is idempotent: disposing twice releases nothing twice and `removeFromParent`
@@ -78,13 +78,13 @@ class CameraControl {
   reported matrix — while the drawing's size belongs to the file and must never reach the pose the drag reports.
 - The whole carrier is on layer 1 and nothing is ever moved off it: the raycaster tests layers 0 and 2, so no line
   or triangle is ever picked, and the export camera enables layer 0 alone, so no part of the carrier can appear in
-  an exported frame (README D24). The node being on the layer too is what makes a later child safe by construction.
+  an exported frame. The node being on the layer too is what makes a later child safe by construction.
 - The node is unnamed, so the mixer's binding walk can never reach it, and the carrier is no keyframe target and no
-  document node (README D22): it is a runtime-only handle on the authored camera.
+  document node: it is a runtime-only handle on the authored camera.
 - The frustum is a function of the vertical FOV, the aspect, and the two display planes alone, and is never derived
   from scene content; a `setPose` that changes neither projection input updates nothing.
 - The display projection is never rendered, never added to a scene, and never read for a matrix: it is a projection
-  descriptor for the helper. The app's two rendering cameras are untouched by this file (README D17).
+  descriptor for the helper. The app's two rendering cameras are untouched by this file.
 - One frame or drag allocates nothing: the helper's point set and colour attribute are built once by the constructor,
   `setPose` rewrites them in place through the library's `update()`/`setColors()`, and the drawing's scale is written once,
   in the constructor.
@@ -107,15 +107,15 @@ as it does for `Overlay` and `WorldGrid`, and `app/main.ts` is the only caller.
 
 ## Tests
 `tests/cameraControl.test.ts` pins the drawing and the two separations a drag depends on in the node environment —
-no DOM, no GPU — by reading the helper's own point map and colour attribute: see `codemap/tests/cameraControl.md`. What
+no DOM, no GPU — by reading the helper's own point map and colour attribute. What
 needs a GPU stays app-verified (README §10): the carrier on screen with its two colours, following the output camera as
 it is aimed and hidden while the viewport already is that camera, and absent from an exported frame.
 
 ## Open questions
 - The two display planes (`1` and `2`) and the fixed scale (`CARRIER_SCALE = 1`) are the drawing's whole size model: one
-  world unit is one lattice cell, so the carrier reads against the scene it is in (README D46). The one scene where it reads
+  world unit is one lattice cell, so the carrier reads against the scene it is in. The one scene where it reads
   small is a raw import that has not been voxelized onto the lattice yet, where the model itself is still metres or
-  kilometres across (README D29, D40, D41); the screen-relative rule this file used to keep the drawing legible there was
+  kilometres across; the screen-relative rule this file used to keep the drawing legible there was
   the one that grew the carrier without bound as the view pulled back, and it is gone.
 - The library draws more than this carrier used to — a cone from the apex, the axis, and a cross at each frame — and
   they are painted one colour rather than removed, because trimming another library's geometry would mean rebuilding

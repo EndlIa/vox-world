@@ -7,11 +7,11 @@
  * viewport camera.
  *
  * The mirror is also the single `AnimationMixer` root of the application, which is why every mirrored
- * node is named with its `ObjectId` and the output camera is named `camera` (README D22).
+ * node is named with its `ObjectId` and the output camera is named `camera`.
  *
  * It also parents the app's imported raw meshes under their objects' nodes on layer 2, next to the
  * voxels of the same object: they are the raw half of the raw-versus-voxel comparison, and each is
- * placed by its own baked node matrix so it stays where the import put it (README D24, D25). The app
+ * placed by its own baked node matrix so it stays where the import put it. The app
  * owns those meshes and the mirror never disposes them.
  */
 
@@ -21,10 +21,10 @@ import * as THREE from 'three';
 import { Outlines } from '@pmndrs/vanilla/core/Outlines';
 import { applyFaceBorder } from './faceGrid.js';
 
-/** The imported-source-mesh layer (README D24); `picking.ts` enables it on its raycaster too. */
+/** The imported-source-mesh layer; `picking.ts` enables it on its raycaster too. */
 const SOURCE_LAYER = 2;
 /**
- * The selection outline's own layer (README D24, D50): the hull and the depth-only copy of the selected object's
+ * The selection outline's own layer: the hull and the depth-only copy of the selected object's
  * instances that cuts it to a rim live here, apart from the layer-1 decorations, because the outline is drawn in a pass
  * of its own that must contain nothing else. A pick's raycaster and the export camera never test it, so an outline
  * cannot change what a click or an export sees either.
@@ -48,7 +48,7 @@ const MIN_NEAR = 1e-4;
 /**
  * The layers the mirror's content lives on — voxel instances (0) and imported raw meshes (2), the two
  * halves of the comparison — and therefore the layers `frameAll` measures. Layer 1 is viewport
- * feedback (`controls.ts` and `overlay.ts`), which is never picked, exported, or measured (README D24).
+ * feedback (`controls.ts` and `overlay.ts`), which is never picked, exported, or measured.
  */
 const CONTENT_LAYERS = new THREE.Layers();
 CONTENT_LAYERS.set(0);
@@ -80,18 +80,18 @@ type MirrorEntry = {
   outline: THREE.Group | undefined;
   /**
    * The depth the outline is cut against, present exactly when `outline` is: the object's own instances drawn with
-   * `colorWrite: false`, so the outline's pass sees this object's silhouette and nothing else (README D50). It shares
+   * `colorWrite: false`, so the outline's pass sees this object's silhouette and nothing else. It shares
    * the mesh's `instanceMatrix` — the same instances, not a copy — and is shown and hidden with `outline`.
    */
   outlineDepth: THREE.InstancedMesh | undefined;
 };
 
 /**
- * One imported raw mesh and the baked matrix of the node it came from (README D24, D25). The matrix is
+ * One imported raw mesh and the baked matrix of the node it came from. The matrix is
  * that mesh's own anchor: `applySources` places the mesh by it, so it stays exactly where the import put
  * it however the object's own transform changes.
  *
- * It is per mesh, not per object: one object holds every mesh of one import (README D28), and those nodes
+ * It is per mesh, not per object: one object holds every mesh of one import, and those nodes
  * sit at different places, so a single matrix shared by the object's meshes would stack them all on the
  * last attached node's pose.
  */
@@ -109,17 +109,17 @@ export class SceneMirror {
 
   private readonly project: Project;
   private readonly shadingMaterial: THREE.MeshLambertMaterial;
-  /** The outline pass's depth-only material, one instance shared by every object's silhouette copy (README D50). */
+  /** The outline pass's depth-only material, one instance shared by every object's silhouette copy. */
   private readonly outlineDepthMaterial: THREE.MeshBasicMaterial;
   private readonly entries = new Map<ObjectId, MirrorEntry>();
   private readonly dirty = new Set<ObjectId>();
   private maskMode = false;
-  /** The object whose outline is drawn: the app's object-mode selection, kept so a rebuild re-shows it (README D39). */
+  /** The object whose outline is drawn: the app's object-mode selection, kept so a rebuild re-shows it. */
   private selectedId: ObjectId | null = null;
   /**
    * The raw meshes the app attached, per object, each with the baked node matrix it is placed by. The
    * mirror parents and shows them but never disposes them: they belong to the app, which drops them at
-   * teardown (README D24, D25).
+   * teardown.
    */
   private readonly sources = new Map<ObjectId, SourceRecord[]>();
   /** The global raw-mesh override; off, a source mesh shows only while its object has no payload. */
@@ -144,8 +144,8 @@ export class SceneMirror {
     sun.position.set(4, 8, 6);
     this.scene.add(sun);
 
-    // The one material every voxel instance shares, carrying the per-face border on top of its shading (README D35):
-    // the mask pass swaps in a material of its own, so the border never reaches an identity frame (README D11).
+    // The one material every voxel instance shares, carrying the per-face border on top of its shading:
+    // the mask pass swaps in a material of its own, so the border never reaches an identity frame.
     this.shadingMaterial = new THREE.MeshLambertMaterial();
     applyFaceBorder(this.shadingMaterial);
 
@@ -163,7 +163,7 @@ export class SceneMirror {
 
   /**
    * Reconciles the mirror with the project: membership, hierarchy, the objects marked dirty, and the
-   * raw meshes the app attached (README D4, D22, D24). A clean object keeps its node, its meshes and
+   * raw meshes the app attached. A clean object keeps its node, its meshes and
    * its lookup identity, and its transform is never rewritten, so a mixer-driven transform is not
    * clobbered and the output camera — which the timeline owns — is never touched at all.
    */
@@ -185,7 +185,7 @@ export class SceneMirror {
       touched.delete(id);
     }
 
-    // 2. Rebuild only what a caller marked dirty (README D4).
+    // 2. Rebuild only what a caller marked dirty.
     for (const id of this.dirty) {
       const object = project.objects.get(id);
       if (object === undefined) continue;
@@ -206,7 +206,7 @@ export class SceneMirror {
       entry.node.visible = object.visible;
     }
 
-    // 4. Source meshes (README D24, D25): every raw mesh the app attached is parented under its
+    // 4. Source meshes: every raw mesh the app attached is parented under its
     //    object's node, placed by its baked node matrix, and shown exactly when the override is on or
     //    the object has no payload yet. A request made before its node existed lands here, and a
     //    rebuilt node adopts the meshes of the node it replaced instead of duplicating them.
@@ -241,7 +241,7 @@ export class SceneMirror {
    *
    * The node's transform is local, so the parent's world matrix is divided out first (`worldMatrix`), the
    * same conversion the commit to the document performs. A clean object's transform is never rewritten by
-   * `sync()` (README D22), which is why this write stands until the caller commits: the rebuild that commit
+   * `sync()`, which is why this write stands until the caller commits: the rebuild that commit
    * triggers then re-derives the node from the document, which by then holds the same matrix.
    */
   previewTransform(id: ObjectId, matrixWorld: THREE.Matrix4): void {
@@ -258,14 +258,14 @@ export class SceneMirror {
    * The local-space center of one object's own content: the mid-point of the occupied cells' bounding box
    * for a `uniform` object, and the origin for anything else — an `'empty'` placeholder, or a payload with
    * no occupied cell, neither of which has content of its own to sit in the middle of. A cell is
-   * `CELL_SIZE / subdivision` world units (README D41, D43), so the center is the mid-point of the box's two
+   * `CELL_SIZE / subdivision` world units, so the center is the mid-point of the box's two
    * outer faces.
    *
    * Derived, never a document value: the document's transform keeps meaning "the world position of the
-   * object's local (0, 0, 0)", which after a voxelization is the payload's min corner (README D25). This is
-   * where the edit gizmo pivots (README D37), so its handles sit on the content instead of at that corner.
+   * object's local (0, 0, 0)", which after a voxelization is the payload's min corner. This is
+   * where the edit gizmo pivots, so its handles sit on the content instead of at that corner.
    * A raw source mesh never moves the center: it is display-only and stays on the pose the import put it on
-   * however the object's own transform changes (README D25).
+   * however the object's own transform changes.
    */
   contentCenterOf(id: ObjectId): THREE.Vector3 {
     const center = new THREE.Vector3();
@@ -295,7 +295,7 @@ export class SceneMirror {
   /**
    * Draws the selected object's outline over the frame the caller has already rendered, and returns whether it drew.
    *
-   * The outline has to be cut by the selected object's own silhouette and by nothing else (README D50). In the main pass
+   * The outline has to be cut by the selected object's own silhouette and by nothing else. In the main pass
    * the whole scene shares one depth buffer, so anything standing in front of the rim — a neighbour touching the object,
    * or any geometry between the camera and it — clips the rim away. The pass therefore keeps the colour, clears the
    * depth, and renders `OUTLINE_LAYER` alone, where the object's own depth copy and its hull are the only things that
@@ -327,8 +327,8 @@ export class SceneMirror {
    * Marks one object as the selected one: its outline is drawn and every other object's is hidden.
    *
    * The outline says which object the edit gizmo is on, so it belongs to object mode: the app clears it in edit mode
-   * and while the camera carrier holds the gizmo (`app/main.ts`, README D39, D46). The id is remembered, not only
-   * applied, because a rebuild replaces a node and its outline together (README D4) — a payload edit would otherwise
+   * and while the camera carrier holds the gizmo (`app/main.ts`). The id is remembered, not only
+   * applied, because a rebuild replaces a node and its outline together — a payload edit would otherwise
    * drop the outline the user is looking at.
    */
   setSelected(id: ObjectId | null): void {
@@ -361,13 +361,13 @@ export class SceneMirror {
 
   /**
    * Parents one imported raw mesh under the object's mirrored node, tags it with the object id, and
-   * puts it on layer 2 (README D24): the viewport draws and picks it, an export never does. The mesh
+   * puts it on layer 2: the viewport draws and picks it, an export never does. The mesh
    * is never disposed here and its geometry and material stay the importer's, because the app owns it.
    *
-   * `nodeWorldMatrix` is the imported mesh node's own baked world matrix (README D25), stored per
+   * `nodeWorldMatrix` is the imported mesh node's own baked world matrix, stored per
    * object and cloned, because the caller's matrix belongs to the imported scene and stays live there.
    * `applySources` places the meshes by it, which is what keeps the raw-versus-voxel comparison exactly
-   * where the import put it even after a payload has made its object translation-only (README D21).
+   * where the import put it even after a payload has made its object translation-only.
    *
    * The request is remembered per object, so attaching the same mesh twice leaves it as one child, and
    * an id whose node does not exist yet — an import that attaches before the next `sync()` — is
@@ -392,7 +392,7 @@ export class SceneMirror {
   }
 
   /**
-   * The global "show raw meshes" override (README D24). A source mesh renders exactly when the
+   * The global "show raw meshes" override. A source mesh renders exactly when the
    * override is on **or** its object has no payload, so the moment a voxelization attaches one the raw
    * mesh hides again unless the override is on: that is what makes the raw-versus-voxel comparison
    * readable, and it is what keeps an un-voxelized source mesh the only thing a fresh import shows.
@@ -416,8 +416,8 @@ export class SceneMirror {
   /**
    * Forgets every raw-mesh record without touching the meshes: they belong to the app, which detaches them.
    * A source is keyed by object id, and `sync()` runs the raw-mesh pass for every recorded id, so a record
-   * that outlives its project would re-parent the previous project's mesh under an object that reuses that
-   * id — which is exactly what a load does (README D51).
+   * that outlives its project would re-parent the mesh of the project it replaced under an object that reuses that
+   * id — which is exactly what a load does: it restores objects under ids the replaced project may already have used.
    */
   clearSources(): void {
     this.sources.clear();
@@ -425,7 +425,7 @@ export class SceneMirror {
 
   /**
    * Re-reads the project settings into the scene: the background the renderer clears to and the ambient term.
-   * A load replaces both without rebuilding the mirror (README D51), and `sync()` never touches either, so
+   * A load replaces both without rebuilding the mirror, and `sync()` never touches either, so
    * nothing else would publish them.
    */
   applySettings(): void {
@@ -436,7 +436,7 @@ export class SceneMirror {
 
   /**
    * Re-reads the authored camera into the output camera: pose, field of view, and the near/far range, with the
-   * projection refreshed. `sync()` never writes the camera node because the timeline owns it (README D22), so a
+   * projection refreshed. `sync()` never writes the camera node because the timeline owns it, so a
    * load says so explicitly here; `app/main.ts`'s `setCameraFov` is the other writer of the same state.
    */
   applyCamera(): void {
@@ -454,7 +454,7 @@ export class SceneMirror {
    * Fits the **given** camera to the union bounds of the mirrored nodes.
    *
    * The caller passes the camera that draws the viewport; the output camera is a document node the
-   * user or the timeline owns and is never framed here (README D17). Layer-2 source meshes are measured
+   * user or the timeline owns and is never framed here. Layer-2 source meshes are measured
    * with the voxels, so an import frames the imported model itself before any payload exists; layer-1
    * decorations are skipped, so the overlay can never widen the frame.
    */
@@ -505,7 +505,7 @@ export class SceneMirror {
    * them by one rule, or does nothing before the object's node exists. The visibility rule lives here
    * alone: on, or the object is still an `'empty'` placeholder that renders as nothing else.
    *
-   * The pose (README D25) is the mesh's local matrix, `project.worldMatrix(id)⁻¹ ∘ nodeWorldMatrix`, so
+   * The pose is the mesh's local matrix, `project.worldMatrix(id)⁻¹ ∘ nodeWorldMatrix`, so
    * the mesh's own world matrix is the imported node's, whatever the document node has become: before
    * voxelization the object's transform *is* that matrix, so the local result is the identity, and
    * after `applyVoxelizeResult` made the object translation-only it is the `-origin` offset that keeps
@@ -558,7 +558,7 @@ export class SceneMirror {
   /** One `InstancedMesh` over one cube per occupied cell, in `forEach` order. */
   private buildUniform(id: ObjectId, grid: UniformPayload): MirrorEntry {
     // One cube the size of this object's own cell: the subdivision is the grid's, so the geometry is built per
-    // rebuild rather than shared across objects of different levels (README D43).
+    // rebuild rather than shared across objects of different levels.
     const cell = grid.cellSize;
     const geometry = new THREE.BoxGeometry(cell, cell, cell);
     const mesh = new THREE.InstancedMesh(geometry, this.shadingMaterial, grid.size);
@@ -588,7 +588,7 @@ export class SceneMirror {
     // The selection outline, built over this mesh's own instances: the library's inverted hull shares the instance
     // matrix, so every cube of the object is wrapped and no per-instance work is added. The hull's thickness is a share
     // of the cell rather than a world constant, so an object at subdivision 4 has four times the finer outline, and the
-    // whole group is on the decoration layer so a pick and an export both miss it (README D24).
+    // whole group is on the decoration layer so a pick and an export both miss it.
     const outline = Outlines({
       color: new THREE.Color(SELECTION_COLOR),
       thickness: cell * OUTLINE_SHARE,
@@ -604,7 +604,7 @@ export class SceneMirror {
     });
     outline.group.visible = this.selectedId === id;
 
-    // The depth the outline's pass cuts the hull against (README D50): the object's own instances with colour off, so
+    // The depth the outline's pass cuts the hull against: the object's own instances with colour off, so
     // the hull is clipped by this object's silhouette alone — no other object's depth is in that pass, which is what
     // keeps the rim whole along a shared boundary. Sharing the instance matrix makes it the same instances, not a copy,
     // and the hull draws after it (its render order 1 against this 0), so the depth it leaves is already there.

@@ -6,14 +6,14 @@
  * The column is a rail of group buttons and, behind each button, that group's controls in a floating
  * window (`ui/floatingWindow.ts`): one button per group at the top of the column, the group's content on
  * screen only once its button is pressed, and the button marked `on` for exactly as long as its window is
- * open. Several windows can be open at once. The app's status line and the progress row stay in the column
- * below the rail, always visible.
+ * open. Several windows can be open at once. There is no status line, no progress row, and no error line
+ * below the rail; a failure reaches the console.
  *
  * One rail entry opens no window: `Animation`, which shows and hides the timeline bar along the bottom of the
- * page. That bar belongs to the app and so does the flag, seeded here like the other view flags (README D44).
+ * page. That bar belongs to the app and so does the flag, seeded here like the other view flags.
  *
  * The voxelization settings are not here, and neither is any way to reach them: they live in one modal
- * dialog, `ui/voxelizeDialog.ts`, which the app opens when an import arrives (README D26). The panel
+ * dialog, `ui/voxelizeDialog.ts`, which the app opens when an import arrives. The panel
  * holds no voxelize-related control at all, so the dialog that follows an import is the only way to
  * voxelize.
  */
@@ -24,7 +24,7 @@ import type { ObjectId, Project, SceneObject } from '../document/project.js';
 import type { ActiveTool, EditResolution, EditorSession, SelectionShape } from '../editor/session.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 
-/** One authored camera pose: the carrier's fields, and the value a numeric field writes back (README D46). */
+/** One authored camera pose: the carrier's fields, and the value a numeric field writes back. */
 export type CameraPose = {
   position: [number, number, number];
   quaternion: [number, number, number, number];
@@ -54,19 +54,19 @@ export type PanelContext = {
   sceneVisible?: () => boolean;
   /**
    * Whether the world grid is drawn, if the app exposes the flag (`WorldGrid`). When present the Grid group's
-   * checkbox is a view of it and `refresh()` seeds it; when absent the checkbox is forward-only (README D35).
+   * checkbox is a view of it and `refresh()` seeds it; when absent the checkbox is forward-only.
    */
   gridVisible?: () => boolean;
   /**
    * Whether the timeline bar is on screen, if the app exposes the flag. When present the rail's `Animation` button
    * is a toggle over it and `refresh()` seeds its state; when absent that button is disabled. The button opens no
-   * window either way (README D44).
+   * window either way.
    */
   timelineVisible?: () => boolean;
   /**
    * The camera carrier's state, if the app has one. When present the `Camera` group's carrier controls are a view of
    * it — `refresh()` seeds the pose fields and the two label swaps from it — and it is what gates them: a context
-   * without a carrier has nothing for them to aim (README D46).
+   * without a carrier has nothing for them to aim.
    */
   cameraControl?: () => CameraControlView;
   actions: {
@@ -106,7 +106,7 @@ export type PanelContext = {
 const TOOLS: readonly ActiveTool[] = ['select', 'paint', 'add', 'remove'];
 
 /**
- * The subdivision levels the Scene group offers, in display order (README D43). They are powers of two because a
+ * The subdivision levels the Scene group offers, in display order. They are powers of two because a
  * cell has to stay an exact binary fraction of the world unit; the list is the UI's range, not a rule of the grid.
  */
 const SUBDIVISIONS: readonly number[] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
@@ -188,11 +188,11 @@ export class Panels {
   private readonly worldGridInput: HTMLInputElement;
   /** The rail's `Edit` button: it also selects the edit mode, so `refresh()` gates it on the active object. */
   private readonly editGroupButton: HTMLButtonElement;
-  /** The rail's `Animation` button: it opens no window, it toggles the timeline bar (README D44). */
+  /** The rail's `Animation` button: it opens no window, it toggles the timeline bar. */
   private readonly animationButton: HTMLButtonElement;
   private readonly sourceVisibleInput: HTMLInputElement;
   private readonly cameraFovInput: HTMLInputElement;
-  /** The carrier's numeric grid, in label order: X, Y, Z, QX, QY, QZ, QW (README D46). */
+  /** The carrier's numeric grid, in label order: X, Y, Z, QX, QY, QZ, QW. */
   private readonly cameraPoseInputs: HTMLInputElement[];
   private readonly cameraSelectButton: HTMLButtonElement;
   private readonly cameraModeButton: HTMLButtonElement;
@@ -232,7 +232,7 @@ export class Panels {
       on: { click: () => context.actions.pickImportFile() },
     });
     // The raw-mesh override: forward-only when the context exposes no `sceneVisible()`, otherwise a
-    // view of the app's flag, seeded by `refresh()` (README D24).
+    // view of the app's flag, seeded by `refresh()`.
     this.sourceVisibleInput = el('input', {
       type: 'checkbox',
       on: { change: () => context.actions.setSourceVisible(this.sourceVisibleInput.checked) },
@@ -270,7 +270,7 @@ export class Panels {
       SELECTION_SHAPES.map((shape) => el('option', { value: shape, text: shape })),
     );
     // The detach command: it acts on the region the `Select` tool chose, once per press, and leaves no mode
-    // behind — a tool would make the next press in the viewport detach whatever it landed on (README D19, D23).
+    // behind — a tool would make the next press in the viewport detach whatever it landed on.
     this.detachButton = el('button', {
       text: 'detach',
       on: { click: () => context.actions.detachSelection() },
@@ -376,21 +376,21 @@ export class Panels {
       type: 'checkbox',
       on: { change: () => context.actions.setActiveVisible(this.visibleInput.checked) },
     });
-    // Grid alignment: the object's placement stays on the lattice while this is on (README D42), so turning
+    // Grid alignment: the object's placement stays on the lattice while this is on, so turning
     // it on moves the object now rather than at its next edit. Off, a drag may leave it between cells.
     this.alignToGridInput = el('input', {
       type: 'checkbox',
       on: { change: () => context.actions.setActiveAlignToGrid(this.alignToGridInput.checked) },
     });
     // The active object's own grid level: raising it subdivides the payload without moving it, so the levels
-    // below the object's own are shown disabled — that is what says coarsening is not offered (README D43).
+    // below the object's own are shown disabled — that is what says coarsening is not offered.
     this.subdivisionSelect = el(
       'select',
       { on: { change: () => context.actions.setActiveSubdivision(Number(this.subdivisionSelect.value)) } },
       SUBDIVISIONS.map((level) => el('option', { value: String(level), text: String(level) })),
     );
     // The Grid group: one world grid, and one switch over it. It is the viewport's own flag rather than document
-    // state, so the app owns it and `refresh()` only reads it back (README D35).
+    // state, so the app owns it and `refresh()` only reads it back.
     this.worldGridInput = el('input', {
       type: 'checkbox',
       on: { change: () => context.actions.setGridVisible(this.worldGridInput.checked) },
@@ -400,9 +400,9 @@ export class Panels {
     // no control lives here. A button toggles its own window and carries `on` exactly while that window is
     // open, so the rail is the only place the column says which groups are on screen. Two buttons are
     // exceptions, each in what it does besides opening a window: `Edit` also selects the edit mode, whose
-    // tools it shows (README D39), so `refresh()` disables it while no object is active — that mode edits the
+    // tools it shows, so `refresh()` disables it while no object is active — that mode edits the
     // active object's voxels, and there is nothing to edit until one is chosen; and `Animation` opens no
-    // window at all, it shows and hides the timeline bar instead, under the same `on` rule (README D44).
+    // window at all, it shows and hides the timeline bar instead, under the same `on` rule.
     const rail = el('div', { class: 'rail' });
     let index = 0;
     const group = (title: string, content: (Node | string)[], onPress?: () => void): HTMLButtonElement => {
@@ -444,8 +444,8 @@ export class Panels {
       ],
       () => context.session.setMode('edit'),
     );
-    // Everything that is *about the camera* lives here — the lock that points the viewport at it, the carrier that
-    // aims it, and its projection — while the timeline bar keeps the keyframes, which are animation (README D46).
+    // Everything that is *about the camera* lives here — the carrier that
+    // aims it, and its projection — while the timeline bar keeps the keyframes, which are animation.
     this.cameraSelectButton = el('button', { on: { click: () => context.actions.toggleCameraControl() } });
     this.cameraModeButton = el('button', {
       title: 'switch the gizmo between moving and rotating the carrier',
@@ -514,8 +514,8 @@ export class Panels {
 
     group('Grid', [this.field('World grid', this.worldGridInput)]);
 
-    // The project file: the whole truth as one JSON document, written and read back by `document/serialize.ts`
-    // (README D51). The group sits last, so adding it left every other window at the staggered position it had.
+    // The project file: the whole truth as one JSON document, written and read back by `document/serialize.ts`.
+    // The group sits last, so adding it left every other window at the staggered position it had.
     group('Project', [
       el('div', { class: 'row' }, [
         el('button', {
@@ -558,7 +558,7 @@ export class Panels {
 
     if (!this.touched.exportFps) this.exportFpsInput.value = String(project.timeline.fps);
     if (!this.touched.exportFrom) this.exportFromInput.value = '0';
-    // The export range is seconds while the clip is authored in milliseconds (README D45).
+    // The export range is seconds while the clip is authored in milliseconds.
     if (!this.touched.exportTo) this.exportToInput.value = String(project.timeline.durationMs / 1000);
     if (!this.touched.cameraFov) this.cameraFovInput.value = String(project.camera.fov);
 

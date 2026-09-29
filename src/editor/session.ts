@@ -24,12 +24,12 @@ export type SelectionShape = 'box';
 /**
  * What the active object's voxels look like right now: its representation, the subdivision of its own grid,
  * and — for a `uniform` object with occupied cells — how large that content is, per axis, in cells. A cell is
- * `1 / subdivision` of the world unit (README D41, D43), so the cell counts are a size in cells and the
+ * `1 / subdivision` of the world unit, so the cell counts are a size in cells and the
  * subdivision is what says how much world each of them spans.
  */
 export type EditResolution = {
   representation: 'empty' | 'uniform';
-  /** The grid's own level, reported whenever the object has a grid at all (README D43). */
+  /** The grid's own level, reported whenever the object has a grid at all. */
   subdivision?: number;
   cells?: [number, number, number];
 };
@@ -78,7 +78,7 @@ export class EditorSession {
       if (grid === undefined) return { representation: 'empty' };
       const bounds = grid.bounds();
       // The subdivision is a property of the grid, so it is reported whenever one is attached, occupied or not
-      // (README D43); the cell counts need an occupied cell to have a size at all.
+      // — the cell counts need an occupied cell to have a size at all.
       if (bounds === null) return { representation: 'uniform', subdivision: grid.subdivision };
       return {
         representation: 'uniform',
@@ -96,7 +96,7 @@ export class EditorSession {
   /**
    * A selection names its object, so it never outlives a change of active object. Clearing the active object also
    * leaves the edit mode, because that mode edits one object's voxels and has nothing to do without one; the UI's
-   * two ways into it are disabled until an object is chosen again (README D39).
+   * two ways into it are disabled until an object is chosen again.
    */
   setActiveObject(id: ObjectId | null): void {
     if (id !== null && this.project.get(id) === undefined) {
@@ -157,7 +157,7 @@ export class EditorSession {
 
   /**
    * How deep an `add` drag builds. `1` is the box every drag draws — the one layer in front of the pressed face —
-   * so it is the value that means no override: only a field above one makes the drag commit a wall (README D19).
+   * so it is the value that means no override: only a field above one makes the drag commit a wall.
    */
   setAddHeight(height: number): void {
     if (!Number.isInteger(height) || height < 1) {

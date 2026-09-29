@@ -65,7 +65,7 @@ function createTrack(
 
 /**
  * `PropertyBinding` name of a track relative to the mixer root: the target's binding name plus the
- * channel path. `Playback.bind` assigns exactly those two binding names to the mirror nodes (D22).
+ * channel path. `Playback.bind` assigns exactly those two binding names to the mirror nodes.
  */
 function bindingName(
   project: Project,
@@ -102,7 +102,7 @@ export function buildClip(project: Project, only?: readonly ObjectId[]): Animati
         );
       }
       // The clip is seconds and the authoring timeline is milliseconds: this is the one place the two units meet,
-      // so playback, scrubbing, and the export keep working in seconds (README D45).
+      // so playback, scrubbing, and the export keep working in seconds.
       times[index] = keyframe.timeMs / 1000;
       const offset = index * valueSize;
       for (let component = 0; component < valueSize; component += 1) {

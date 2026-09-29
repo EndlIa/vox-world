@@ -54,7 +54,7 @@ class FloatingWindow {
    title bar still grabbable, and both clamped numbers are what the window keeps.
 6. `raise()` puts this window above the other windows without moving anything in the DOM: it collects the siblings in the same parent that carry
    the window class, sorts them by their current inline `z-index`, renumbers them from `BASE_Z` (15), and gives this window the next step. The
-   ladder is bounded by the number of windows in the parent — five in the panel — so it stays above `#hud` (10) whatever order the windows
+   ladder is bounded by the number of windows in the parent — seven in the panel — so it stays above `#hud` (10) whatever order the windows
    are pressed in; the voxelize modal is a native `dialog` in the top layer, so no window is ever on its ladder. Because the DOM is not touched, a press that raises a window cannot break
    the click that follows it, so `×` still closes a window that was not on top.
 7. `dispose()` is idempotent: it ends the drag in flight, calls every stored detach function, empties the list, removes `root` from the document,

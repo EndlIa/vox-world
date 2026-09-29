@@ -11,7 +11,7 @@ export type VoxelizePart = {
 
 /**
  * One source: the whole of one import in world space, because the caller bakes node transforms
- * (README D21), as the parts it is made of. Every part writes into the **same** payload: placement
+ * as the parts it is made of. Every part writes into the **same** payload: placement
  * uses the union AABB of them all and every part is translated by that one origin, while a cell an
  * earlier part claimed keeps its color and a later part skips it, so no two cells of one payload
  * coincide and the result is deterministic in part order.
@@ -47,7 +47,7 @@ export type VoxelizeResult =
 /** The app passes this as `budget`; `editor/ops.ts` imports it so an edit and a voxelization agree. */
 export const DEFAULT_CELL_BUDGET = 4_000_000;
 
-/** Triangles between two host yields and two progress reports; README §11. */
+/** Triangles between two host yields and two progress reports. */
 const CHUNK = 512;
 
 /**
@@ -144,8 +144,8 @@ function partsBounds(parts: readonly VoxelizePart[]): Aabb | null {
 
 /**
  * Placement of one source: the origin is the floor of the source's min corner, so every local
- * coordinate is `>= 0` and lands on the lattice, which is the world unit (README D41); the source is
- * refused when the grid it would need is wider than the container (README §12).
+ * coordinate is `>= 0` and lands on the lattice, which is the world unit; the source is
+ * refused when the grid it would need is wider than the container.
  *
  * `bounds` is the union AABB of the source's parts: one payload holds all of them, so the origin and
  * the fit are decided by what the parts cover together, and every part's soup is translated by that
@@ -184,8 +184,7 @@ function translatedPositions(positions: Float32Array, origin: Origin): Float32Ar
 }
 
 /**
- * Allocates the payload of one source once its every part passed, and drops the claimed cells with it
- * (README D12).
+ * Allocates the payload of one source once its every part passed, and drops the claimed cells with it.
  *
  * The claimed cells arrive with the color their claimant already resolved, so one cell is written once
  * no matter how many parts reached it: the merge in `voxelize` keeps the first part's color and drops

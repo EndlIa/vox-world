@@ -8,7 +8,7 @@ region operations (fill, clear, paint, extract) and allocation-free integer keys
 transform, identity, or scene state, and allocates no Three.js object per cell. The lattice is the world
 unit (`CELL_SIZE`) a grid subdivides: cell `(x, y, z)` occupies `[x / subdivision, (x + 1) / subdivision]` of a
 world unit, so a cell coordinate is a world coordinate times the subdivision the grid carries and the grid
-stores no size (README D41, D43).
+stores no size.
 
 ## Public interface
 ```ts
@@ -73,12 +73,12 @@ function boxEquals(a: IntBox3, b: IntBox3): boolean;
 - `packKey` and every coordinate-taking method throw `RangeError` for a non-integer or out-of-range axis value, naming the axis and the value; the accepted range is `[KEY_MIN, KEY_MAX]` per axis.
 - `create`/`assertSubdivision` throw `RangeError` for a subdivision that is not an integer power of two `>= 1`, and `subdividedBy` throws `RangeError` for a `levels` that is not a positive integer, both naming the offending value. A legal level whose blocks would leave the key space is not clamped: `packKey` throws out of `subdividedBy` instead, which is why `editor/ops.ts` checks the refined extents before asking.
 - An inverted box (`min > max` on an axis) is normalized by callers through `normalizeBox`; the region methods treat the box as given and inclusive, so an inverted box writes nothing and `boxCount` is `0` rather than throwing.
-- These are all programmer errors and throw; the grid has no `Result` type and never returns a silently degenerate value. The per-object voxel budget is not enforced here — callers check it before writing (README D12).
+- These are all programmer errors and throw; the grid has no `Result` type and never returns a silently degenerate value. The per-object voxel budget is not enforced here — callers check it before writing.
 
 ## Dependencies
 None. `CellKey`, `HexColor`, and `IntBox3` are declared here and imported from `voxels/uniform/grid.js` by
 `voxels/voxelize`, `three-runtime/scene.ts`, `three-runtime/overlay.ts`, and `editor/ops.ts`, which must not
-re-declare them. `CELL_SIZE` is the base cell size a grid subdivides (README D41): `voxels/voxelize/surface.ts`
+re-declare them. `CELL_SIZE` is the base cell size a grid subdivides: `voxels/voxelize/surface.ts`
 reads it for a voxel's half extent and `document/project.ts` for the cell an aligned object with no payload
 grid rounds to, while `three-runtime/scene.ts` draws each cube at the grid's own `cellSize` and
 `three-runtime/overlay.ts` takes the cell from its caller, so nothing may hard-code a second copy of the world

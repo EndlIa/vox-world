@@ -10,7 +10,7 @@ import { UniformGrid } from '../src/voxels/uniform/grid.js';
  * The drag is driven the way the browser drives it: the tool's own listeners are called with pointer events, the
  * picker answers with hits this file chooses, and the outcome is read off the document and the session. That is
  * what pins the two things a cell-to-world mapping can get wrong — which cell a face hit names, and what a box does
- * when the pointer leaves the model (README D19, D20, D41, D43).
+ * when the pointer leaves the model.
  */
 
 /** Every listener the tool registers, on the element and on `window`, so a test can drive them. */

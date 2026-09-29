@@ -3,14 +3,14 @@
 Ring: 4 · Layer: ui · Depends on: ./dom.js
 
 ## Responsibility
-The voxelization settings modal: the only place the voxel count is chosen (README D26). It shows a
+The voxelization settings modal: the only place the voxel count is chosen. It shows a
 modal card — a native `<dialog>` the platform puts in its top layer, with `::backdrop` dimming the page
 behind it (`index.html`) — seeds the count the prompt opens at and the model's per-axis extent from the
 `defaults()` callback it was constructed with, and
 answers one `VoxelizeDialogOutcome` per prompt: `{ kind: 'run', cellsAcross }` on confirm,
 `{ kind: 'cancel' }` on Cancel or Escape. The one field asks how long the model is in voxels, and the
 read-only dimensions beside it are what that count makes the model — an orientation readout, never the
-value the job is handed (README D29, D41). It owns no project state, calls nothing, and runs no
+value the job is handed. It owns no project state, calls nothing, and runs no
 job — it is a question, and the app acts on the answer.
 
 ## Public interface
@@ -45,14 +45,14 @@ class VoxelizeDialog {
    every window and the HUD), the page behind it becomes inert, Escape asks to close it, and closing it hands focus back to
    whatever held it. Seeding on every `open()` is what lets the app ask about a different model each time with no state
    kept here. The count is the seed that is a constant rather than something the model decides: every prompt opens at 96
-   whatever was imported, and the extent is what that count is read against to print the model's shape (README D29).
+   whatever was imported, and the extent is what that count is read against to print the model's shape.
 4. `syncFields()` runs on seeding and on the count's `input`: it writes the dimensions line and sets
    `voxelizeButton.disabled` from `readCount() === undefined`, so `Voxelize` is offered exactly while the count is one the
    app can voxelize at. The line reads the model's dimensions in voxels — `<x> × <y> × <z> voxels`, each axis
    `Math.max(1, Math.round((axis / longest) * count))` of the seeded extent, so the longest axis is the count itself — or
    `? voxels per axis` while the count does not parse, or `<count> voxels per axis` when the seeded extent has no positive
    axis to scale against. It is recomputed on every keystroke from the seeded extent, so it is orientation, not state: one
-   voxel is one world unit, so the line and the field are the same kind of number (README D41).
+   voxel is one world unit, so the line and the field are the same kind of number.
 5. `readCount()` is the count when it parses as an integer in `[1, 511]`, else `undefined`. The count is handed over exactly
    as read — only the dimensions line rounds, and the app scales the import by the count itself. The cap is deliberate: the
    count is capped at 511 because the container's key space fits 512 cells per axis and a payload whose extent touches both
@@ -95,7 +95,7 @@ class VoxelizeDialog {
 - The count is the whole request: it is the only number the user edits, it is what the app is handed, and the dimensions
   beside it are a readout the dialog recomputes from the seeded extent and rounds. The count is capped at 511 so a payload
   that spans one cell more than its count still fits the container's 512 cells per axis — and, since a cell is one world unit,
-  the count is also the model's length in the world (README D41).
+  the count is also the model's length in the world.
 - Every prompt is seeded on `open()`: the count from the constant `DEFAULT_VOXELS_ACROSS` — model independent, the same 96
   whatever was imported — and the extent from `defaults()`, which the model's shape does decide; the dialog holds no setting
   between prompts, no defaults, and no project state.
@@ -107,7 +107,7 @@ class VoxelizeDialog {
 
 ## Errors
 No `Result` and no reporting: the dialog validates nothing for anyone but itself (an unparsable field simply disables
-`Voxelize`), and a job's failure never reaches it — the app reports that (README D38). `open()` on a disposed dialog throws
+`Voxelize`), and a job's failure never reaches it — the app reports that. `open()` on a disposed dialog throws
 `TypeError`, which is a programmer error — `main` disposes the dialog only while tearing the page down.
 
 ## Dependencies
@@ -119,7 +119,7 @@ No `Result` and no reporting: the dialog validates nothing for anyone but itself
   which is why the modal needs no `z-index` of its own.
 - Page globals (`document`, `KeyboardEvent`, `SubmitEvent`) and nothing else: no Three.js, no project, no outer-ring import,
   and nothing in `ui` imports this file except `app/main.ts` — which also imports `DEFAULT_VOXELS_ACROSS`, the count it scales
-  an arriving import to. `VoxelizeTarget` is gone from the app (README D41), so this file no longer names
+  an arriving import to. `VoxelizeTarget` is gone from the app, so this file no longer names
   `../voxels/voxelize/voxelize.js` at all.
 
 ## Tests

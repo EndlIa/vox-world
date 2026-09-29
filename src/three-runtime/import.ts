@@ -7,7 +7,7 @@
  * `VoxelizeSource` for the voxelizer — one import is one source, and therefore one payload — and turns
  * an imported scene into the single document object that source attaches to.
  *
- * A stylized export's decorative outline shells are flagged rather than dropped (README D27): they are
+ * A stylized export's decorative outline shells are flagged rather than dropped: they are
  * kept as nodes, so the raw-mesh display and the object's source meshes still show them, but they are
  * left out of the voxel source and out of `voxelizeBounds` — the extent the sizes derived from an
  * import see.
@@ -39,7 +39,7 @@ const UV_COMPONENT_COUNT = 2;
 /** Bytes per texel in an image readback: RGBA. */
 const RGBA_COMPONENT_COUNT = 4;
 
-/** Required extensions this importer refuses instead of half-loading (README section 12). */
+/** Required extensions this importer refuses instead of half-loading. */
 const UNSUPPORTED_EXTENSIONS: readonly string[] = [
   'KHR_draco_mesh_compression',
   'EXT_meshopt_compression',
@@ -66,7 +66,7 @@ export type ImportedScene = {
   root: THREE.Object3D;
   /**
    * The longest edge of `voxelizeBounds` as the file authored it, before any scaling. One voxel is one
-   * world unit (README D41), so `scaleImportedScene` divides a requested voxel count by this to get the
+   * world unit, so `scaleImportedScene` divides a requested voxel count by this to get the
    * factor that puts the model on the lattice; keeping the authored number makes that factor absolute
    * rather than relative to whatever scale is currently applied.
    */
@@ -197,7 +197,7 @@ const LINE_OUTLINE_MATERIAL_NAME = 'line';
  * Colour is deliberately not consulted: an ordinary black part of the model — a tire, a window frame —
  * is geometry the user asked for, so inferring "outline" from a black material would delete real
  * content. The name is the only signal that says a mesh exists to be drawn around another one, and it
- * is the one the whole file agrees on (README D27, ported from shithill `54b73b6`).
+ * is the one the whole file agrees on.
  */
 export function isDedicatedLineOutlineMesh(mesh: THREE.Mesh): boolean {
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
@@ -223,7 +223,7 @@ const textureCache = new WeakMap<THREE.Texture, TexturePixels>();
  * `0xffffff` for a material that carries no color at all, plus the material's base color texture — its
  * `map`, which is the slot `MeshStandardMaterial` and `MeshBasicMaterial` (what `KHR_materials_unlit`
  * maps to) both use. A texture whose image cannot be read back is dropped rather than thrown, so a
- * textured material degrades to its factor (README section 9).
+ * textured material degrades to its factor.
  *
  * The material's `alphaTest` travels with it: glTF's `alphaMode: MASK` becomes it (0.5 by default), and
  * the sampler uses it to color a texel the cutoff masks out with the texture's visible average instead
@@ -246,7 +246,7 @@ export function buildColorSource(material: THREE.Material): ColorSource {
  * order, or `undefined` when the file has no node to voxelize.
  *
  * One import is one source and therefore one payload: `positions` is a fresh array with the node's
- * `matrixWorld` baked in, so downstream voxelization needs no hierarchy (README D21); `index` is the
+ * `matrixWorld` baked in, so downstream voxelization needs no hierarchy; `index` is the
  * geometry's own index, or a generated `0..n-1` one for non-indexed geometry (a soup is indexed by
  * construction); and the node's `ColorSource` travels unchanged, so per-material base color, vertex
  * colors, textures, UVs and `alphaTest` all survive. The parts share the source's placement and cell
@@ -273,7 +273,7 @@ export function buildVoxelizeSource(scene: ImportedScene): VoxelizeSource | unde
  * transform, with a null parent.
  *
  * The model's own placement is not this object's transform but each node's baked world matrix, which
- * every source mesh carries (README D25) and which voxelization bakes into the one source, so the
+ * every source mesh carries and which voxelization bakes into the one source, so the
  * object is an identity-transform container for one payload: before the payload arrives it shows the
  * raw meshes where their own matrices put them, and after it, the translation the payload's origin
  * needs and nothing more. `sourceId` is the id of the source `buildVoxelizeSource` builds for the same
@@ -302,9 +302,9 @@ function longestEdge(bounds: THREE.Box3): number {
 
 /**
  * Scales one imported scene so its longest voxelized edge is exactly `cellsAcross` cells — and, since a
- * cell is one world unit (README D41), `cellsAcross` world units. Every mesh node's baked matrix and
+ * cell is one world unit, `cellsAcross` world units. Every mesh node's baked matrix and
  * both bounds move with it, so the raw meshes the viewport draws stay exactly on the pose the scaled
- * source voxelizes (README D21, D24, D25).
+ * source voxelizes.
  *
  * The factor is absolute, computed against the extent the file authored (`authoredExtent`): calling this
  * twice with one count changes nothing, and calling it with another rescales the model instead of

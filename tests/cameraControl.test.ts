@@ -1,15 +1,15 @@
 /**
  * The camera carrier's drawing: what it puts in the scene, what its frustum is derived from, the two separations a
- * drag depends on — the pose node never carries the screen-size scale, and the scale never touches the pose — and the
- * fact that the drawing is three's `CameraHelper` on a display projection of the carrier's own. Node-side and
- * GPU-free: `three` builds geometry and uniforms without a renderer.
+ * drag depends on — the pose node never carries the drawing's fixed world-size scale, and that scale never touches
+ * the pose — and the fact that the drawing is three's `CameraHelper` on a display projection of the carrier's own.
+ * Node-side and GPU-free: `three` builds geometry and uniforms without a renderer.
  */
 
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { CameraControl } from '../src/three-runtime/cameraControl.js';
 
-/** The viewport decoration layer (README D24). */
+/** The viewport decoration layer. */
 const OVERLAY_LAYER = 1;
 
 function cameraHelper(control: CameraControl): THREE.CameraHelper {
@@ -98,8 +98,8 @@ describe('camera carrier', () => {
     expect(control.node.position.toArray()).toEqual([3, 4, 5]);
     expect(control.node.scale.toArray()).toEqual([1, 1, 1]);
 
-    // The drawing's size is a size in the scene, not a size on screen: one world unit per helper unit, whatever the
-    // viewport is doing — the zoomed-out view that used to inflate the carrier cannot reach it (README D46).
+    // The drawing's size is a fixed world size — `CARRIER_SCALE` helper units of one world unit each — not a size on
+    // screen, so a view that pulls back shrinks it along with everything else instead of inflating it.
     expect(helper.scale.toArray()).toEqual([1, 1, 1]);
 
     // A pose update moves the node and leaves the drawing's size alone.

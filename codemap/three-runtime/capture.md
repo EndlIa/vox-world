@@ -21,8 +21,8 @@ class Capture {
 ```
 
 ## Internal logic
-1. Constructor: `new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true, logarithmicDepthBuffer: true })` — the same depth buffer the viewport uses, so an exported frame cannot fight where the viewport does not (README D40) — then `setPixelRatio(1)` — export pixels are exact and `devicePixelRatio` must not scale them — `setSize(width, height, false)` so no canvas style is touched, `toneMapping = THREE.NoToneMapping`, and `outputColorSpace = THREE.SRGBColorSpace`. The canvas is never attached to the document; nothing is rendered until `render` is called.
-2. `render(scene, camera)` first sets `camera.aspect = width / height` and calls `camera.updateProjectionMatrix()`: the capture owns the export viewport, so it owns the aspect, while fov, near, far, and the transform stay the caller's data — in the app that camera is `SceneMirror.camera`, the output camera derived from `project.camera` (README D17).
+1. Constructor: `new THREE.WebGLRenderer({ antialias: false, alpha: false, preserveDrawingBuffer: true, logarithmicDepthBuffer: true })` — the same depth buffer the viewport uses, so an exported frame cannot fight where the viewport does not — then `setPixelRatio(1)` — export pixels are exact and `devicePixelRatio` must not scale them — `setSize(width, height, false)` so no canvas style is touched, `toneMapping = THREE.NoToneMapping`, and `outputColorSpace = THREE.SRGBColorSpace`. The canvas is never attached to the document; nothing is rendered until `render` is called.
+2. `render(scene, camera)` first sets `camera.aspect = width / height` and calls `camera.updateProjectionMatrix()`: the capture owns the export viewport, so it owns the aspect, while fov, near, far, and the transform stay the caller's data — in the app that camera is `SceneMirror.camera`, the output camera derived from `project.camera`.
 3. Then `renderer.setRenderTarget(null)` and `renderer.render(scene, camera)`, which sets the "a frame is available" flag. A mask frame is exactly this same call after `SceneMirror.setMaskMode(true)`; this file neither sets nor reads any mask color.
 4. `readFrame()` resolves `createImageBitmap(renderer.domElement)`, producing an `ImageBitmap` of exactly `width × height` pixels from the last successful render. The bitmap belongs to the caller, which must `close()` it after encoding; `Capture` keeps no reference to it.
 5. `resize(width, height)` re-sizes the renderer without touching the canvas style and clears the availability flag, so a frame can never be read at a size it was not rendered at.
@@ -32,7 +32,7 @@ class Capture {
 ## Invariants
 - Export resolution is `width × height` pixels regardless of the visible canvas size, its CSS size, or `devicePixelRatio`. This renderer-ownership boundary is the reason the class exists: `Capture` owns its `WebGLRenderer`, drawing buffer, and size, and nothing else renders into it, resizes it, or disposes it. The app's on-screen renderer is a different object and the two share no canvas or target.
 - One `render` call produces exactly one frame, and `readFrame` returns the most recent successfully rendered frame — never one from a previous size.
-- `Capture` holds no scene, camera, material, or color it did not receive as an argument, so `SceneMirror.setMaskMode(true)` plus `render` is the whole mask-pass mechanism and the `FrameSink` boundary (README D7) is fed from here.
+- `Capture` holds no scene, camera, material, or color it did not receive as an argument, so `SceneMirror.setMaskMode(true)` plus `render` is the whole mask-pass mechanism and the `FrameSink` boundary is fed from here.
 - No tone mapping and sRGB output mean a flat material color reaches the encoder as the hex value that was set, which is what makes the mask pass exact.
 - Scene visibility decides what is drawn: the export camera has only layer 0 enabled, so the overlay (layer 1) never reaches a frame.
 
@@ -47,7 +47,7 @@ class Capture {
 That is the whole list: `Capture` imports nothing from this repository, which is what keeps the export path independent of the mirror and the visible canvas.
 
 ## Tests
-- No vitest file: the node test environment has no WebGL context, and the brief forbids `WebGLRenderer` in tests. Verified by running an export (README §10) and inspecting the produced MP4: resolution equal to the requested export size on a differently sized viewport, one frame per timeline frame, and mask frames carrying flat per-object colors.
+- No vitest file: the node test environment has no WebGL context, and a test must not construct `WebGLRenderer`. Verified by running an export (README §10) and inspecting the produced MP4: resolution equal to the requested export size on a differently sized viewport, one frame per timeline frame, and mask frames carrying flat per-object colors.
 
 ## Open questions
 - `preserveDrawingBuffer: true` is set so a frame survives until the asynchronous `readFrame()`; if a caller ever reads the frame in the same task as `render`, it could be turned off for speed.

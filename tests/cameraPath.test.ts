@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { CameraPath } from '../src/three-runtime/cameraPath.js';
 
-/** The viewport decoration layer (README D24). */
+/** The viewport decoration layer. */
 const OVERLAY_LAYER = 1;
 
 function polyline(path: CameraPath): THREE.Line {

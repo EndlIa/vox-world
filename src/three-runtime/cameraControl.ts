@@ -4,26 +4,26 @@
  * It draws that camera with three's own `CameraHelper` — the library's frustum wireframe, whose triangle above the
  * near frame is what marks which way is up — inside a scaled child of the pose node. That node is what the edit
  * gizmo moves while the carrier is selected. Nothing here is document data: `app/main.ts` gives it the output
- * camera's pose and writes a drag or a field back into `project.camera` (README D46), so the carrier is a handle on
+ * camera's pose and writes a drag or a field back into `project.camera`, so the carrier is a handle on
  * the authored camera, not a second camera.
  *
  * `CameraHelper` derives its frame from a `Camera`'s projection, so the carrier owns a display-only
  * `PerspectiveCamera`: it is never added to a scene, never rendered, and never read for a matrix — only for the two
  * display planes and the projection below. Those planes are constants rather than the authored camera's own near
- * and far, which a kilometre-scale world (README D40) would turn into a frustum spanning the whole scene.
+ * and far, which a kilometre-scale world would turn into a frustum spanning the whole scene.
  *
  * Everything it draws is on layer 1, which is what keeps it out of the picker's raycast and out of every export
- * frame (README D24), and the node carries no name, so the mixer's binding walk can never reach it (D22).
+ * frame, and the node carries no name, so the mixer's binding walk can never reach it.
  *
  * The helper is a child of the node rather than the node itself: the node has to stay a pure pose for the gizmo's matrix
  * arithmetic, while the drawing keeps a size of its own. That size is fixed — `CARRIER_SCALE` helper units of one world
  * unit each — so the carrier is a scene-sized object: a view that pulls back shrinks it on screen along with everything
- * else, instead of inflating it into a huge wireframe (README D46).
+ * else, instead of inflating it into a huge wireframe.
  */
 
 import * as THREE from 'three';
 
-/** The viewport decoration layer (README D24); `overlay.ts`, `controls.ts`, and `grid.ts` use the same number. */
+/** The viewport decoration layer; `overlay.ts`, `controls.ts`, and `grid.ts` use the same number. */
 const OVERLAY_LAYER = 1;
 const DECORATION_RENDER_ORDER = 1000;
 
@@ -38,7 +38,7 @@ const FRUSTUM_FAR = 2;
 /**
  * The drawing's scale, in helper units of one world unit each: the near frame the pose is read from is one cell of the
  * lattice across and the far one is two. It is a fixed world size, not a screen size, so the carrier behaves like
- * anything else in the scene — the further the view pulls back, the smaller it gets (README D46).
+ * anything else in the scene — the further the view pulls back, the smaller it gets.
  */
 const CARRIER_SCALE = 1;
 
@@ -53,7 +53,7 @@ export class CameraControl {
   /** The pose node: the gizmo's target, and nothing else's business. */
   readonly node: THREE.Object3D;
 
-  /** The scaled drawing. Not the node, so a drag can never fight the screen-size rescale. */
+  /** The scaled drawing. Not the node, so the pose never carries the drawing's fixed world-size scale. */
   private readonly helper: THREE.Group;
   /** The display projection the frustum is built for: no scene, no renderer, no matrix anyone reads. */
   private readonly projection: THREE.PerspectiveCamera;

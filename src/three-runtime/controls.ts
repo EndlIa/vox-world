@@ -17,12 +17,12 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 
-/** The viewport decoration layer (README D24); `overlay.ts` uses the same number. */
+/** The viewport decoration layer; `overlay.ts` uses the same number. */
 const OVERLAY_LAYER = 1;
 /** Below this the camera sits on the orbit pivot, where rotation and dolly have no effect at all. */
 const MIN_ORBIT_RADIUS = 1e-4;
 
-/** Scratch view direction for `setOrbitTarget`, so retargeting allocates nothing. */
+/** Scratch view direction for `setViewFrom`, so restoring a view allocates nothing. */
 const _viewDirection = new THREE.Vector3();
 /** Scratch for the drag mapping: `desired = pivotNow * pivotStart⁻¹ * nodeStart`. */
 const _pivotStartInverse = new THREE.Matrix4();
@@ -62,7 +62,7 @@ export class ViewportControls {
   /**
    * Attaches the edit gizmo to one mirrored object, pivoting about `pivot`, a point in that object's own
    * local space — the content center its caller derives, so the handles sit on what the user edits
-   * instead of at the node's origin, which is the payload's min corner (README D25, D37).
+   * instead of at the node's origin, which is the payload's min corner.
    *
    * The gizmo drives a pivot proxy rather than the node, because `TransformControls` draws its handles at
    * the attached object's own origin and writes a drag into that object's own transform: attaching the node
@@ -118,7 +118,7 @@ export class ViewportControls {
 
     // The gizmo is viewport feedback like the overlay, so it lives on layer 1: the
     // picker's raycaster and the export camera both test layer 0 only, so no handle can be picked or
-    // captured (README D24). Its own handle raycasting reads the same layer, or the gizmo would stop
+    // captured. Its own handle raycasting reads the same layer, or the gizmo would stop
     // responding to the pointer.
     const helper = this.gizmo.getHelper();
     helper.traverse((child) => {
