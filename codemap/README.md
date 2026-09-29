@@ -26,11 +26,13 @@ resolution and no leaf-level editing.
    container is not a `Mesh`, an object's transform is not read out of an `Object3D`, and a `Mesh`
    is not a project object's identity. Everything else is fair game, and hand-rolling is the thing
    that has to be justified.
-3. **One space, one unit** — Y-up, right-handed, metres, and a world unit that is the lattice
-   constant: a cell is `1 / subdivision` of it (§6). Cell coordinates, box extents, object
-   transforms, and every size the UI reports are in that one unit, at the subdivision they belong
-   to. The output camera and the viewport share the convention, which is what lets one timeline and
-   one export path cover everything.
+3. **One space, one unit** — right-handed and **+Z up**, with `+X` right and `+Y` forward, metres,
+   and a world unit that is the lattice constant: a cell is `1 / subdivision` of it (§6), and the
+   ground is the `xy` plane. This is the frame of the project this one exchanges data with, so no
+   conversion is needed at that boundary. Cell coordinates, box extents, object transforms, and every
+   size the UI reports are in that one unit, at the subdivision they belong to. The output camera and
+   the viewport share the convention, which is what lets one timeline and one export path cover
+   everything.
 4. **Lightweight** — no speculative abstraction, no configurability that nothing sets, no wrapper
    where a plain module or a library call works.
 5. **Precedence** — conflicts here are about *our* boundaries (which module owns a piece of state,
@@ -120,8 +122,10 @@ value crossing it must be structured-cloneable.
 The viewport's grid is the one drawing taken from outside these lists — it still builds on `three`'s
 `Mesh`, `PlaneGeometry`, and `ShaderMaterial` — because `three` has no grid material and a shader grid
 is not worth hand-rolling, so the drawing comes from `@pmndrs/vanilla`'s `Grid`, the import registered
-in the ring table above; the file that uses it patches two things in the library's shaders that this
-viewport needs and the library does not do.
+in the ring table above; the file that uses it patches the library's shaders where this viewport needs
+it, one of them because that library lays its floor in a Y-up world's local `xz` plane while this
+world's ground is `xy`. The mesh is not turned instead: a turn would leave the floor standing as a
+wall.
 
 ## 5. Repository map
 
@@ -185,9 +189,10 @@ SceneObject {
   constant everything else is measured in. Raising `k` subdivides the model; every cell-to-world
   mapping (rendering, picking, the box preview, snapping, detach) follows it, and the object keeps
   its world placement. A grid therefore stores its subdivision and never a cell length.
-- Cell indexing is min-corner, in object-local space: a cell `(x, y, z)` of size `v` occupies
-  `[x·v, (x+1)·v]` on each axis, coordinates may be negative, and the packed integer key space covers
-  `[-512, 511]`. Min-corner indexing is what makes detach's re-indexing exact for odd-sized regions.
+- Cell indexing is min-corner, in object-local space, on the world's own axes — `x` right, `y`
+  forward, `z` up (§2): a cell `(x, y, z)` of size `v` occupies `[x·v, (x+1)·v]` on each axis,
+  coordinates may be negative, and the packed integer key space covers `[-512, 511]`. Min-corner
+  indexing is what makes detach's re-indexing exact for odd-sized regions.
 - Occupied cells map to a color stored as a hex number, the form `Color.getHex()` and
   `Color.setHex()` exchange, so conversion, color-space handling, and mixing go through
   `THREE.Color`. Cell keys are integers packed from the three coordinates, which keeps `Map` lookups
@@ -217,12 +222,16 @@ SceneObject {
   `project.camera`, and the one an export and the camera's `fov` tracks use. The **viewport** camera is
   app-owned runtime state, never project data: it is what navigation moves, what picking resolves
   against, and what `frameAll` fits. The viewport renders through the output camera only while a run
-  previews the shot; nothing retargets navigation, and no navigation writes the authored camera.
+  previews the shot; nothing retargets navigation, and no navigation writes the authored camera. Both
+  stand in the world's frame — `up = (0, 0, 1)`, written before the viewport's controls are built,
+  because `OrbitControls` takes its orbit axis from the camera's `up` in its constructor and cannot be
+  changed afterwards — so the `lookAt` inside `frameAll` rolls a fitted view to the world's `+Z` rather
+  than to three's default `y`.
 - Render layers separate what is edited, what is only shown, and what is exported:
   - **Layer 0** is scene content — the voxel instances and the output camera — and it is the only
     layer an export renders.
-  - **Layer 1** is viewport decoration: the box preview, the world grid, the camera carrier and its
-    path. It is never picked and never exported.
+  - **Layer 1** is viewport decoration: the box preview, the world grid on the `xy` ground, the camera
+    carrier and its path. It is never picked and never exported.
   - **Layer 2** is the imported source mesh, kept for the raw-mesh versus voxel comparison: the
     viewport camera enables 0, 1, and 2, the raycaster tests 0 and 2, the export camera and `Capture`
     use 0 alone, and `frameAll` measures 0 and 2 so an import frames the real model before any voxel
@@ -247,6 +256,9 @@ node directly, rather than a wrapper type invented for it.
 
 ## 8. Render and runtime conventions
 
+- **One frame, one conversion at the door.** The world is right-handed and Z-up (§2), so the ground
+  is the `xy` plane; glTF is Y-up by definition, so the parsed import root gets exactly one quarter
+  turn about `x` before any world matrix is read, and nothing else in the runtime converts an axis.
 - **Both renderers use a logarithmic depth buffer** — the viewport and the export capture — because a
   scene measured in metres can span kilometres. A `ShaderMaterial` that writes depth without three's
   `logdepthbuf` chunks sorts wrongly against the voxels, which is why the grid patches its library's
@@ -287,11 +299,11 @@ deferred is deferred deliberately, not forgotten.
   a new object; a click is a 1×1×1 box. `add` writes the box in front of the face it pressed — one
   cell on a click, and a wall `Add wall` cells deep on a drag — while `select`, `paint`, and `remove`
   take the cells the pointer names.
-- Viewport grid: one horizontal plane of shader-drawn lines on the world's ground, one white line per
-  world unit and a brighter one every twenty cells, switched by the Grid group's `World grid` box. It
-  is decoration: layer 1, never picked, never exported, and outside framing's measurement. Every voxel
-  face also carries a one-pixel border at 22% of its own colour, which is what makes a mass of cubes
-  read as countable cells.
+- Viewport grid: one plane of shader-drawn lines on the world's `xy` ground at `z = 0`, one white line
+  per world unit and a brighter one every twenty cells, switched by the Grid group's `World grid` box.
+  It is decoration: layer 1, never picked, never exported, and outside framing's measurement. Every
+  voxel face also carries a one-pixel border at 22% of its own colour, which is what makes a mass of
+  cubes read as countable cells.
 - Subdivision: raise one object's own grid to a finer level from the Scene group, and have every
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
 - Timeline: a whole-millisecond duration and frame rate, keyframes on object transforms and on the

@@ -23,17 +23,22 @@ function main(): void;
 ## Internal logic
 1. **Entry and project.** `index.html` pins the elements `main` resolves — `<canvas id="viewport">`, and the `#modebar`, `#panels`, `#timeline`, and `#hud`
    divs. The long-lived objects live in one `AppContext`; everything else stays `main`-local. The project opens with one demo voxel object — a
-   `DEMO_CELLS`³ cube of unit cells, placed off the origin — so the viewport is not empty before the first import, and a clip of `DEFAULT_DURATION_MS`
-   (10 000, the authoring unit, i.e. ten seconds once the clip is compiled) at `DEFAULT_FPS`. A cell coordinate is a world coordinate, so the demo content
-   occupies the cells it names.
-2. **Viewport.** `viewportCamera` is app-owned viewport state with camera layers 1 and 2 enabled: the viewport draws the overlay, the gizmo, and the other
-   decorations (layer 1) and the imported raw meshes (layer 2), while the raycaster tests layers 0 and 2 and the export camera — and the `Capture` that
-   renders through it — tests layer 0 alone. `mirror.camera` is the output camera; the `Capture` opens at the initial export size and every export resizes
+   `DEMO_CELLS`³ cube of unit cells, standing off the origin on the world's xy ground, so the viewport is not empty before the first import — and a clip
+   of `DEFAULT_DURATION_MS` (10 000, the authoring unit, i.e. ten seconds once the clip is compiled) at `DEFAULT_FPS`. A cell coordinate is a world
+   coordinate, so the demo content occupies the cells it names. The demo's opening shot is placed here too, from `OPENING_SHOT_POSITION` aimed at
+   `OPENING_SHOT_TARGET`: a camera that stands off the content and looks at it, because a document's own camera starts at the identity transform, which in
+   this Z-up world is a camera at the origin looking straight down its own `-Z`.
+2. **Viewport.** `viewportCamera` is app-owned viewport state built on the world's frame — `up` set to the z axis before `ViewportControls` is built,
+   because `OrbitControls` snapshots `object.up` into its orbit axis in its constructor — with camera layers 1 and 2 enabled: the viewport draws the
+   overlay, the gizmo, and the other decorations (layer 1) and the imported raw meshes (layer 2), while the raycaster tests layers 0 and 2 and the export
+   camera — and the `Capture` that renders through it — tests layer 0 alone. `mirror.camera` is the output camera; the `Capture` opens at the initial export size and every export resizes
    it to the resolution the panel asked for. Everything else in this step is viewport-only decoration: on layer 1, holding no document data, never picked,
    never in an export frame, and never bound by the mixer. That is the `Overlay`, the `WorldGrid` (its `root` added to `mirror.scene`), the `CameraControl`
    — the runtime-only carrier the edit gizmo aims the output camera with, which reports the authored camera rather than owning data and pivots at
    `CAMERA_CONTROL_PIVOT`, its own origin, the camera position — and the `CameraPath`, the runtime-only drawing of the authored camera's trajectory, hidden
-   and unnamed and holding the points the app hands it. The viewport is fitted once at boot.
+   and unnamed and holding the points the app hands it. `DEFAULT_VIEW_OFFSET` aims the viewport once before that fit — from the front-right and above —
+   because a camera looks along its own `-Z`, which is this world's downward axis, and `frameAll` preserves the direction it is handed: an unaimed
+   viewport would open on a top-down view of the ground. The viewport is fitted once at boot.
 3. **Editor objects.** The pointer tool takes its two live lookups — the camera that drew the frame, and the gizmo's claim — as closures, so neither is
    cached across frames and a left press on empty space still reaches picking while the gizmo is attached; `controls` exists before the tool, and the
    lookup is deferred to call time. Its two callbacks keep the UI and the mirror in step: a session change re-syncs the gizmo, marks the active object
@@ -234,8 +239,11 @@ function main(): void;
   again, to the count the user answered with. Both go through `scaleImportedScene`, whose factor is absolute against the file's `authoredExtent`, so
   the second call replaces the first rather than compounding, and the fitted view, the raw meshes, and the payload are all in that one unit.
 - The render loop never reads or writes voxel data, and playback writes only mirror `Object3D` transforms and the camera `fov`.
-- Authored camera pose (`project.camera.transform`) is written by exactly three paths and no others: `applyCameraMatrix`, on a carrier drag's commit;
-  `setCameraPose`, the numeric grid's whole-pose write; and `cameraToView`. Navigation never writes it: it flies the viewport camera, so the authored
+- Authored camera pose (`project.camera.transform`) is written by exactly four call sites and no others: the demo bootstrap in step 1, which places the
+  opening shot before any UI exists; `applyCameraMatrix`, on a carrier drag's commit;
+  `setCameraPose`, the numeric grid's whole-pose write; and `cameraToView`, through `captureViewAsCamera`. The bootstrap's write is what keeps the shot
+  from being the document's default identity pose, which in this Z-up world looks straight
+  down the camera's own `-Z`. Navigation never writes it: it flies the viewport camera, so the authored
   camera is only ever moved by an explicit gesture on the carrier. `project.camera.fov` is written only by `setCameraFov`, which `setCameraPose` routes its FOV through. Nothing else reads a mirror
   transform back into the document while the mixer is running.
 - A run of the clip is the app's transport and it is reversible: `togglePlayback` is the only entry point, `startPlayback` captures `playbackView` before
@@ -243,8 +251,10 @@ function main(): void;
   stopped at or ends with the playhead and the view back at the values it started from.
 - A playback end writes no authored data: handing the view over and restoring the saved view both go through `controls.setViewFrom`, which touches no
   document, so neither a running clip nor a handoff can drift the authored camera pose.
-- `viewportCamera` (app-owned) renders every frame a run is not previewing, drives navigation, picking, and fitting, and it is the only camera navigation ever moves. Picking asks for
-  it through `getCamera()`, and the output camera never gains layer 1 or layer 2, so neither a decoration nor a raw mesh can reach an export.
+- `viewportCamera` (app-owned) carries the world's up axis — `up` on z, set before the orbit controls exist — and its opening direction is
+  `DEFAULT_VIEW_OFFSET`, so the first fit frames the ground from a three-quarter view and never from straight above; it renders every frame a run is not
+  previewing; it drives navigation, picking, and fitting, and it is the only camera navigation ever moves.
+  Picking asks for it through `getCamera()`, and the output camera never gains layer 1 or layer 2, so neither a decoration nor a raw mesh can reach an export.
 - Every imported node gets exactly one raw mesh on layer 2, attached by `attachSourceMeshes` right after `adoptImportedScene` to the import's single object
   and handed that node's own baked `node.matrixWorld`; the meshes share the imported geometry and materials, the app keeps
   them in `lastImport.meshes` (and so in `sourceMeshes` for teardown), the mirror never disposes them, and teardown detaches them.

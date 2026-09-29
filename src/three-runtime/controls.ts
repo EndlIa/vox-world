@@ -54,6 +54,9 @@ export class ViewportControls {
     this.domElement = domElement;
     this.camera = camera;
 
+    // `OrbitControls` captures the camera's `up` as its orbit axis in its own constructor, so the axis is
+    // whatever the caller set before this line: this world is Z-up, and `src/app/main.ts` sets
+    // `camera.up = (0, 0, 1)` before building these controls. Nothing after this point can change it.
     this.orbit = new OrbitControls(camera, domElement);
     this.orbit.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
     this.orbit.enableDamping = true;

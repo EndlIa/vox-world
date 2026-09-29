@@ -11,6 +11,7 @@ import {
   GRID_SECTION_SIZE,
   WorldGrid,
   withAnisotropicAttenuation,
+  withGroundPlaneInXY,
   withoutDistanceFade,
   withLogDepth,
 } from '../src/three-runtime/grid.js';
@@ -65,10 +66,17 @@ describe('world grid', () => {
 
   it('lies in the world\u2019s ground plane rather than standing up as a wall', () => {
     const grid = new WorldGrid();
-    // Two halves make the floor: the library's vertex program swizzles the quad into its local `xz` plane
-    // (`localPosition = position.xzy`), and the mesh carries no rotation of its own on top of that. A turn here —
-    // which this port had — stands the grid up instead, and the app then renders no grid at all.
+    // The library is built for a Y-up world: its vertex program swizzles the quad into a local `xz` plane
+    // (`localPosition = position.xzy`) and its line function measures `xz`. This world's ground is `xy`, so the patch
+    // moves both ends, and the mesh carries no rotation of its own on top of that — a turn here would stand the grid
+    // up as a wall, and the app would then draw it edge-on to the camera.
     expect(material(grid).vertexShader).toContain('position.xzy');
+    expect(material(grid).fragmentShader).toContain('localPosition.xz');
+    const patched = withGroundPlaneInXY(material(grid).vertexShader, material(grid).fragmentShader);
+    expect(patched.vertexShader).not.toContain('position.xzy');
+    expect(patched.vertexShader).toContain('localPosition = position;');
+    expect(patched.fragmentShader).not.toContain('localPosition.xz');
+    expect(patched.fragmentShader).toContain('localPosition.xy');
     expect(plane(grid).quaternion.toArray()).toEqual([0, 0, 0, 1]);
     grid.dispose();
   });
@@ -76,7 +84,7 @@ describe('world grid', () => {
   it('follows the camera on whole cells and keeps its height on the world\u2019s ground', () => {
     const grid = new WorldGrid();
     grid.update(cameraAt(3.4, 12.6, -8.1));
-    expect(plane(grid).position.toArray()).toEqual([3, 0, -8]);
+    expect(plane(grid).position.toArray()).toEqual([3, 13, 0]);
     // Snapping is what keeps the lines on the cell boundaries instead of sliding with the view.
     grid.update(cameraAt(-0.6, 0.2, 0.49));
     expect(plane(grid).position.toArray()).toEqual([-1, 0, 0]);
@@ -111,6 +119,17 @@ describe('grid shader patches', () => {
     expect(patched.fragmentShader).toContain('#include <logdepthbuf_fragment>');
   });
 
+  it('moves the library\u2019s ground plane out of its `xz` and into `xy`, and leaves any other source alone', () => {
+    const vertex = '  localPosition = position.xzy;\n';
+    const fragment = 'vec2 r = localPosition.xz / size;\n';
+    const patched = withGroundPlaneInXY(vertex, fragment);
+    expect(patched.vertexShader).toBe('  localPosition = position;\n');
+    expect(patched.fragmentShader).toBe('vec2 r = localPosition.xy / size;\n');
+    // A source carrying neither line comes back as it went in.
+    const source = { vertexShader: 'void main() {\n}\n', fragmentShader: 'void main() {\n}\n' };
+    expect(withGroundPlaneInXY(source.vertexShader, source.fragmentShader)).toEqual(source);
+  });
+
   it('attenuates a line by how fast it varies across a pixel', () => {
     const source = 'float getGrid(float size, float thickness) { return 1.0 - min(line, 1.0); }';
     const patched = withAnisotropicAttenuation(source);
@@ -127,14 +146,19 @@ describe('grid shader patches', () => {
   it('adapts the library\u2019s own shader where the material compiles it', () => {
     const grid = new WorldGrid();
     const shader = {
-      vertexShader: 'void main() {\n}\n',
+      vertexShader: 'localPosition = position.xzy;\nvoid main() {\n}\n',
       fragmentShader:
-        'float getGrid(float size, float thickness) { return 1.0 - min(line, 1.0); }\nfloat d = 1.0 - min(dist / fadeDistance, 1.0);\nvoid main() {\n}\n',
+        'float getGrid(float size, float thickness) {\n  vec2 r = localPosition.xz / size;\n  return 1.0 - min(line, 1.0);\n}\nfloat d = 1.0 - min(dist / fadeDistance, 1.0);\nvoid main() {\n}\n',
     };
     material(grid).onBeforeCompile(shader as THREE.WebGLProgramParametersWithUniforms, null as unknown as THREE.WebGLRenderer);
     expect(shader.fragmentShader).toContain('float d = 1.0;');
     expect(shader.fragmentShader).toContain('dFdx(r.x)');
     expect(shader.vertexShader).toContain('#include <logdepthbuf_vertex>');
+    // The ground moves from the library's `xz` plane to this world's `xy` one, on both ends of the shader.
+    expect(shader.vertexShader).toContain('localPosition = position;');
+    expect(shader.vertexShader).not.toContain('position.xzy');
+    expect(shader.fragmentShader).toContain('localPosition.xy');
+    expect(shader.fragmentShader).not.toContain('localPosition.xz');
     grid.dispose();
   });
 });

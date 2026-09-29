@@ -141,7 +141,9 @@ export class SceneMirror {
     this.scene.add(this.ambientLight);
 
     const sun = new THREE.DirectionalLight(0xffffff, DIRECTIONAL_INTENSITY);
-    sun.position.set(4, 8, 6);
+    // The world is Z-up, so the light comes from above in +Z with its corner offset in x and y: a Y-up aim
+    // would light the scene from the horizon.
+    sun.position.set(4, 6, 8);
     this.scene.add(sun);
 
     // The one material every voxel instance shares, carrying the per-face border on top of its shading:
@@ -154,6 +156,9 @@ export class SceneMirror {
 
     const settings = project.camera;
     this.camera = new THREE.PerspectiveCamera(settings.fov, 1, settings.near, settings.far);
+    // The world is Z-up and three's default `up` is Y, so a later `lookAt` on this output camera would roll the
+    // frame a quarter turn without this. Set before the author's pose is copied on, which is what aims it.
+    this.camera.up.set(0, 0, 1);
     this.camera.name = 'camera';
     this.camera.position.copy(settings.transform.position);
     this.camera.quaternion.copy(settings.transform.quaternion);

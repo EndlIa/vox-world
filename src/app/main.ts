@@ -4,8 +4,8 @@
  * the render loop; it owns no algorithm, only calls into inner rings.
  */
 
-import { Mesh, PerspectiveCamera, Vector3, WebGLRenderer } from 'three';
-import type { Box3, Matrix4, Object3D, Quaternion } from 'three';
+import { Matrix4, Mesh, PerspectiveCamera, Vector3, WebGLRenderer } from 'three';
+import type { Box3, Object3D, Quaternion } from 'three';
 import { Project } from '../document/project.js';
 import type { ObjectId, ProjectData } from '../document/project.js';
 import { readJson, toJson } from '../document/serialize.js';
@@ -81,6 +81,22 @@ type ImportedAssets = {
 const VIEWPORT_FOV = 60;
 const VIEWPORT_NEAR = 0.1;
 const VIEWPORT_FAR = 5000;
+/**
+ * Where the viewport camera is aimed before its first fit, in world units: from the front-right and above. A camera
+ * looks along its own `-Z`, which in this Z-up world is straight down, so an unaimed viewport would open on a
+ * top-down view of the ground. Only the direction matters: `frameAll` keeps the direction it is handed and moves the
+ * camera to fit.
+ */
+const DEFAULT_VIEW_OFFSET = new Vector3(6, -8, 5);
+/** The world's up axis, as the value every camera's frame is aimed with. */
+const WORLD_UP = new Vector3(0, 0, 1);
+/**
+ * The demo project's opening shot, in world units: the camera stands on the far side of the demo content and aims at
+ * it, so the shot is a real one and the carrier the viewport draws points at what it frames. A document's own camera
+ * starts at the identity transform, which in this Z-up world is a camera at the origin looking straight down its `-Z`.
+ */
+const OPENING_SHOT_POSITION = new Vector3(-5, 6, 4);
+const OPENING_SHOT_TARGET = new Vector3(0, 0, 2);
 /** Initial capture size; every export resizes the capture to what the panel asked for. */
 const DEFAULT_EXPORT_WIDTH = 1280;
 const DEFAULT_EXPORT_HEIGHT = 720;
@@ -135,7 +151,8 @@ function buildDemoGrid(): UniformGrid {
   for (let x = 0; x < DEMO_CELLS; x += 1) {
     for (let y = 0; y < DEMO_CELLS; y += 1) {
       for (let z = 0; z < DEMO_CELLS; z += 1) {
-        grid.set(x, y, z, y === DEMO_CELLS - 1 ? DEMO_TOP_COLOR : DEMO_COLOR);
+        // The world's up axis is z, so the lid the top colour marks is the highest z, not the highest y.
+        grid.set(x, y, z, z === DEMO_CELLS - 1 ? DEMO_TOP_COLOR : DEMO_COLOR);
       }
     }
   }
@@ -165,11 +182,27 @@ export function main(): void {
     name: 'Demo cube',
     maskColor: project.nextMaskColor(),
     payload: { kind: 'uniform', grid: buildDemoGrid() },
-    position: new Vector3(-2, 0, -2),
+    // The world's ground is the xy plane, so the cube stands off the origin with its base at z = 0.
+    position: new Vector3(-2, -2, 0),
   });
+  // The demo's opening shot: a camera that stands off the content and aims at it, so the shot is a real one and the
+  // carrier the viewport draws points at what it frames. The document's own camera starts at the identity transform —
+  // at the origin, looking down its own `-Z`, which in this Z-up world is straight down at the ground.
+  project.camera.transform.position.copy(OPENING_SHOT_POSITION);
+  project.camera.transform.quaternion.setFromRotationMatrix(
+    new Matrix4().lookAt(OPENING_SHOT_POSITION, OPENING_SHOT_TARGET, WORLD_UP),
+  );
 
   // 2. Viewport: renderer, mirror and its output camera, navigation, decorations, capture.
   const viewportCamera = new PerspectiveCamera(VIEWPORT_FOV, 1, VIEWPORT_NEAR, VIEWPORT_FAR);
+  // The world's up axis is z and three's camera default is y, and `OrbitControls` snapshots `object.up` into its
+  // orbit axis in its constructor — so this has to be set before `ViewportControls` builds them, or the viewport
+  // would orbit about the wrong axis and every later `lookAt` would roll the frame a quarter turn.
+  viewportCamera.up.copy(WORLD_UP);
+  // The view the app opens on, aimed once here: `frameAll` preserves the direction it is handed, so an unaimed
+  // camera would fit the ground from directly above — a camera looks along its own `-Z`, and that is this world's down.
+  viewportCamera.position.copy(DEFAULT_VIEW_OFFSET);
+  viewportCamera.lookAt(0, 0, 0);
   // The overlay and the gizmo live on camera layer 1 and the imported raw meshes on layer 2
   // so the viewport camera draws both while the raycaster tests layers 0
   // and 2 and the export camera — and the `Capture` that renders through it — stays on layer 0 alone.

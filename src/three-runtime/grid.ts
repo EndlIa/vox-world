@@ -12,11 +12,13 @@
  * overall plane alpha: a dark translucent surface over this viewport's slate
  * background would only darken what is already there.
  *
- * The quad lies in the world's `xz` plane without any turn of its own: the library's vertex program swizzles the
- * geometry (`localPosition = position.xzy`) before the model matrix, so an unturned `PlaneGeometry` already lies in
- * the plane whose normal is the world's up. Turning the mesh as well would stand the grid up as a wall, and the
- * library's own `followCamera`/`infiniteGrid` are off for the related reason: both move the grid inside the shader,
- * while the quad is moved instead, by whole cells.
+ * The quad lies in the world's `xy` plane, which is this world's ground, without any turn of its own. The library is
+ * written for a Y-up world: its vertex program swizzles the geometry into its own local `xz` plane
+ * (`localPosition = position.xzy`) and its line function measures that plane's `xz` coordinates, so
+ * `withGroundPlaneInXY` removes the swizzle and moves the line function onto `xy` as well. That is the whole
+ * orientation story — turning the mesh instead would stand the grid up as a wall, and the library's own
+ * `followCamera`/`infiniteGrid` are off for the related reason: both move the grid inside the shader, while the quad
+ * is moved instead, by whole cells.
  *
  * The whole grid is decoration: layer 1, so the picker's raycaster (layers 0 and 2) never hits it and no export
  * frame contains it, and `depthWrite = false`, so it cannot occlude a voxel below the plane. The camera
@@ -81,6 +83,24 @@ export function withLogDepth(
 }
 
 /**
+ * Puts the library's ground in the world's `xy` plane, which is the ground this world stands on.
+ *
+ * The library is written for a Y-up world: its vertex program swizzles the quad's own `xy` into a local `xz` plane
+ * (`localPosition = position.xzy`), and its line function measures that plane's `xz` coordinates. Both ends move
+ * here — the swizzle goes, and the line function reads `xy` — so the quad stays unturned and its own geometry is the
+ * ground plane. Pure, and a no-op on a source that carries neither line.
+ */
+export function withGroundPlaneInXY(
+  vertexShader: string,
+  fragmentShader: string,
+): { vertexShader: string; fragmentShader: string } {
+  return {
+    vertexShader: vertexShader.replace('localPosition = position.xzy;', 'localPosition = position;'),
+    fragmentShader: fragmentShader.replace('vec2 r = localPosition.xz / size;', 'vec2 r = localPosition.xy / size;'),
+  };
+}
+
+/**
  * Fades a line by how fast it varies across a pixel, which is what a unit grid needs in the distance.
  *
  * The library saturates a line as its spacing shrinks (`min(line, 1.0)`), which stops it flickering but leaves the
@@ -140,9 +160,10 @@ export class WorldGrid {
     const material = mesh.material as THREE.ShaderMaterial;
     material.depthWrite = false;
     material.onBeforeCompile = (shader): void => {
-      const patched = withLogDepth(shader.vertexShader, shader.fragmentShader);
-      shader.vertexShader = patched.vertexShader;
-      shader.fragmentShader = withoutDistanceFade(withAnisotropicAttenuation(patched.fragmentShader));
+      const depth = withLogDepth(shader.vertexShader, shader.fragmentShader);
+      const plane = withGroundPlaneInXY(depth.vertexShader, depth.fragmentShader);
+      shader.vertexShader = plane.vertexShader;
+      shader.fragmentShader = withoutDistanceFade(withAnisotropicAttenuation(plane.fragmentShader));
     };
     this.plane = mesh;
 
@@ -162,14 +183,14 @@ export class WorldGrid {
 
   /**
    * Puts the plane on the camera: its two coordinates follow the camera snapped to whole cells, and its height stays
-   * the world's ground, `y = 0`. Snapping is what keeps the lines on the cell boundaries rather than sliding with
+   * the world's ground, `z = 0`. Snapping is what keeps the lines on the cell boundaries rather than sliding with
    * the view, and the height is the plane's own — a grid is a floor here, not a plane to be aimed.
    */
   update(camera: THREE.Camera): void {
     this.plane.position.set(
       Math.round(camera.position.x / GRID_CELL_SIZE) * GRID_CELL_SIZE,
+      Math.round(camera.position.y / GRID_CELL_SIZE) * GRID_CELL_SIZE,
       0,
-      Math.round(camera.position.z / GRID_CELL_SIZE) * GRID_CELL_SIZE,
     );
   }
 

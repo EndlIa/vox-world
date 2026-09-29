@@ -7,6 +7,11 @@
  * `VoxelizeSource` for the voxelizer — one import is one source, and therefore one payload — and turns
  * an imported scene into the single document object that source attaches to.
  *
+ * glTF is Y-up by definition and this world is Z-up, so the parsed root is turned a quarter turn about
+ * x once, before any matrix is read: the whole import — the raw meshes, the node world matrices and the
+ * world-space voxelize soup — is thereby in this world's frame, and no consumer needs to know a GLB
+ * came in.
+ *
  * A stylized export's decorative outline shells are flagged rather than dropped: they are
  * kept as nodes, so the raw-mesh display and the object's source meshes still show them, but they are
  * left out of the voxel source and out of `voxelizeBounds` — the extent the sizes derived from an
@@ -120,6 +125,12 @@ export async function importGlb(data: ArrayBuffer): Promise<ImportResult> {
   }
 
   const root = gltf.scene;
+  // glTF is Y-up by definition while this world is Z-up, so the parsed root gets one quarter turn about
+  // x before any matrix is read: glTF's up `(0, 1, 0)` becomes `(0, 0, 1)`, its camera-style forward
+  // (the local `-Z`) becomes `(0, 1, 0)`, and `(1, 0, 0)` stays put. This is the single place the frame
+  // changes — every world matrix read below and the raw meshes themselves are then Z-up already, so
+  // consumers see this world's frame without knowing a GLB came in.
+  root.rotation.x = Math.PI / 2;
   root.updateMatrixWorld(true);
 
   // The GLB scene's own name is the import's name: the model is one object, and this is what names it
@@ -311,8 +322,9 @@ function longestEdge(bounds: THREE.Box3): number {
  * compounding. Only a uniform scale is applied and no translation, so the model keeps the position the
  * file gave it.
  *
- * The scale lives on `root`, which carries no transform of its own — a glTF scene node has none — so a
- * recomputed `Box3.setFromObject(root)` agrees with the nodes and the bounds again. A scene whose
+ * The scale lives on `root`, whose only transform is the import's frame rotation — a glTF scene node
+ * itself carries none — so setting it leaves that frame alone, and `root.updateMatrixWorld(true)` makes
+ * a recomputed `Box3.setFromObject(root)` agree with the nodes and the bounds again. A scene whose
  * voxelized content has no extent (every node an outline, or geometry without size) has no factor to
  * apply and is returned as it is.
  */
