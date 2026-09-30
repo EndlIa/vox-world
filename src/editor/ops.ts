@@ -13,9 +13,12 @@ import {
   regionCount,
 } from '../voxels/uniform/region.js';
 import type { RegionShape } from '../voxels/uniform/region.js';
+import { createPrimitive as createPrimitiveGrid, primitiveCellCount } from '../voxels/uniform/generator.js';
+import type { PrimitiveSpec } from '../voxels/uniform/generator.js';
 import { DEFAULT_CELL_BUDGET, type VoxelizeResult } from '../voxels/voxelize/voxelize.js';
 import type { Selection } from './session.js';
-import type { Matrix4, Vector3 } from 'three';
+import { Vector3 } from 'three';
+import type { Matrix4 } from 'three';
 
 /**
  * What an edit did. A user-facing failure is data here, never an exception; detach's own literals
@@ -157,6 +160,65 @@ export function detachSelection(project: Project, selection: Selection): OpResul
   });
   if (!result.ok) return { ok: false, error: result.error, detail: result.detail };
   return { ok: true, detail: `detached ${result.name} as ${result.objectId}`, objectId: result.objectId };
+}
+
+/**
+ * Creates one object holding a primitive: the payload the spec asks for, on the world lattice, with an id and a mask
+ * color of its own. The spec's own upper bound is what the budget is checked against, before the payload is built, so
+ * an oversized primitive is refused with data rather than by allocating it first.
+ *
+ * A spec that names no cells — a size of zero, a radius of nothing — is data too, because a spec comes from a form:
+ * the generator's `RangeError` is turned into `'invalid-primitive'` here rather than reaching the caller as a throw.
+ */
+export function createPrimitive(
+  project: Project,
+  spec: PrimitiveSpec,
+  color: HexColor,
+): OpResult & { objectId?: ObjectId } {
+  let bound: number;
+  try {
+    bound = primitiveCellCount(spec);
+  } catch (error) {
+    return {
+      ok: false,
+      error: 'invalid-primitive',
+      detail: error instanceof Error ? error.message : 'the spec names no cells',
+    };
+  }
+  if (bound > DEFAULT_CELL_BUDGET) {
+    return {
+      ok: false,
+      error: 'budget-exceeded',
+      detail: `${bound} cells would exceed the budget of ${DEFAULT_CELL_BUDGET}`,
+    };
+  }
+  const object = project.createVoxelObject({
+    name: primitiveName(spec.kind),
+    parentId: null,
+    maskColor: project.nextMaskColor(),
+    payload: { kind: 'uniform', grid: createPrimitiveGrid(spec, color) },
+    // A primitive is created on the lattice: its payload starts at its own origin and the object is placed on a whole
+    // cell of the world, which is what makes `alignToGrid` true for it.
+    position: new Vector3(0, 0, 0),
+  });
+  const cells = object.uniform?.size ?? 0;
+  return { ok: true, detail: `created ${object.name} as ${object.id} with ${cells} cells`, objectId: object.id, cells };
+}
+
+/** The name a new primitive carries, so the Scene list says what was made rather than which call made it. */
+function primitiveName(kind: PrimitiveSpec['kind']): string {
+  switch (kind) {
+    case 'box':
+      return 'Box';
+    case 'sphere':
+      return 'Sphere';
+    case 'isometric':
+      return 'Isometric';
+    case 'terrain':
+      return 'Terrain';
+    default:
+      return 'Primitive';
+  }
 }
 
 export function createGroup(project: Project, name: string): OpResult & { objectId: ObjectId } {

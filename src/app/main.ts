@@ -29,6 +29,7 @@ import type { EditResolution } from '../editor/session.js';
 import {
   applyVoxelizeResult,
   createGroup,
+  createPrimitive,
   deleteObject,
   renameObject,
   reparentObject,
@@ -40,6 +41,7 @@ import {
 } from '../editor/ops.js';
 import { PointerTool } from '../editor/pointer.js';
 import { EditHistory } from '../editor/history.js';
+import type { PrimitiveKind, PrimitiveSpec } from '../voxels/uniform/generator.js';
 import type { PointerCallbacks } from '../editor/pointer.js';
 import { DEFAULT_CELL_BUDGET, voxelize } from '../voxels/voxelize/voxelize.js';
 import type { VoxelizeSource } from '../voxels/voxelize/voxelize.js';
@@ -194,6 +196,9 @@ export function main(): void {
   const project = new Project();
   /** The session's undo stack: it holds edits, never the camera or the timeline (see `editor/history.ts`). */
   const history = new EditHistory(project);
+  // The seed a created landscape grows from. One constant, so the same shape comes out every time and a different
+  // landscape is a deliberate change here rather than a surprise in the panel.
+  const CREATE_TERRAIN_SEED = 1;
   project.setDuration(DEFAULT_DURATION_MS);
   project.timeline.fps = DEFAULT_FPS;
   project.createVoxelObject({
@@ -330,6 +335,7 @@ export function main(): void {
       openProject: openProjectDialog,
       exportMp4: runExport,
       createGroup: applyCreateGroup,
+      createPrimitive: applyCreatePrimitive,
       deleteObject: applyDeleteObject,
       detachSelection: applyDetachSelection,
       setActiveMaskColor: applyMaskColor,
@@ -1011,6 +1017,34 @@ export function main(): void {
     const result = run();
     history.commit(capture);
     return result;
+  }
+
+  /**
+   * Creates one primitive as its own object on the unit lattice, in the editing colour: the spec is built from the
+   * panel's numbers — a box and a corner take the size on every axis, a sphere takes it as a radius, a landscape as its
+   * footprint — and the whole thing is one history step, so an unwanted shape is one undo away.
+   */
+  function applyCreatePrimitive(options: { kind: PrimitiveKind; size: number; height: number; hollow: boolean }): void {
+    const size = options.size;
+    const spec: PrimitiveSpec =
+      options.kind === 'sphere'
+        ? { kind: 'sphere', radius: size }
+        : options.kind === 'terrain'
+          ? { kind: 'terrain', footprint: [size, size], height: options.height, seed: CREATE_TERRAIN_SEED }
+          : options.kind === 'isometric'
+            ? { kind: 'isometric', size: [size, size, size] }
+            : { kind: 'box', size: [size, size, size], hollow: options.hollow };
+    const result = recorded(() => createPrimitive(project, spec, session.editColor));
+    if (!result.ok) {
+      reportFailure(result);
+      return;
+    }
+    if (result.objectId !== undefined) {
+      session.setActiveObject(result.objectId);
+      dirtyIds.add(result.objectId);
+    }
+    bindingsDirty = true;
+    commitDirty();
   }
 
   function applyCreateGroup(): void {

@@ -64,6 +64,10 @@ function main(): void;
    agree from the first frame — `index.html` carries `hidden` rather than leaving it to the module, because a bar laid out by the first paint and hidden
    only when the bundle runs would flash. There is no status line and no message area: the overlay holds the rail and the windows only.
 6. **Flow wiring**, the only place the modules meet:
+   - Create — `applyCreatePrimitive` turns the panel's numbers into a `PrimitiveSpec` (a box or a corner takes the size on every axis, a sphere as a radius, a
+     landscape as its footprint, with the app's own seed) and calls `ops.createPrimitive` through `recorded`, so a created shape is one history step. The new
+     object becomes the active one, which is what puts it in the panel's fields the moment it exists. A refusal — a shape past the budget, a spec the generator
+     will not draw — goes to `reportFailure` and creates nothing.
    - History — one `EditHistory` for the session, and every document write goes through `recorded(run)`, which captures the state before the write and commits
      after it: a refused operation records nothing without a check of its own, and a write that changed nothing records nothing either. The viewport press
      records its own step the same way, through the history the pointer tool is given. The panel's two buttons and Ctrl/Cmd+Z (back) and Ctrl/Cmd+Shift+Z or

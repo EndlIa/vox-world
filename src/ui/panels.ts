@@ -24,6 +24,7 @@ import type { ObjectId, Project, SceneObject } from '../document/project.js';
 import type { ProjectionKind } from '../document/camera.js';
 import type { ActiveTool, EditResolution, EditorSession, SelectionShape } from '../editor/session.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
+import type { PrimitiveKind } from '../voxels/uniform/generator.js';
 
 /** One authored camera pose: the carrier's fields, and the value a numeric field writes back. */
 export type CameraPose = {
@@ -95,6 +96,7 @@ export type PanelContext = {
       mode: 'beauty' | 'mask';
     }): void;
     createGroup(): void;
+    createPrimitive(options: { kind: PrimitiveKind; size: number; height: number; hollow: boolean }): void;
     deleteObject(objectId: ObjectId): void;
     setActiveMaskColor(color: HexColor): void;
     setActiveVisible(visible: boolean): void;
@@ -138,6 +140,12 @@ const SUBDIVISIONS: readonly number[] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
  * the press lands on and are never dragged, which is why the viewport only arms a drag while this is `box`.
  */
 const SELECTION_SHAPES: readonly SelectionShape[] = ['box', 'color', 'island'];
+
+/** The primitives the create row offers, in the order it lists them; `editor/ops.ts` turns one into an object. */
+const PRIMITIVE_KINDS: readonly PrimitiveKind[] = ['box', 'sphere', 'isometric', 'terrain'];
+/** What a size field starts at, and what a height field starts at: small enough to see whole in the viewport. */
+const DEFAULT_PRIMITIVE_SIZE = 4;
+const DEFAULT_PRIMITIVE_HEIGHT = 3;
 
 /** Export resolutions offered by the panel; the value doubles as the option label. */
 const DEFAULT_EXPORT_RESOLUTION = '1280x720';
@@ -198,6 +206,12 @@ export class Panels {
   private readonly context: PanelContext;
   private readonly objectList: HTMLDivElement;
   private readonly createGroupButton: HTMLButtonElement;
+  /** The create row's own controls: a shape, the size it is made at, and the two options one shape each carries. */
+  private readonly primitiveKindSelect: HTMLSelectElement;
+  private readonly primitiveSizeInput: HTMLInputElement;
+  private readonly primitiveHeightInput: HTMLInputElement;
+  private readonly primitiveHollowInput: HTMLInputElement;
+  private readonly createPrimitiveButton: HTMLButtonElement;
   private readonly toolButtons: Map<ActiveTool, HTMLButtonElement>;
   private readonly selectionShapeSelect: HTMLSelectElement;
   /** Not a tool: a command on the region the selection already holds, so it is disabled without one. */
@@ -621,6 +635,46 @@ export class Panels {
       el('div', { class: 'dim', text: 'or drop a .json onto the viewport' }),
     ]);
 
+    // Creating a shape: the kind decides what the size means — a box and a corner are built from it on every axis, a
+    // sphere takes it as a radius, a landscape as its footprint — and the two fields only one kind reads are disabled
+    // for the others rather than hidden, so the row does not move as the kind changes.
+    this.primitiveKindSelect = el(
+      'select',
+      {
+        on: {
+          change: () => {
+            const value = this.primitiveKindSelect.value;
+            const kind = PRIMITIVE_KINDS.find((candidate) => candidate === value);
+            if (kind !== undefined) this.refreshPrimitiveControls(kind);
+          },
+        },
+      },
+      PRIMITIVE_KINDS.map((kind) => el('option', { value: kind, text: kind })),
+    );
+    this.primitiveSizeInput = el('input', { type: 'number', min: '1', step: '1', value: String(DEFAULT_PRIMITIVE_SIZE) });
+    this.primitiveHeightInput = el('input', { type: 'number', min: '1', step: '1', value: String(DEFAULT_PRIMITIVE_HEIGHT) });
+    this.primitiveHollowInput = el('input', { type: 'checkbox' });
+    this.createPrimitiveButton = el('button', {
+      text: 'Create',
+      title: 'make a shape and put it in the scene as its own object',
+      on: {
+        click: () =>
+          context.actions.createPrimitive({
+            kind: this.primitiveKindSelect.value as PrimitiveKind,
+            size: Number(this.primitiveSizeInput.value),
+            height: Number(this.primitiveHeightInput.value),
+            hollow: this.primitiveHollowInput.checked,
+          }),
+      },
+    });
+    group('Create', [
+      this.field('Shape', this.primitiveKindSelect),
+      this.field('Size', this.primitiveSizeInput),
+      this.field('Height', this.primitiveHeightInput),
+      this.field('Hollow', this.primitiveHollowInput),
+      el('div', { class: 'row' }, [this.createPrimitiveButton]),
+    ]);
+
     // The one rail entry that opens nothing: the timeline is a bar along the bottom of the page rather than a
     // floating window, so this button is a plain toggle over the app's flag. It takes no `index`, which is why
     // adding it left the six group windows at the staggered positions they had.
@@ -640,6 +694,12 @@ export class Panels {
     // The rail is the overlay's whole content: six buttons that open windows, plus the timeline toggle.
     root.append(rail);
     this.refresh();
+  }
+
+  /** Only the fields the chosen shape reads stay live: a height is a landscape's, a hollow is a box's. */
+  private refreshPrimitiveControls(kind: PrimitiveKind): void {
+    this.primitiveHeightInput.disabled = kind !== 'terrain';
+    this.primitiveHollowInput.disabled = kind !== 'box';
   }
 
   refresh(): void {
@@ -714,6 +774,7 @@ export class Panels {
     const historyState = this.context.historyState?.();
     this.undoButton.disabled = historyState === undefined || !historyState.canUndo;
     this.redoButton.disabled = historyState === undefined || !historyState.canRedo;
+    this.refreshPrimitiveControls(this.primitiveKindSelect.value as PrimitiveKind);
     this.editColorInput.value = hexInputValue(session.editColor);
     this.addHeightInput.value = String(session.addHeight);
     this.maskColorInput.disabled = active === undefined;

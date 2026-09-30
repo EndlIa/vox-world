@@ -181,6 +181,11 @@ class Panels {
     can be dropped on the viewport as well. It reads no state and shows none: what a project file is belongs to `document/serialize.ts` and to the app. There is
     no voxelize group: the settings live in `ui/voxelizeDialog.ts`, and no representation, voxel size, cell size, root size, or max depth is reachable from the
     panel at all.
+    The `Create` group is the panel's own shape maker: a `Shape` select over the four `PrimitiveKind`s, a `Size` field, a `Height` field, a `Hollow` checkbox,
+    and one `Create` button that forwards `{ kind, size, height, hollow }` to `context.actions.createPrimitive`. Only the shape's own two fields stay live —
+    `refreshPrimitiveControls` disables `Height` unless the shape is a terrain and `Hollow` unless it is a box — so the row does not move as the shape changes,
+    and what a size *means* is the kind's: a box and a corner are built from it on every axis, a sphere takes it as a radius, and a landscape as the side of its
+    footprint. The seed a landscape grows from is not a field: the app keeps one constant, so the same landscape comes out every time.
 11. `refresh()` re-reads `project` and `session` and rewrites text, `value`, and `disabled` so the panel matches current state — the object tree and the trash
     button, the pressed tool, `detach`'s disablement, and every active-object field come from that re-read — and it never invents a state for a forward-only
     control. Calling it twice produces the same DOM. A row's button text is `name · representation` plus the resolution suffix: for a `uniform` object whose

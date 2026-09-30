@@ -1,7 +1,7 @@
 import { Euler, Matrix4, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { Project, type ObjectId } from '../src/document/project.js';
-import { setObjectAlignToGrid, setObjectSubdivision, setTransformFromWorldMatrix } from '../src/editor/ops.js';
+import { createPrimitive, setObjectAlignToGrid, setObjectSubdivision, setTransformFromWorldMatrix } from '../src/editor/ops.js';
 import { UniformGrid } from '../src/voxels/uniform/grid.js';
 
 /** A project shaped like the editor's: one group, and one object under a moved and turned parent. */
@@ -144,5 +144,34 @@ describe('subdivision', () => {
 
     const { objectId } = cube();
     expect(() => setObjectSubdivision(project, objectId, 3)).toThrow(RangeError);
+  });
+});
+
+describe('createPrimitive', () => {
+  it('creates one object holding the shape, on the lattice, with an id and mask colour of its own', () => {
+    const project = new Project();
+    const result = createPrimitive(project, { kind: 'box', size: [2, 2, 2], hollow: false }, 0x3366ff);
+    if (!result.ok) throw new Error(`createPrimitive refused: ${result.detail}`);
+    const object = project.get(result.objectId ?? '');
+    expect(object?.name).toBe('Box');
+    expect(object?.representation).toBe('uniform');
+    expect(object?.uniform?.size).toBe(8);
+    expect(object?.uniform?.getColor(1, 1, 1)).toBe(0x3366ff);
+    // A primitive is placed on a whole cell of the world lattice, so it is aligned from the moment it exists.
+    expect(object?.alignToGrid).toBe(true);
+    expect(result.cells).toBe(8);
+  });
+
+  it('refuses a primitive past the budget before building it, and a spec that names no cells', () => {
+    const project = new Project();
+    const huge = createPrimitive(project, { kind: 'box', size: [512, 512, 512], hollow: false }, 0x3366ff);
+    expect(huge.ok).toBe(false);
+    if (!huge.ok) expect(huge.error).toBe('budget-exceeded');
+    // Nothing was created and nothing was allocated: the spec's own bound is what refused it.
+    expect(project.objects.size).toBe(0);
+
+    const empty = createPrimitive(project, { kind: 'sphere', radius: 0 }, 0x3366ff);
+    expect(empty.ok).toBe(false);
+    if (!empty.ok) expect(empty.error).toBe('invalid-primitive');
   });
 });

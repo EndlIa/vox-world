@@ -360,7 +360,7 @@ npm run build       # production build
 git diff --check
 ```
 
-Unit tests cover our own modules — voxels, document, animation: uniform box region math, the region shapes an edit addresses (a box, a colour, an island) and extraction,
+Unit tests cover our own modules — voxels, document, animation: uniform box region math, the region shapes an edit addresses (a box, a colour, an island), the primitives a create makes, and extraction,
 detach identity and world-space preservation, project hierarchy legality and payload transitions, clip
 compilation and frame-exact sampling, and voxelization surface correctness. Rendering, picking, and
 export are verified by running the application and by inspecting the produced MP4.
