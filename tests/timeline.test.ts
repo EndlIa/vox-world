@@ -15,10 +15,12 @@ import { Project, type ObjectId } from '../src/document/project.js';
 import {
   addKeyframe,
   adoptKeyframeIds,
+  animatedChannels,
   ensureTrack,
   findTrack,
   maxKeyframeTime,
   moveKeyframe,
+  overwriteKeyframesAt,
   removeKeyframe,
   removeTracksFor,
   setDuration,
@@ -359,6 +361,92 @@ describe('keyframes', () => {
     expect(project.timeline.tracks).toHaveLength(1);
   });
 
+});
+
+describe('overwriting the keyframe at the playhead', () => {
+  it('rewrites the channels that already hold a keyframe, keeping their ids and times', () => {
+    const { project, car } = oneProject();
+    const target = objectTarget(car.id);
+    const timeline = project.timeline;
+    addKeyframe(timeline, target, 'position', 0, [0, 0, 0]);
+    addKeyframe(timeline, target, 'position', 500, [1, 0, 0]);
+    addKeyframe(timeline, target, 'quaternion', 500, [0, 0, 0, 1]);
+    const before = ids(findTrack(timeline, target, 'position'));
+
+    const written = overwriteKeyframesAt(timeline, target, 500, {
+      position: [9, 8, 7],
+      quaternion: [0.5, 0.5, 0.5, 0.5],
+      scale: [2, 2, 2],
+    });
+
+    // `scale` names no keyframe at that instant, so it is left alone and no track is created for it.
+    expect(written).toEqual(['position', 'quaternion']);
+    expect(times(findTrack(timeline, target, 'position'))).toEqual([0, 500]);
+    expect(ids(findTrack(timeline, target, 'position'))).toEqual(before);
+    expect(values(findTrack(timeline, target, 'position'))).toEqual([
+      [0, 0, 0],
+      [9, 8, 7],
+    ]);
+    expect(values(findTrack(timeline, target, 'quaternion'))).toEqual([[0.5, 0.5, 0.5, 0.5]]);
+    expect(findTrack(timeline, target, 'scale')).toBeUndefined();
+  });
+
+  it('writes nothing when the playhead is on no keyframe, on one within a hair, or far from one', () => {
+    const { project, car } = oneProject();
+    const target = objectTarget(car.id);
+    const timeline = project.timeline;
+    addKeyframe(timeline, target, 'position', 1234.7, [1, 1, 1]);
+    const before = values(findTrack(timeline, target, 'position'));
+
+    // The time a seek to that keyframe comes back as after the clip's seconds and back again.
+    expect(overwriteKeyframesAt(timeline, target, (1234.7 / 1000) * 1000, { position: [4, 4, 4] })).toEqual([
+      'position',
+    ]);
+    expect(values(findTrack(timeline, target, 'position'))).toEqual([[4, 4, 4]]);
+    expect(before).toEqual([[1, 1, 1]]);
+
+    // A time that is not that instant changes nothing and creates nothing, however close it looks.
+    expect(overwriteKeyframesAt(timeline, target, 1235, { position: [5, 5, 5] })).toEqual([]);
+    expect(overwriteKeyframesAt(timeline, target, 0, { position: [5, 5, 5] })).toEqual([]);
+    expect(times(findTrack(timeline, target, 'position'))).toEqual([1234.7]);
+    expect(values(findTrack(timeline, target, 'position'))).toEqual([[4, 4, 4]]);
+  });
+
+  it('refuses a value that does not match its channel, and a time that is not a time', () => {
+    const { project, car } = oneProject();
+    const target = objectTarget(car.id);
+    const timeline = project.timeline;
+    addKeyframe(timeline, target, 'position', 0, [0, 0, 0]);
+
+    expect(() => overwriteKeyframesAt(timeline, target, 0, { position: [1, 2] })).toThrow(TypeError);
+    expect(() =>
+      overwriteKeyframesAt(timeline, target, Number.NaN, { position: [1, 2, 3] }),
+    ).toThrow(RangeError);
+    expect(values(findTrack(timeline, target, 'position'))).toEqual([[0, 0, 0]]);
+  });
+});
+
+describe('animated channels', () => {
+  it('reports the keyed channels of one target, and nothing for an emptied track', () => {
+    const { project, car, wheel } = oneProject();
+    const target = objectTarget(car.id);
+    const timeline = project.timeline;
+    expect(animatedChannels(timeline, target)).toEqual([]);
+
+    addKeyframe(timeline, target, 'scale', 0, [2, 2, 2]);
+    addKeyframe(timeline, target, 'position', 0, [1, 0, 0]);
+    // Another object's track is another target's business.
+    addKeyframe(timeline, objectTarget(wheel.id), 'quaternion', 0, [0, 0, 0, 1]);
+    expect(animatedChannels(timeline, target)).toEqual(['position', 'scale']);
+
+    const only = addKeyframe(timeline, target, 'quaternion', 500, [0, 0, 0, 1]);
+    if (!only.ok) throw new Error('insert must succeed');
+    expect(animatedChannels(timeline, target)).toEqual(['position', 'quaternion', 'scale']);
+
+    // A channel keyed once and emptied is no longer animated: the clip contributes no track for an empty one.
+    removeKeyframe(timeline, target, 'quaternion', only.keyframe.id);
+    expect(animatedChannels(timeline, target)).toEqual(['position', 'scale']);
+  });
 });
 
 describe('clamped authoring times', () => {

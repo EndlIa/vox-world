@@ -22,6 +22,15 @@ const VALUE_SIZE: Record<TrackChannel, number> = {
   scale: 3,
 };
 
+/** Every channel, in the order this file writes them; derived from the width table so the two cannot drift apart. */
+const CHANNELS = Object.keys(VALUE_SIZE) as readonly TrackChannel[];
+
+/**
+ * How close two times have to be to count as the same instant. The clip runs in seconds and the authoring clock in
+ * milliseconds, so a playhead seeked to a keyframe can come back a hair off the time that keyframe stores.
+ */
+const SAME_TIME_EPSILON = 1e-6;
+
 /**
  * Keyframe identity. Rows in the timeline widget address a keyframe by its id rather than by its place in
  * the array, so editing one keyframe's time cannot make another row act on the wrong keyframe.
@@ -141,6 +150,52 @@ export function addKeyframe(
   }
   track.keyframes.splice(insertAt, 0, inserted);
   return { ok: true, keyframe: inserted };
+}
+
+/**
+ * Rewrites the keyframes a target already holds at `timeMs`: each channel named in `values` that has a keyframe there
+ * takes the new value and keeps its id and its time. This is the write behind a gesture that lands on the keyframe the
+ * author seeked to — the pose the gesture produced must replace that key rather than sit beside it. Nothing is created:
+ * a channel with no keyframe at that instant is left alone, so an edit made away from a keyframe is still the author's
+ * to key with `add`. A value whose length does not match its channel is a programmer error, and so is a non-finite
+ * time; both throw, and both leave the timeline untouched.
+ */
+export function overwriteKeyframesAt(
+  timeline: Timeline,
+  target: TrackTarget,
+  timeMs: number,
+  values: Partial<Record<TrackChannel, readonly number[]>>,
+): TrackChannel[] {
+  if (!Number.isFinite(timeMs)) {
+    throw new RangeError(`keyframe time must be finite, received ${timeMs}`);
+  }
+  const overwritten: TrackChannel[] = [];
+  for (const channel of CHANNELS) {
+    const value = values[channel];
+    if (value === undefined) continue;
+    const size = VALUE_SIZE[channel];
+    if (value.length !== size) {
+      throw new TypeError(`channel ${channel} takes ${size} numbers, received ${value.length}`);
+    }
+    const track = findTrack(timeline, target, channel);
+    const keyframe = track?.keyframes.find(
+      (entry) => Math.abs(entry.timeMs - timeMs) <= SAME_TIME_EPSILON,
+    );
+    if (keyframe === undefined) continue;
+    // A fresh array, like `addKeyframe`: the caller keeps its own.
+    keyframe.value = [...value];
+    overwritten.push(channel);
+  }
+  return overwritten;
+}
+
+/**
+ * The channels of one target a compiled clip actually animates: the ones whose track holds at least one keyframe. An
+ * empty track contributes no track to a clip (`compile.ts` skips it), so it is not animated either — which is what lets
+ * a caller tell "the clip will write this channel" from "the clip has nothing to say about it".
+ */
+export function animatedChannels(timeline: Timeline, target: TrackTarget): TrackChannel[] {
+  return CHANNELS.filter((channel) => (findTrack(timeline, target, channel)?.keyframes.length ?? 0) > 0);
 }
 
 /**

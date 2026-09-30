@@ -13,6 +13,12 @@ export type HudState = {
   representation: Representation | null;
   editResolution: EditResolution | null;
   selectionText: string;
+  /**
+   * The object wearing a pose no keyframe holds, and the millisecond it is being held at, or `null`. The viewport is
+   * showing a gesture rather than the clip there, which is otherwise invisible: the pose is not in the timeline and will
+   * not be in an export.
+   */
+  unkeyedPose: string | null;
   frame: number;
   fps: number;
 };
@@ -31,6 +37,7 @@ export class Hud {
   private readonly representation: HTMLSpanElement;
   private readonly editResolution: HTMLSpanElement;
   private readonly selection: HTMLSpanElement;
+  private readonly unkeyedPose: HTMLSpanElement;
   private readonly frame: HTMLSpanElement;
 
   constructor(root: HTMLElement) {
@@ -38,6 +45,7 @@ export class Hud {
     this.representation = el('span');
     this.editResolution = el('span');
     this.selection = el('span');
+    this.unkeyedPose = el('span');
     this.frame = el('span');
 
     const container = el('div', { class: 'hud' }, [
@@ -45,6 +53,7 @@ export class Hud {
       row('representation', this.representation),
       row('resolution', this.editResolution),
       row('selection', this.selection),
+      row('unkeyed pose', this.unkeyedPose),
       row('playhead', this.frame),
     ]);
     root.append(container);
@@ -55,6 +64,7 @@ export class Hud {
     this.representation.textContent = state.representation ?? ABSENT;
     this.editResolution.textContent = resolutionText(state.editResolution);
     this.selection.textContent = state.selectionText;
+    this.unkeyedPose.textContent = state.unkeyedPose ?? ABSENT;
     this.frame.textContent = `frame ${fmt(state.frame, 0)} \u00b7 ${fmt(state.fps, 0)} fps`;
   }
 }

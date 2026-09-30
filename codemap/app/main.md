@@ -49,7 +49,10 @@ function main(): void;
    dirty, and re-reads the readouts and the UI; the ids an operation wrote go straight to a mark-dirty plus a commit, so exactly those objects are rebuilt
    — which is what leaves neither half of a detach, whose two objects both changed, drawing stale geometry. The flags no module can own are the app's:
    `cameraControlSelected` (`false`; whether the gizmo drives the carrier instead of the active object), `gizmoMode` (`'translate'`; the one mode the
-   carrier and an object share), and `cameraPathVisible` (`false`, which `refreshCameraPath` clears whenever the active take holds fewer than two keys).
+   carrier and an object share), `cameraPathVisible` (`false`, which `refreshCameraPath` clears whenever the active take holds fewer than two keys), and
+   `poseOverride` (`undefined`; the world matrix one object's node is held on when a gesture wrote a pose no keyframe holds, cleared by every change of
+   the time context — a seek, the transport, a keyframe edit, a retimed clip, an undo, a load, an export — and by the session ceasing to name the object
+   the hold was made on, which a press that re-selects the same object does not count as, because the session notifies on every assignment).
    `playbackView` is the viewport state a run started from — the camera's pose, the orbit target, and the playhead — or `undefined` when no run has
    captured one; it is what lets a pause hand the frame over and a run's end undo the whole thing. The boot content starts active: the demo object exists
    before the session does, so the app selects it at step 6, right after subscribing the session change — through the same path a row click takes, and not
@@ -122,7 +125,19 @@ function main(): void;
      the grid. The commit half is the one write, from the world matrix the gizmo reports and not from the node it was attached to; the rebuild that write
      triggers discards the preview and replaces the node, which is why the render loop compares `gizmoNodeNow()` against the attached node and re-attaches
      — and the same replacement is why the mixer has to rebind: the clip's bindings were resolved against the node that just went away, so a commit that
-     left them alone would freeze the object at the document's transform (see 7).
+     left them alone would freeze the object at the document's transform (see 7). The commit is two writes, not one: `keyOrHoldPose` first gives the pose
+     to the keyframes the object already holds at the playhead, so an author who seeked to a key and dragged the object edits *that* key instead of
+     leaving the document at a pose the clip overwrites on the next frame. It creates nothing (a time holding no keyframe is still the author's to key with
+     the timeline's `add`), it offers all three channels rather than only the gesture's own (a rotate about the object's content center moves its origin
+     too), and it reads the values from the document after the write through the same `keyframePosition` rule `add` uses so an aligned object's keys stay
+     on its lattice. A rewritten keyframe is a timeline change, so the clip is rebuilt once (the rebuild keeps the playhead and re-resolves the bindings with
+     it) and the bar's rows show the new value; the write is not on the undo stack, which holds document edits and never the timeline — the same as `add`.
+     Whatever the gesture did *not* key is held instead: the mixer samples the clip every frame whether or not a run is going, so a channel the clip animates
+     would be off screen one frame after the pointer let go — an unkeyed drag would leave nothing to look at. `keyOrHoldPose` therefore stores the committed
+     world matrix in `poseOverride` when any channel the clip writes (`animatedChannels`) was not among the rewritten ones, and the render loop puts that
+     matrix back on the node every frame; `onGizmoChange` fills the same slot from the drag preview, which is what makes a drag inside a track follow the
+     pointer at all. An object no track animates holds nothing, because the mixer cannot move it. None of it happens while a clip runs: there the playhead
+     is the mixer's and the matrix a gesture reports is read off the node the clip is driving.
    - Camera carrier — the `Camera` group's commands, which are of three kinds. The two toggles flip their flag and re-sync, so selecting the carrier takes
      the gizmo from the active object and deselecting it gives the gizmo back from the session alone. `Camera -> View` authors the viewport's pose into the
      shot and selects the carrier, because aiming it is what the user came for; `View -> Camera` moves the viewport to the shot the playhead resolves and
@@ -216,7 +231,9 @@ function main(): void;
      `setSize` never touches the canvas' style, so without that refit the drawing buffer and the box would disagree and the view would be stretched.
 7. **Render loop.** One `requestAnimationFrame` callback drives everything, once a frame: it advances the transport by the elapsed time, clamped, a paused
    action not advancing, so the transport flag never has to be mirrored here; ends a non-looping run at its last frame, which is where the transport stops
-   and the view goes back; syncs the mirror's dirty objects; re-attaches the gizmo whenever the node it should be on is no longer the one it is attached
+   and the view goes back; syncs the mirror's dirty objects; puts a held pose back on its node (`applyPoseOverride`), which is what keeps a gesture on
+   screen — the mixer has just written the clip's own value for this frame, and a rebuild may have written the document's, so the held matrix goes on top
+   of both; re-attaches the gizmo whenever the node it should be on is no longer the one it is attached
    to, because a rebuild replaced it; rebinds the mixer when a bound node was replaced (the check is the node identity the mirror holds, not the object
    id, because `commitDirty()` flags the bindings on every commit and a rebuild keeps the id); and updates navigation, which always flies the viewport camera and so
    can never touch the output camera. It applies the shot to the output camera once per drawn frame — `mirror.applyShot(playback.time * 1000)` — unless the
@@ -235,7 +252,8 @@ function main(): void;
 8. The loop never reads or writes voxel data: no `UniformGrid` method is called and nothing is rasterized. An object is dirty only because an edit or an
    import changed its data, so `sync()` cannot overwrite a transform the mixer wrote for playback.
 9. `HudState` is assembled here from the active object, its `EditResolution` (which carries the object's `subdivision` beside its `cells`), the session
-   selection, `Math.round(playback.time * project.timeline.fps)`, and `project.timeline.fps`.
+   selection, the held pose as `<object> @ <ms> ms` or `null` (which is the only place the author is told the viewport is showing a gesture rather than the
+   clip), `Math.round(playback.time * project.timeline.fps)`, and `project.timeline.fps`.
 10. **Ownership.** `main` constructs and disposes every long-lived object and passes each dependency in; no module below it builds another module's
     dependencies (`Panels` never creates a `Project`, `PointerTool` receives its `Picker` and `Overlay`). The imported raw meshes are app-owned like the
     rest: they live in a `main`-local array, and teardown detaches them from the scene graph the mirror just released without disposing the geometry or
@@ -329,6 +347,8 @@ function main(): void;
   widget's milliseconds by 1000 on the way to `playback.setTime`, and the render loop multiplies `playback.time` by 1000 on the way into
   `setTime`. Every other time the app touches is already on its own side of that boundary — the export range and the HUD's frame count are the
   clip's seconds, and `project.timeline.durationMs` and every keyframe are the document's milliseconds.
+- A transform commit is two writes that agree: the document's transform (`setTransformFromWorldMatrix`), then `keyOrHoldPose`, which gives that same pose either to the keyframes the object already holds at the playhead or to a held pose on screen. A drag that lands on a key therefore edits that key and one that lands anywhere else leaves the timeline untouched — nothing is created, `add` is still the only way to key a time — while a clip that is running gets neither half's keyframe work, because its playhead and the matrix a gesture reports there are the mixer's. The camera's gestures are the other way round: the carrier drag calls `applyCameraMatrix` and returns before any of this, because a camera's pose *is* a key in its take.
+- A held pose is runtime state and never document data: it is not in the timeline, not in a save file, and not in an export frame — an export clears it first, because the export renders the mirror's own scene. It lives exactly as long as the time context it was made in: a seek, the transport, a keyframe edit, a retimed clip, an undo, a load, and an export each clear it, and so does the session ceasing to name the object it was made on — while a press that merely re-selects that object does not, because `EditorSession.setActiveObject` notifies on every assignment, change or not. It is set only for an object a track animates, and only when some channel the clip writes was not among the keyframes the gesture rewrote (`animatedChannels` against `overwriteKeyframesAt`'s result) — so an object nothing animates holds nothing, and an instant whose every animated channel was keyed by the drag holds nothing either; clearing it leaves the clip's own value on screen from the next frame.
 - The mixer is bound to the nodes the mirror holds, by identity, and every commit re-checks that binding: `commitDirty()` — the one funnel every dirty
   mark passes through — flags the bindings, and the loop rebinds when any bound id's node is no longer the one the mirror holds. A rebuild replaces a node
   while its id stays, so an id-set comparison is not enough: with one, an object that an edit rebuilt (a gizmo drag's commit, a paint, a subdivision, an
@@ -412,6 +432,14 @@ one playhead, the object moved with the gizmo at another, `add` again — a run 
 gizmo must leave that run moving, as must a payload edit (a subdivision change), an undo, and a load. Before the fix the drag's own commit froze the
 object at the pose the drag wrote: the rebuild replaced the node the clip was bound to, and nothing rebound it, so the frames after the gesture were
 identical until a timeline edit recompiled the clip — which is also why re-aiming and pressing `add` appeared to repair it.
+A drag lands on the keyframe the playhead is on, which is the second half of the same walk: press a row's `key` to seek to it, drag the object, and that
+row's `v=[…]` must change with no `add` pressed — same row count, same time — while a drag at a time holding no key must still create nothing until `add`,
+and a run afterwards must move the object along the rewritten key.
+A drag at a time that holds no key stays on screen, which is the third: aim the playhead between two keyframes, drag an animated object, and it must stay
+where the pointer put it — while dragging, not only after the release — with nothing new in the timeline, the HUD's `unkeyed pose` row naming the object and
+that millisecond; scrubbing, pressing play, pressing `add`, selecting another object, undoing, or starting an export must each put the clip's value back
+(and take the HUD row back to `—`), and an exported frame taken while a pose is held must show the clip, not the pose. A run in flight refuses both halves:
+dragging while the clip plays writes the document and leaves the keys and the screen to the clip.
 Saving and loading is part of that walk: rename an object, press `Save project…`, reload the page, drop the downloaded `.json` back onto
 the viewport, and the object with its cells, mask color, and placement plus the timeline (duration, fps, and any keyframe rows) must come back, with the
 demo object gone, the panel showing one row, and nothing on the console.

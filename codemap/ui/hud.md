@@ -3,14 +3,14 @@
 Ring: 4 · Layer: ui · Depends on: ./dom.js, ../editor/session.js, ../document/project.js
 
 ## Responsibility
-A read-only status readout: the active object, its representation type, the current edit resolution — the active object's size in voxels per axis — a selection summary, and the current frame and frame rate. It renders a value it is handed and queries nothing — it never touches the project, the picker, or the mirror — because all of that arrives
+A read-only status readout: the active object, its representation type, the current edit resolution — the active object's size in voxels per axis — a selection summary, the object wearing a pose no keyframe holds yet, and the current frame and frame rate. It renders a value it is handed and queries nothing — it never touches the project, the picker, or the mirror — because all of that arrives
 through `HudState`.
 
 ## Public interface
 ```ts
 type HudState = {
   activeObjectName: string | null; representation: 'empty' | 'uniform' | null;
-  editResolution: EditResolution | null; selectionText: string; frame: number; fps: number;
+  editResolution: EditResolution | null; selectionText: string; unkeyedPose: string | null; frame: number; fps: number;
 };
 class Hud {
   constructor(root: HTMLElement);
@@ -26,7 +26,9 @@ class Hud {
 3. Rows rendered: active object name (`—` when `state.activeObjectName === null`); representation type (`empty` | `uniform`, `—` when
    null); edit resolution — `empty` for a transform-only object, the object's occupied size per axis in cells from
    `EditResolution.cells` as `uniform <x>×<y>×<z>` (e.g. `uniform 24×20×97`), `uniform` alone when the resolution carries no
-   `cells`, `—` when null; the selection summary taken verbatim from `state.selectionText`; and `frame <frame> · <fps> fps`.
+   `cells`, `—` when null; the selection summary taken verbatim from `state.selectionText`; the unkeyed pose taken verbatim from
+   `state.unkeyedPose` (`—` when null) — the app renders it as `<object name> @ <ms> ms`, and this row is what says the viewport is
+   showing a gesture the timeline does not hold; and `frame <frame> · <fps> fps`.
    The resolution is a size in cells, not a length in metres: one cell is one world unit.
 4. Number formatting goes through `fmt`: the frame, the fps, and each count of the resolution row are rendered with `fmt(value, 0)`,
    and that is the whole of it — every value shown is either text the app handed over or a number `fmt` renders.

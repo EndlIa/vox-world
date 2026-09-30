@@ -26,6 +26,7 @@ import {
 } from '../document/camera.js';
 import type { ObjectId, ProjectData } from '../document/project.js';
 import { readJson, toJson } from '../document/serialize.js';
+import { animatedChannels, overwriteKeyframesAt, type TrackTarget } from '../document/timeline.js';
 import { EditorSession } from '../editor/session.js';
 import type { EditResolution } from '../editor/session.js';
 import {
@@ -280,6 +281,13 @@ export function main(): void {
   const dirtyIds = new Set<ObjectId>();
   /** The nodes the mixer was last bound to, by object id: a rebuilt node makes this stale, an id set alone cannot. */
   let boundNodes: ReadonlyMap<ObjectId, Object3D> = new Map<ObjectId, Object3D>();
+  /**
+   * A pose a gesture put on screen that no keyframe holds yet: the world matrix to keep on one object's mirrored node
+   * until the playhead moves or a run starts, and `undefined` when the clip speaks for every object again. It is
+   * runtime state — no document, no export frame, no file — and it exists because the mixer samples the clip on every
+   * frame, whether or not a run is going, so an unkeyed pose would be off screen one frame after the pointer let go.
+   */
+  let poseOverride: { objectId: ObjectId; matrix: Matrix4 } | undefined;
   let bindingsDirty = true;
   let resolutionCache: EditResolution | null = null;
   /** The mirror node the gizmo is attached to, so a rebuilt replacement is noticed (see `syncGizmo`). */
@@ -376,11 +384,15 @@ export function main(): void {
     onScrub: (timeMs) => {
       playback.pause();
       playback.setTime(timeMs / 1000);
+      // The playhead moved: every object goes back to the clip's own value at the new time.
+      clearPoseOverride();
     },
     onEdited: () => {
       playback.rebuild(project);
       // A keyframe edit is what changes the camera's trajectory, so the path is redrawn here.
       refreshCameraPath();
+      // A keyframe the author just added or moved is the clip's to show now, not a held pose's.
+      clearPoseOverride();
     },
     setDuration: applyDuration,
     // The bar lists the active take's keys and is the only place one can be retimed or removed, but the two writes are
@@ -606,6 +618,8 @@ export function main(): void {
    * that no `sync()` writes.
    */
   function loadProject(data: ProjectData): void {
+    // The state a gesture left on screen belongs to the project being replaced.
+    clearPoseOverride();
     // 1. Nothing may be in flight: a superseded job must not attach its payloads to the new project, and a
     //    run's saved view belongs to the project that started it.
     jobController?.abort();
@@ -671,6 +685,9 @@ export function main(): void {
     if (jobController !== undefined) return;
     const controller = new AbortController();
     jobController = controller;
+    // The export renders the mirror's own scene, so a pose held on screen would reach the frames: an export shows the
+    // clip, and an unkeyed pose is not part of it.
+    clearPoseOverride();
     // The gizmo is viewport feedback on camera layer 0; it must not reach an exported frame.
     controls.detachGizmo();
     // The capture renders at the requested resolution; nothing in the viewport marks it.
@@ -716,6 +733,8 @@ export function main(): void {
   function applyDuration(durationMs: number): void {
     project.setDuration(durationMs);
     playback.rebuild(project);
+    // The keys were retimed onto the new length, so a pose held from the old one is stale.
+    clearPoseOverride();
     playback.setTime(playback.time);
     refreshShotViews();
   }
@@ -978,6 +997,8 @@ export function main(): void {
 
   /** The transport toggle: the only entry point, so every run is saved and every pause can hand the view over. */
   function togglePlayback(): void {
+    // A run owns every object's pose, and a pause hands the frame back to the clip: either way the hold is over.
+    clearPoseOverride();
     if (playback.playing) pausePlayback();
     else startPlayback();
   }
@@ -1184,6 +1205,8 @@ export function main(): void {
   function applyHistoryStep(direction: 'undo' | 'redo'): void {
     const touched = direction === 'undo' ? history.undo() : history.redo();
     if (touched === null) return;
+    // A step rewrites the transforms a gesture left behind, so a held pose would hide what the history just restored.
+    clearPoseOverride();
     for (const id of touched) {
       if (project.get(id) === undefined) dirtyIds.delete(id);
       else dirtyIds.add(id);
@@ -1222,8 +1245,73 @@ export function main(): void {
     timelinePanel.refresh();
   }
 
+  /**
+   * The other half of a transform commit: the pose the gesture wrote either reaches the timeline or is held on screen.
+   *
+   * First, the keyframes the object already holds at the playhead take that pose, in place — an author who seeked to a
+   * keyframe and dragged the object edits *that* key. Nothing is created: a time holding no keyframe is still the
+   * author's to key with `add`.
+   *
+   * Then, whatever the gesture did *not* key is held. The mixer samples the clip on every frame, running or not, so a
+   * channel the clip animates would be overwritten one frame after the pointer let go and the drag would leave nothing
+   * on screen — the author could not even see where the object landed. The committed world matrix is kept instead and
+   * put back on the node every frame, until the playhead or the transport moves on (`clearPoseOverride`). An object no
+   * track animates is already safe and holds nothing.
+   *
+   * Nothing happens while a clip runs: the playhead is the mixer's there, and the transform a gesture reports is read
+   * off the node the clip is driving rather than being an authored pose.
+   */
+  function keyOrHoldPose(objectId: ObjectId): void {
+    if (playback.playing) return;
+    const object = project.get(objectId);
+    if (object === undefined) return;
+    const target: TrackTarget = { kind: 'object', objectId };
+    // The pose is read from the document *after* the commit, through the same `keyframePosition` rule `add` uses, so an
+    // aligned object's keys stay on its lattice and a held pose is exactly what a keyed `add` would have stored. All
+    // three channels are offered, not just the gesture's own: a rotate about the content center moves the origin too.
+    const position = project.keyframePosition(target, object.transform.position);
+    const { quaternion, scale } = object.transform;
+    const written = overwriteKeyframesAt(project.timeline, target, playback.time * 1000, {
+      position: [position.x, position.y, position.z],
+      quaternion: [quaternion.x, quaternion.y, quaternion.z, quaternion.w],
+      scale: [scale.x, scale.y, scale.z],
+    });
+    // The clip is derived from the timeline: a rewritten keyframe reaches the mixer only through a rebuild, which keeps
+    // the playhead and re-resolves the action's bindings with it.
+    if (written.length > 0) playback.rebuild(project);
+    const unkeyed = animatedChannels(project.timeline, target).some(
+      (channel) => !written.includes(channel),
+    );
+    poseOverride = unkeyed ? { objectId, matrix: project.worldMatrix(objectId) } : undefined;
+  }
+
+  /**
+   * Puts a held pose back on the mirror, after the mixer's own write for this frame: the clip is sampled whether or not
+   * a run is going, so this is what keeps a gesture on screen while it is unkeyed. Drag previews feed the same slot
+   * through `onGizmoChange`, which is why a drag inside a track is visible before the pointer is released at all.
+   */
+  function applyPoseOverride(): void {
+    const held = poseOverride;
+    if (held === undefined) return;
+    // A hold on an object that no longer exists — a load, a deletion — is dropped rather than written nowhere.
+    if (project.get(held.objectId) === undefined) {
+      poseOverride = undefined;
+      return;
+    }
+    mirror.previewTransform(held.objectId, held.matrix);
+  }
+
+  /** Drops the held pose: the playhead, the transport, the selection, or the clip is about to speak again. */
+  function clearPoseOverride(): void {
+    poseOverride = undefined;
+  }
+
   function sessionChanged(): void {
     if (session.activeObjectId !== null) dirtyIds.add(session.activeObjectId);
+    // The hold belongs to the object it was made on, so it ends when the session stops naming that object. The session
+    // notifies on every assignment, including one that re-selects the object already active — which is what a press on
+    // the object itself does — so the comparison is what keeps a plain click from throwing a held pose away.
+    if (poseOverride !== undefined && poseOverride.objectId !== session.activeObjectId) clearPoseOverride();
     refreshReadouts();
     syncGizmo();
     modeBar.refresh();
@@ -1345,6 +1433,10 @@ export function main(): void {
       representation: object?.representation ?? null,
       editResolution: resolutionCache,
       selectionText: selectionText(),
+      unkeyedPose:
+        poseOverride === undefined
+          ? null
+          : `${objectName(poseOverride.objectId)} @ ${Math.round(playback.time * 1000)} ms`,
       frame: Math.round(playback.time * project.timeline.fps),
       fps: project.timeline.fps,
     };
@@ -1365,7 +1457,13 @@ export function main(): void {
     const objectId = session.activeObjectId;
     // The preview takes the same aligned matrix the commit will, so a drag steps the object from cell to
     // cell and the release writes the pose already on screen.
-    if (objectId !== null) mirror.previewTransform(objectId, project.alignWorldMatrix(objectId, matrix));
+    if (objectId !== null) {
+      const aligned = project.alignWorldMatrix(objectId, matrix);
+      mirror.previewTransform(objectId, aligned);
+      // The same slot the commit fills: the mixer samples the clip every frame, so a preview that were not held would
+      // be off screen again before the next pointermove — this is what makes a drag inside a track follow the pointer.
+      poseOverride = playback.playing ? undefined : { objectId, matrix: aligned.clone() };
+    }
   });
   controls.onGizmoCommit((matrix) => {
     if (cameraControlSelected) {
@@ -1381,6 +1479,9 @@ export function main(): void {
       reportFailure(result);
       return;
     }
+    // The document now holds the pose the gesture asked for; a keyframe sitting at the playhead takes it too, and
+    // whatever the clip would overwrite is held on screen instead — dragging an object off a keyframe now shows.
+    keyOrHoldPose(objectId);
     dirtyIds.add(objectId);
     commitDirty();
   });
@@ -1445,6 +1546,9 @@ export function main(): void {
       finishPlayback();
     }
     mirror.sync();
+    // The mixer has already written this frame's clip value, and a rebuild above may have written the document's: a pose
+    // a gesture left on screen goes back on top of both, which is what keeps an unkeyed drag where the author put it.
+    applyPoseOverride();
     // A dirty object is rebuilt as a new node, which releases the one an attached gizmo drives; comparing
     // identities is what re-attaches it, and it has to happen after `sync()` because that is what replaces
     // the node. Nothing else moves the gizmo: `syncGizmo` on a session change covers the rest.
