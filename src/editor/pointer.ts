@@ -7,7 +7,7 @@ import type { PickHit, Picker } from '../three-runtime/picking.js';
 import type { Overlay } from '../three-runtime/overlay.js';
 import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
 import { KEY_MAX, KEY_MIN, normalizeBox } from '../voxels/uniform/grid.js';
-import { regionBounds } from '../voxels/uniform/region.js';
+import { regionBounds, visitRegion } from '../voxels/uniform/region.js';
 import type { RegionShape } from '../voxels/uniform/region.js';
 import { Matrix3, Matrix4, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
@@ -33,6 +33,25 @@ const BOX_TOOLS: Record<ActiveTool, boolean> = {
   add: true,
   remove: true,
 };
+
+/**
+ * The tools that preview what a press would name. A press names a region either way; this is what decides whether the
+ * viewport draws it while the pointer hovers, which is the one thing a preview needs a policy for.
+ */
+const PREVIEW_TOOLS: Record<ActiveTool, boolean> = {
+  select: true,
+  paint: true,
+  add: true,
+  remove: true,
+};
+
+/**
+ * How many cells a hover ghost draws. A region with more than this — an island or a colour group of a large model —
+ * is drawn as its extent instead of its cells, because a ghost per cell of a region that size costs more than the
+ * preview is worth. The rule is stated rather than silent: what the preview shows is either the cells or the box
+ * that holds them.
+ */
+const GHOST_CELL_LIMIT = 2048;
 
 /** What a commit acts with: one of the session's tools, or the detach the panel commands directly. */
 type CommitVerb = ActiveTool | 'detach';
@@ -251,7 +270,11 @@ export class PointerTool {
 
   private readonly onPointerMove = (event: PointerEvent): void => {
     if (this.disposed) return;
-    if (this.drag !== null && this.drag.pointerId === event.pointerId) this.trackDrag(this.toNdc(event));
+    if (this.drag !== null && this.drag.pointerId === event.pointerId) {
+      this.trackDrag(this.toNdc(event));
+      return;
+    }
+    this.preview(this.toNdc(event));
   };
 
   private readonly onPointerUp = (event: PointerEvent): void => {
@@ -344,6 +367,51 @@ export class PointerTool {
     drag.dragging = true;
     const box = dragBox(drag.anchorCell, drag.cornerCell, drag.outer, drag.dragging, this.session.addHeight);
     this.overlay.showBox(box, this.project.worldMatrix(drag.objectId), drag.cell);
+  }
+
+  /**
+   * Draws what the next press would name, without writing anything: the region `pressShape` builds, drawn as its
+   * cells, or as the extent that holds them when there are more of them than a ghost is worth. Everything that would
+   * name no region takes the ghost away again — a press in `object` mode, a tool that does not preview, a miss, a raw
+   * mesh, or a gizmo handle under the pointer — because a preview of nothing is a lie.
+   *
+   * It reads the region with `visitRegion` and stops the walk at the ghost's own limit, so hovering over a large
+   * island costs one bounded walk per move and never a write.
+   */
+  private preview(ndc: Vector2): void {
+    if (this.pressActive || this.getGizmoBusy()) return;
+    if (this.session.mode !== 'edit' || !PREVIEW_TOOLS[this.session.activeTool]) {
+      this.overlay.hideCells();
+      return;
+    }
+    const hit = this.picker.pick(ndc, this.getCamera());
+    const grid = hit !== undefined && hit.kind === 'cell' ? this.project.get(hit.objectId)?.uniform : undefined;
+    if (hit === undefined || hit.kind !== 'cell' || grid === undefined) {
+      this.overlay.hideCells();
+      return;
+    }
+    // The shape is built the way the press builds it — same step out of the pressed face, same wall height — so the
+    // ghost cannot promise a region the commit would not name.
+    const outer = outerCell(this.session.activeTool, hit.normal);
+    const box = dragBox(hit.cell, hit.cell, outer, false, this.session.addHeight);
+    const shape = pressShape(this.session.selectionShape, box, hit.cell, hit.color);
+    const cells: number[] = [];
+    let tooMany = false;
+    visitRegion(grid, shape, (x, y, z) => {
+      if (cells.length >= GHOST_CELL_LIMIT * 3) {
+        tooMany = true;
+        return false;
+      }
+      cells.push(x, y, z);
+    });
+    const matrixWorld = this.project.worldMatrix(hit.objectId);
+    if (tooMany) {
+      const bounds = regionBounds(grid, shape);
+      this.overlay.hideCells();
+      if (bounds !== null) this.overlay.showBox(bounds, matrixWorld, grid.cellSize);
+      return;
+    }
+    this.overlay.showCells(cells, matrixWorld, grid.cellSize);
   }
 
   /**

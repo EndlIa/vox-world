@@ -40,22 +40,26 @@ function boxOf(shape: Extract<RegionShape, { kind: 'box' }>): IntBox3 {
 function forEachShapeCell(
   grid: UniformGrid,
   shape: RegionShape,
-  visit: (x: number, y: number, z: number, color: HexColor | undefined) => void,
+  visit: (x: number, y: number, z: number, color: HexColor | undefined) => boolean | void,
 ): void {
   if (shape.kind === 'box') {
     const box = boxOf(shape);
     for (let x = box.min[0]; x <= box.max[0]; x += 1) {
       for (let y = box.min[1]; y <= box.max[1]; y += 1) {
         for (let z = box.min[2]; z <= box.max[2]; z += 1) {
-          visit(x, y, z, grid.getColor(x, y, z));
+          if (visit(x, y, z, grid.getColor(x, y, z)) === false) return;
         }
       }
     }
     return;
   }
   if (shape.kind === 'color') {
+    // `UniformGrid.forEach` visits every entry and takes no answer, so a stop is remembered here and the walk is
+    // simply over: the visitor is never called again, which is all a caller asks for.
+    let stopped = false;
     grid.forEach((x, y, z, color) => {
-      if (color === shape.color) visit(x, y, z, color);
+      if (stopped || color !== shape.color) return;
+      stopped = visit(x, y, z, color) === false;
     });
     return;
   }
@@ -69,7 +73,7 @@ function forEachShapeCell(
   while (queue.length > 0) {
     const key = queue.pop() as CellKey;
     const [x, y, z] = unpackKey(key);
-    visit(x, y, z, grid.getColor(x, y, z));
+    if (visit(x, y, z, grid.getColor(x, y, z)) === false) return;
     for (const [dx, dy, dz] of NEIGHBOURS) {
       const nx = x + dx;
       const ny = y + dy;
@@ -135,12 +139,13 @@ export function regionBounds(grid: UniformGrid, shape: RegionShape): IntBox3 | n
 
 /**
  * Reads the cells a shape names, one call per cell, without touching the grid: the walk a caller needs to see a
- * region before it is written to, which is what an edit recorder captures.
+ * region before it is written to, which is what an edit recorder captures. A visitor that answers `false` ends the
+ * walk, so a caller with a budget of its own — a preview drawing at most so many cells — never pays for the rest.
  */
 export function visitRegion(
   grid: UniformGrid,
   shape: RegionShape,
-  visit: (x: number, y: number, z: number, color: HexColor | undefined) => void,
+  visit: (x: number, y: number, z: number, color: HexColor | undefined) => boolean | void,
 ): void {
   forEachShapeCell(grid, shape, visit);
 }

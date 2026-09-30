@@ -25,7 +25,7 @@ type RegionShape =
 
 function regionCount(grid: UniformGrid, shape: RegionShape): number;
 function regionBounds(grid: UniformGrid, shape: RegionShape): IntBox3 | null;
-function visitRegion(grid: UniformGrid, shape: RegionShape, visit: (x: number, y: number, z: number, color: HexColor | undefined) => void): void;
+function visitRegion(grid: UniformGrid, shape: RegionShape, visit: (x: number, y: number, z: number, color: HexColor | undefined) => boolean | void): void;   // false ends the walk
 function fillRegion(grid: UniformGrid, shape: RegionShape, color: HexColor): number;
 function clearRegion(grid: UniformGrid, shape: RegionShape): number;
 function paintRegion(grid: UniformGrid, shape: RegionShape, color: HexColor): number;
@@ -57,7 +57,10 @@ function paintRegion(grid: UniformGrid, shape: RegionShape, color: HexColor): nu
    tell "a region with no cells" from "a box over empty space".
 7. `visitRegion` is the same walk, exposed for reading rather than writing: a caller that has to see the
    region before it is written to — an edit recorder capturing what an operation is about to change — walks
-   it through here rather than reimplementing the shapes. It touches nothing.
+   it through here rather than reimplementing the shapes. It touches nothing, and a visitor that answers
+   `false` ends the walk, which is how a caller with a budget of its own — a hover preview drawing at most so
+   many cells — never pays for the rest. A box and an island stop on the spot; a colour stops the next time the
+   visitor would be called, because `UniformGrid.forEach` visits every entry and takes no answer.
 8. The three writers share one shape-blind structure: a box delegates to the grid's own box operation
    (`fillBox`, `clearBox`, `paintBox`), and every other shape collects its keys through the walker and writes
    afterwards. Collecting first is not an optimisation — the walk reads the very map a write mutates, so

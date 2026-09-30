@@ -238,8 +238,8 @@ SceneObject {
 - Render layers separate what is edited, what is only shown, and what is exported:
   - **Layer 0** is scene content — the voxel instances and the output camera — and it is the only
     layer an export renders.
-  - **Layer 1** is viewport decoration: the box preview, the world grid on the `xy` ground, the camera
-    carrier and its path. It is never picked and never exported.
+  - **Layer 1** is viewport decoration: the box preview and the cell ghost, the world grid on the `xy`
+    ground, the camera carrier and its path. It is never picked and never exported.
   - **Layer 2** is the imported source mesh, kept for the raw-mesh versus voxel comparison: the
     viewport camera enables 0, 1, and 2, the raycaster tests 0 and 2, the export camera and `Capture`
     use 0 alone, and `frameAll` measures 0 and 2 so an import frames the real model before any voxel

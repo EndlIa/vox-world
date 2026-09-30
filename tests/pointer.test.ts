@@ -51,12 +51,26 @@ function fixture() {
   const camera = new PerspectiveCamera(50, 1, 0.1, 100);
   camera.position.set(0, 0, 10);
   camera.updateMatrixWorld();
+  /** What the tool asked the overlay to draw: the ghost it would show, and how often it hid it. */
+  const ghost = { cells: [] as number[], box: 0, hidden: 0 };
   const pointer = new PointerTool({
     dom: element,
     project,
     session,
     picker: { pick: () => hit } as never,
-    overlay: { clear: () => undefined, showBox: () => undefined } as never,
+    overlay: {
+      clear: () => undefined,
+      showBox: () => {
+        ghost.box += 1;
+      },
+      showCells: (cells: number[]) => {
+        ghost.cells = [...cells];
+      },
+      hideCells: () => {
+        ghost.cells = [];
+        ghost.hidden += 1;
+      },
+    } as never,
     getCamera: () => camera,
     getGizmoBusy: () => false,
     history: new EditHistory(project),
@@ -76,6 +90,7 @@ function fixture() {
     session,
     objectId: object.id,
     pointer,
+    ghost,
     setHit: (next: PickHit | undefined) => {
       hit = next;
     },
@@ -259,6 +274,38 @@ describe('box drag', () => {
     expect(grid.size).toBe(1);
     expect(grid.getColor(3, 3, 3)).toBe(0x3366ff);
     expect(grid.has(1, 1, 1)).toBe(false);
+    scene.pointer.dispose();
+  });
+});
+
+describe('hover preview', () => {
+  it('drafts the cell a press would write, and takes the draft away off the model', () => {
+    const scene = fixture();
+    scene.session.setTool('add');
+    scene.setHit(faceHit([1, 1, 1]));
+    // No press at all: a hover alone draws the region.
+    scene.move(0);
+    expect(scene.ghost.cells).toEqual([1, 1, 2]);
+    expect(scene.project.get(scene.objectId)!.uniform!.size).toBe(8);
+
+    scene.setHit(undefined);
+    scene.move(0.5);
+    expect(scene.ghost.cells).toEqual([]);
+    expect(scene.ghost.hidden).toBeGreaterThan(0);
+    scene.pointer.dispose();
+  });
+
+  it('previews the whole island a press would remove, and writes nothing', () => {
+    const scene = fixture();
+    scene.session.setTool('remove');
+    scene.session.setSelectionShape('island');
+    scene.setHit(faceHit([0, 0, 0]));
+    scene.move(0);
+
+    // Every cell of the 2x2x2 block, as flat x, y, z triples — the region the press would name.
+    expect(scene.ghost.cells.length).toBe(8 * 3);
+    expect(new Set(scene.ghost.cells.filter((_, index) => index % 3 === 0))).toEqual(new Set([0, 1]));
+    expect(scene.project.get(scene.objectId)!.uniform!.size).toBe(8);
     scene.pointer.dispose();
   });
 });

@@ -28,6 +28,28 @@ function drawnBounds(scene: THREE.Scene): THREE.Box3 {
   return new THREE.Box3().setFromObject(helperOf(scene));
 }
 
+/** The instanced mesh the ghost draws through: one cube per cell, and nothing else in the scene is instanced. */
+function ghostOf(scene: THREE.Scene): THREE.InstancedMesh {
+  let found: THREE.InstancedMesh | undefined;
+  scene.traverse((child) => {
+    if (child instanceof THREE.InstancedMesh) found = child;
+  });
+  if (found === undefined) throw new Error('Overlay: no instanced mesh in the scene');
+  return found;
+}
+
+/** The instance matrix of one drawn cell, as the position and scale a viewport would apply. */
+function instanceAt(scene: THREE.Scene, index: number): { position: THREE.Vector3; scale: THREE.Vector3 } {
+  const ghost = ghostOf(scene);
+  const matrix = new THREE.Matrix4();
+  ghost.getMatrixAt(index, matrix);
+  const position = new THREE.Vector3();
+  const quaternion = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  matrix.decompose(position, quaternion, scale);
+  return { position, scale };
+}
+
 /** The same extent computed from the box the caller asked for, by transforming its eight corners. */
 function expectedBounds(boxLocal: IntBox3, matrixWorld: THREE.Matrix4, cell: number): THREE.Box3 {
   const corners: THREE.Vector3[] = [];
@@ -46,8 +68,7 @@ describe('box preview overlay', () => {
     const scene = new THREE.Scene();
     const overlay = new Overlay(scene);
     const helper = helperOf(scene);
-    expect(helper.visible).toBe(true);
-    expect(helper.parent?.visible).toBe(false);
+    expect(helper.visible).toBe(false);
     expect(helper.layers.mask).toBe(1 << OVERLAY_LAYER);
     expect(helper.parent?.layers.mask).toBe(1 << OVERLAY_LAYER);
     overlay.dispose();
@@ -60,6 +81,10 @@ describe('box preview overlay', () => {
     expect(() => overlay.showBox({ min: [0, 0, 0], max: [0, 0, 0] }, new THREE.Object3D() as unknown as THREE.Matrix4, 1)).toThrow(TypeError);
     expect(() => overlay.showBox({ min: [0.5, 0, 0], max: [1, 1, 1] }, new THREE.Matrix4(), 1)).toThrow(RangeError);
     expect(() => overlay.showBox({ min: [0, 0, 0], max: [1, 1, 1] }, new THREE.Matrix4(), 0)).toThrow(RangeError);
+    expect(() => overlay.showCells([0, 0], new THREE.Matrix4(), 1)).toThrow(RangeError);
+    expect(() => overlay.showCells([0.5, 0, 0], new THREE.Matrix4(), 1)).toThrow(RangeError);
+    expect(() => overlay.showCells([0, 0, 0], new THREE.Matrix4(), 0)).toThrow(RangeError);
+    expect(() => overlay.showCells([0, 0, 0], new THREE.Object3D() as unknown as THREE.Matrix4, 1)).toThrow(TypeError);
     overlay.dispose();
   });
 
@@ -114,10 +139,57 @@ describe('box preview overlay', () => {
     expect(material.color.getHex()).toBe(0xff0000);
 
     overlay.clear();
-    expect(helperOf(scene).parent?.visible).toBe(false);
+    expect(helperOf(scene).visible).toBe(false);
 
     overlay.dispose();
     expect(scene.children).toHaveLength(0);
     expect(() => overlay.dispose()).not.toThrow();
+  });
+});
+
+describe('cell ghost overlay', () => {
+  it('draws one cell-sized cube per cell, centred on the cell, in the owning object space', () => {
+    const scene = new THREE.Scene();
+    const overlay = new Overlay(scene);
+    const matrix = new THREE.Matrix4().makeTranslation(10, -4, 2);
+    expect(ghostOf(scene).visible).toBe(false);
+
+    // Cell (0, 0, 0) at a cell size of 2 spans 0..2, so its cube is centred on (1, 1, 1) and two units wide.
+    overlay.showCells([0, 0, 0, 2, 1, 0], matrix, 2);
+    const ghost = ghostOf(scene);
+    expect(ghost.visible).toBe(true);
+    expect(ghost.count).toBe(2);
+    expect(instanceAt(scene, 0).position.toArray()).toEqual([1, 1, 1]);
+    expect(instanceAt(scene, 0).scale.toArray()).toEqual([2, 2, 2]);
+    expect(instanceAt(scene, 1).position.toArray()).toEqual([5, 3, 1]);
+    expect(ghost.layers.mask).toBe(1 << OVERLAY_LAYER);
+    // The space carries the object's matrix, which is what turns those cells into world space.
+    expect(ghost.parent?.matrix.elements[12]).toBeCloseTo(10, 6);
+
+    // A later call with fewer cells draws fewer, and a hover that left the model draws none.
+    overlay.showCells([0, 0, 0], matrix, 2);
+    expect(ghostOf(scene).count).toBe(1);
+    overlay.hideCells();
+    expect(ghostOf(scene).visible).toBe(false);
+    overlay.dispose();
+  });
+
+  it('grows past the capacity it started with, and hides without touching the frame', () => {
+    const scene = new THREE.Scene();
+    const overlay = new Overlay(scene);
+    const cells: number[] = [];
+    for (let x = 0; x < 300; x += 1) cells.push(x, 0, 0);
+    overlay.showCells(cells, new THREE.Matrix4(), 1);
+    expect(ghostOf(scene).count).toBe(300);
+    expect(instanceAt(scene, 299).position.x).toBeCloseTo(299.5, 6);
+
+    overlay.showBox({ min: [0, 0, 0], max: [0, 0, 0] }, new THREE.Matrix4(), 1);
+    overlay.hideCells();
+    expect(ghostOf(scene).visible).toBe(false);
+    expect(helperOf(scene).visible).toBe(true);
+    overlay.clear();
+    expect(helperOf(scene).visible).toBe(false);
+    overlay.dispose();
+    expect(scene.children).toHaveLength(0);
   });
 });
