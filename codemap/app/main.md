@@ -138,11 +138,20 @@ function main(): void;
      world matrix into a fresh position and quaternion, normalizes, and keeps the shot's lens because moving a camera does not change what it sees
      through), the numeric grid (`setCameraPose`, which refuses a non-finite component or a zero-length quaternion *before* the write, so a refused field
      leaves the shot exactly as it was), the lens field (`setCameraFov`, which clamps `[1, 179]` and keeps the shot's pose), and `Camera -> View`
-     (`captureViewAsCamera`, which takes the viewport camera's pose and keeps the shot's lens). `refreshShotViews` then does the three reads at once: the
-     output camera takes the new state immediately through `mirror.applyShot`, the path is redrawn, and the panel is re-read — so a gesture is visible as it
-     lands rather than a frame later. No gesture moves the viewport: a shot is aimed from
+     (`captureViewAsCamera`, which takes the viewport camera's pose and keeps the shot's lens). `refreshShotViews` then does the four reads at once: the
+     output camera takes the new state immediately through `mirror.applyShot`, the path is redrawn, the panel is re-read, and the timeline bar re-reads
+     the take's keys — so a gesture is visible as it
+     lands rather than a frame later, and the bar says which keys that gesture left behind. No gesture moves the viewport: a shot is aimed from
      the third person, so a view that followed every commit — including one that changed nothing — would make that impossible. `View -> Camera` is the one
      explicit way to look through the shot, and the transport is the only other thing that moves the view on its own.
+   - Camera key rows — the timeline bar lists the active take's keys, and it is the only place one of them can be retimed or removed, so
+     `moveCameraKey` hands a row's time to the model's `moveKey` and `removeCameraKey` hands its ids to `removeKey`; a `false` from either does
+     nothing at all, which is what the row's own rebuild then shows. A key that moved or went changes the shot the playhead resolves but not the
+     clip — the camera is no track — so neither rebuilds the mixer: `refreshShotViews` is the whole follow-up, and the widget re-reads the rows
+     itself. That callback now also re-reads the bar, which is what keeps the rows in step with a camera write made anywhere else — a carrier drag,
+     `Camera -> View`, a typed pose, `Cut here`, a take switch or copy, a deletion, or a retimed clip length — rather than only with the two rows'
+     own edits. `removeKey` refuses a segment's last key, which the row's disabled `delete` mirrors. The two are not `writeShot`'s callers and not
+     gestures: no pose is read from anywhere, so nothing here is refused while a clip runs.
    - Raw meshes — `setSourceVisible` is the panel's one entry point for the override, and it writes the mirror's flag and nothing else: the mirror owns it,
      applies it at once and again on the next `sync()`, and the panel reads it back through `sceneVisible`, so the checkbox cannot drift from the mirror;
      no dirty mark or refresh is needed, and an export is unaffected either way.
@@ -161,8 +170,9 @@ function main(): void;
      widget's milliseconds become the clip's seconds — the scrub
      bar, the exact-time field, and a keyframe row's `key` all seek through it.
    - Duration — `applyDuration` is the one place the clip's length changes: it calls `project.setDuration`, which writes `timeline.durationMs` and retimes
-     the camera's coverage with it, and then re-reads everything that depends on the length — the rebuilt mixer at the same playhead, the shot the output
-     camera now holds, the drawn path, and the panel.
+     the camera's coverage with it, and then re-reads everything that depends on the length — the rebuilt mixer at the same playhead, and, through
+     `refreshShotViews`, the shot the output camera now holds, the drawn path, the panel, and the bar's camera rows, whose time fields are bounded by
+     the segments the retime just moved.
    - Transport — the transport is the app's, not the widget's, because a run of the clip changes the viewport too. `startPlayback` returns while a run is
      already going and captures `playbackView` before anything moves, cloning every value so nothing later writes through it. `pausePlayback` returns while
      nothing runs, pauses, and hands the view over to the editor camera at the pose the clip stopped at, so the frame can be judged and flown on from
@@ -197,7 +207,7 @@ function main(): void;
    - Timeline bar — `setTimelineVisible`, the rail's `Animation` toggle, is a view-only write: it sets the app's flag and tells the panel what to show
      rather than asking, so the flag stays the only state, and the bar keeps its contents while hidden, because the render loop goes on writing the
      playhead into it. Beside the window `resize` listener, an observer on `timelineRoot` calls the same refit: anything that moves the boundary between
-     the canvas and the bar — the bar's visibility, a keyframe row, its message line — changes how much of the column the canvas has, and the renderer's
+     the canvas and the bar — the bar's visibility, a keyframe row, a camera key row, its message line — changes how much of the column the canvas has, and the renderer's
      `setSize` never touches the canvas' style, so without that refit the drawing buffer and the box would disagree and the view would be stretched.
 7. **Render loop.** One `requestAnimationFrame` callback drives everything, once a frame: it advances the transport by the elapsed time, clamped, a paused
    action not advancing, so the transport flag never has to be mirrored here; ends a non-looping run at its last frame, which is where the transport stops
@@ -357,7 +367,8 @@ other. The lens fields go one step further and re-read the views on a refusal, s
 
 ## Dependencies
 - `../document/camera.js` — the camera model the app authors through: `activeTake` and `segmentAt` (the take and segment the playhead is in),
-  `resolveCameraAt` (the shot the panel and the carrier read), `upsertKey` (the one camera write), `addTake`, `removeTake`, `setActiveTake`,
+  `resolveCameraAt` (the shot the panel and the carrier read), `upsertKey` (the one *pose* write, behind every gesture), `moveKey`/`removeKey` (the
+  timeline bar's two key-level edits), `addTake`, `removeTake`, `setActiveTake`,
   `splitSegment`, `setSegmentProjection`, and `setSegmentLensParams`, plus the `ResolvedCamera` and `ProjectionKind` types. The app never builds camera
   records itself: the model mints the ids and keeps the ranges tiling.
 - `../document/project.js`, `../editor/{session,ops,pointer}.js` — `Project`, `EditorSession`, `EditResolution`, `applyVoxelizeResult`,

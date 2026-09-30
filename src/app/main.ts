@@ -11,6 +11,8 @@ import {
   DEFAULT_FOV,
   activeTake,
   addTake,
+  moveKey,
+  removeKey,
   removeTake,
   resolveCameraAt,
   segmentAt,
@@ -378,6 +380,10 @@ export function main(): void {
       refreshCameraPath();
     },
     setDuration: applyDuration,
+    // The bar lists the active take's keys and is the only place one can be retimed or removed, but the two writes are
+    // the app's: a key that moved or went changes the shot the playhead resolves, not the clip.
+    moveCameraKey,
+    removeCameraKey,
   };
 
   const panels = new Panels(panelsRoot, panelContext);
@@ -703,16 +709,15 @@ export function main(): void {
   }
 
   /**
-   * Writes the clip's length through the document, which drags the camera's coverage with it, and then rebuilds what
-   * reads the clip: the mixer, the shot the playhead is on, and the drawn path.
+   * Writes the clip's length through the document, which drags the camera's coverage with it — a take's segments tile the
+   * clip, so its first and last ends move — and then rebuilds what reads the clip: the mixer at the same playhead, and the
+   * shot, the path, the panel and the bar's camera rows through `refreshShotViews`.
    */
   function applyDuration(durationMs: number): void {
     project.setDuration(durationMs);
     playback.rebuild(project);
     playback.setTime(playback.time);
-    mirror.applyShot(playback.time * 1000);
-    refreshCameraPath();
-    panels.refresh();
+    refreshShotViews();
   }
 
   /**
@@ -752,14 +757,15 @@ export function main(): void {
   }
 
   /**
-   * After anything that reshapes the shot: the frame, the drawn path, and the fields all read the camera, so they are
-   * re-read together. The output camera takes the new state at once, so a gesture is visible as it lands rather than a
-   * frame later.
+   * After anything that reshapes the shot: the frame, the drawn path, the fields, and the timeline bar's camera rows all
+   * read the camera, so they are re-read together. The output camera takes the new state at once, so a gesture is visible
+   * as it lands rather than a frame later, and the bar is what says which keys that gesture left behind.
    */
   function refreshShotViews(): void {
     mirror.applyShot(playback.time * 1000);
     refreshCameraPath();
     panels.refresh();
+    timelinePanel.refresh();
   }
 
   /** The take being edited, which the whole `Camera` group is about. */
@@ -785,6 +791,22 @@ export function main(): void {
   function applyRemoveTake(): void {
     const take = activeTake(project.camera);
     if (take !== undefined && removeTake(project.camera, take.id)) refreshShotViews();
+  }
+
+  /**
+   * Retimes one camera key of one segment, from the timeline bar's own row — the only place a key's own time can be
+   * typed. The clip does not change with it (the camera is no track), so nothing is rebuilt; what does change is the
+   * shot the playhead resolves, which `refreshShotViews` re-reads. The model clamps the time into the segment and
+   * refuses one that already holds a key, so a refused move leaves the camera exactly as it was.
+   */
+  function moveCameraKey(takeId: string, segmentId: string, keyId: string, timeMs: number): void {
+    if (!Number.isFinite(timeMs)) return;
+    if (moveKey(project.camera, takeId, segmentId, keyId, timeMs)) refreshShotViews();
+  }
+
+  /** Removes one camera key. The model refuses the last key of a segment, which is why that row's button is disabled. */
+  function removeCameraKey(takeId: string, segmentId: string, keyId: string): void {
+    if (removeKey(project.camera, takeId, segmentId, keyId)) refreshShotViews();
   }
 
   /**
