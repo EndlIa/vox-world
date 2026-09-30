@@ -84,7 +84,7 @@ type CellPayload = {
    cannot repair), whose `channel` is one of the four, and whose `interpolation` is `'step'`, `'linear'`, or
    `'smooth'`. At most one track may exist per `(target, channel)` pair.
 8. Keyframe validation: `value.length` equals the channel's size (3 for `position`/`scale`, 4 for
-   `quaternion`, 1 for `fov`), every entry is finite, `timeMs` is a whole millisecond inside
+   `quaternion`, 1 for `fov`), every entry is finite, `timeMs` is a finite time inside
    `[0, durationMs]`, the ids are unique across the whole file, and each track's times are strictly
    ascending. A keyframe outside the clip is refused rather than clamped: a load is not an edit, and
    `clampTime`'s rounding is the authoring path's rule, not the reader's.

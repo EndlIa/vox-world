@@ -3,7 +3,7 @@
 Ring: 1 · Layer: document · Depends on: ./project.js (type-only, `ObjectId`)
 
 ## Responsibility
-Holds the authoring truth of animation: tracks, channels, keyframes, and interpolation mode as plain serializable data, plus the pure mutators that edit them. It is not a sampler and not an evaluator — the clip and the mixer are derived from this data on change, and this file never evaluates a time. Its clock is whole milliseconds (`Keyframe.timeMs`, `Timeline.durationMs`); the clip's seconds are `animation/compile.ts`'s one conversion.
+Holds the authoring truth of animation: tracks, channels, keyframes, and interpolation mode as plain serializable data, plus the pure mutators that edit them. It is not a sampler and not an evaluator — the clip and the mixer are derived from this data on change, and this file never evaluates a time. Its clock is milliseconds, kept at whatever precision the author gave (`Keyframe.timeMs`, `Timeline.durationMs`); the clip's seconds are `animation/compile.ts`'s one conversion.
 
 ## Public interface
 ```ts
@@ -35,7 +35,7 @@ function channelValueSize(channel: TrackChannel): number;   // the per-channel v
 
 ## Internal logic
 1. A module-private `VALUE_SIZE: Record<TrackChannel, number>` maps `position → 3`, `quaternion → 4`, `scale → 3`, `fov → 1`. It is the only length table here; `compile.ts` reports the same numbers through `channelBinding` and does not re-validate, and `serialize.ts` reads the widths through `channelValueSize` instead of declaring a second copy of them.
-2. A module-private `clampTime(timeMs, durationMs)` is the funnel every authored keyframe time passes through: it rounds to whole milliseconds, clamps into `[0, durationMs]`, and throws `RangeError` on a non-finite time. `addKeyframe`, `moveKeyframe`, and `setDuration` all call it, which is what makes a keyframe outside the duration unrepresentable — the author's time is rounded rather than rejected. That is also the answer to this file's former open question about a time past the end: it is neither accepted as authored nor taken to stretch the clip, it lands on the end, and `setDuration` is the only thing that moves the end.
+2. A module-private `clampTime(timeMs, durationMs)` is the funnel every authored keyframe time passes through: it clamps into `[0, durationMs]` and throws `RangeError` on a non-finite time, and it never rounds: a fractional millisecond is an ordinary authored time. `addKeyframe`, `moveKeyframe`, and `setDuration` all call it, which is what makes a keyframe outside the duration unrepresentable — the author's time is clamped rather than rejected. That is also the answer to this file's former open question about a time past the end: it is neither accepted as authored nor taken to stretch the clip, it lands on the end, and `setDuration` is the only thing that moves the end.
 3. `trackKey` renders `camera:<channel>` or `object:<objectId>:<channel>`. The string is a lookup key only: callers may compare it but must not parse it, so its exact spelling can change.
 4. `findTrack` scans `timeline.tracks` comparing `trackKey`, and is the only lookup primitive. No side index is kept, because `Timeline` must stay a plain record that serialization can round-trip and the track count is small.
 5. `ensureTrack` returns the existing track or appends `{ target, channel, interpolation: interpolation ?? 'linear', keyframes: [] }` and returns it. A track is therefore empty until its first keyframe and may be empty again later, since removing the last keyframe leaves the track in place.
@@ -52,7 +52,7 @@ function channelValueSize(channel: TrackChannel): number;   // the per-channel v
 
 ## Invariants
 - Every mutator mutates the passed `Timeline` in place and returns; none allocates a new `Timeline`, so `project.timeline` identity is stable. `setDuration` is the one mutator that replaces a track's `keyframes` array — collapsing keeps a fresh list — so a holder of that array must re-read the track afterwards; the others splice or sort the array they were given.
-- Every time a mutator writes is a whole millisecond inside `[0, timeline.durationMs]`: the clamp runs on the way in (`addKeyframe`, `moveKeyframe`) and again over every track on `setDuration`, and no other mutator writes a time.
+- Every time a mutator writes is a finite time inside `[0, timeline.durationMs]`, at the precision it was authored with: the clamp runs on the way in (`addKeyframe`, `moveKeyframe`) and again over every track on `setDuration`, and no other mutator writes a time.
 - Each track's `keyframes` is strictly ascending in `timeMs` after `addKeyframe`, `moveKeyframe`, and `sortKeyframes`, with at most one keyframe per millisecond.
 - `keyframe.id` is unique for the session and stable for that keyframe's life: a replace at an occupied millisecond keeps it, and no path mints a second id for the same keyframe.
 - `adoptKeyframeIds` only raises the counter: afterwards the next minted id is above every `keyframe-<n>` the timeline already holds, and the adopted ids themselves are untouched.

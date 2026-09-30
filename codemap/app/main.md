@@ -279,7 +279,7 @@ function main(): void;
   rail's `Animation` button its only writer through `setTimelineVisible`, and the observer on `timelineRoot` refits the drawing buffer to the
   canvas' box whenever the boundary between the two moves. The bar's own contents are untouched by hiding it: the loop keeps writing
   the playhead through `setTime`.
-- The authoring clock is whole milliseconds and the clip is seconds, and this file owns both conversions between them: `onScrub` divides the
+- The authoring clock is milliseconds, fractional included, and the clip is seconds, and this file owns both conversions between them: `onScrub` divides the
   widget's milliseconds by 1000 on the way to `playback.setTime`, and the render loop multiplies `playback.time` by 1000 on the way into
   `setTime`. Every other time the app touches is already on its own side of that boundary — the export range and the HUD's frame count are the
   clip's seconds, and `project.timeline.durationMs` and every keyframe are the document's milliseconds.

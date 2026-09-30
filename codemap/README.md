@@ -306,7 +306,7 @@ deferred is deferred deliberately, not forgotten.
   cubes read as countable cells.
 - Subdivision: raise one object's own grid to a finer level from the Scene group, and have every
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
-- Timeline: a whole-millisecond duration and frame rate, keyframes on object transforms and on the
+- Timeline: a duration at authored precision and a frame rate, keyframes on object transforms and on the
   output camera addressed by session id, step/linear/smooth interpolation, one Play/Pause toggle,
   loop, and scrub. The bar starts collapsed and is summoned from the rail's `Animation` button, and
   the output camera these keyframes record is aimed from third person through its carrier in the

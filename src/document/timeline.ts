@@ -33,15 +33,17 @@ let nextKeyframeId = 1;
 const KEYFRAME_ID_PATTERN = /^keyframe-(\d+)$/;
 
 /**
- * Clamps a time onto the clip: whole milliseconds inside `[0, durationMs]`. Every entry point funnels through
- * this, which is what makes a keyframe outside the duration unrepresentable — the author's time is
- * rounded rather than rejected. A non-finite time is a programmer error and throws.
+ * Clamps a time onto the clip: a finite millisecond value inside `[0, durationMs]`, kept at the precision the author
+ * gave. Every entry point funnels through this, which is what makes a keyframe outside the duration unrepresentable —
+ * the author's time is clamped rather than rejected — and fractional milliseconds are ordinary values here, because
+ * the authoring clock is not quantized: snapping to a frame or a millisecond is an explicit edit, done where the user
+ * asks for it, never on the way in. A non-finite time is a programmer error and throws.
  */
 function clampTime(timeMs: number, durationMs: number): number {
   if (!Number.isFinite(timeMs)) {
     throw new RangeError(`keyframe time must be finite, received ${timeMs}`);
   }
-  return Math.min(Math.max(Math.round(timeMs), 0), Math.max(0, durationMs));
+  return Math.min(Math.max(timeMs, 0), Math.max(0, durationMs));
 }
 
 /**
@@ -187,14 +189,14 @@ export function removeKeyframe(
 
 /**
  * Writes the clip length and drags the clip onto it: every keyframe time is clamped into the new range, and a
- * clamp that lands two keyframes on the same millisecond keeps the later one (the array is already ordered, so
+ * clamp that lands two keyframes on the same time keeps the later one (the array is already ordered, so
  * "later" is the larger authored time). A shorter duration therefore never leaves a keyframe outside the clip.
  */
 export function setDuration(timeline: Timeline, durationMs: number): void {
   if (!Number.isFinite(durationMs)) {
     throw new RangeError(`timeline duration must be finite, received ${durationMs}`);
   }
-  const duration = Math.max(0, Math.round(durationMs));
+  const duration = Math.max(0, durationMs);
   timeline.durationMs = duration;
   for (const track of timeline.tracks) {
     for (const keyframe of track.keyframes) keyframe.timeMs = clampTime(keyframe.timeMs, duration);

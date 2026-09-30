@@ -181,7 +181,9 @@ export class TimelinePanel {
   }
 
   /**
-   * Moves the playhead display only: no seek, no playback state, no `onScrub`. It also keeps the play toggle's label
+   * Moves the playhead display only: no seek, no playback state, no `onScrub`. It snaps to whole milliseconds as it
+   * writes the fields, which is the one place this widget rounds a time — nothing it hands to the document is
+   * quantized. It also keeps the play toggle's label
    * on the transport it reports, because the render loop is what calls this and a press is not the only thing that
    * starts or stops playback.
    */
@@ -350,9 +352,9 @@ export class TimelinePanel {
     if (target === undefined || channel === undefined) return;
     const value = this.authoringValue(target, channel);
     if (value === undefined) return;
-    // The playhead is seconds (the clip's unit) and the authoring time is milliseconds; this rounds to the
-    // millisecond the seek landed on, which is as close as the clip can be sampled anyway.
-    const timeMs = Math.round(this.context.playback.time * 1000);
+    // The playhead is seconds (the clip's unit) and the authoring time is milliseconds. No rounding here: the key
+    // records the time the playhead is actually at, and only the display snaps a fractional millisecond.
+    const timeMs = this.context.playback.time * 1000;
     const result = addKeyframe(this.context.project.timeline, target, channel, timeMs, value);
     if (!result.ok) {
       this.message.textContent = result.error;

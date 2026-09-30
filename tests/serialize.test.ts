@@ -280,6 +280,30 @@ describe('toJson / readJson', () => {
     expect(loadedKeyframes).not.toContain(added.keyframe.id);
   });
 
+  it('round-trips an authored time at the precision it was authored with', () => {
+    const project = oneProject();
+    // A fractional millisecond is an ordinary authored time: the file carries it and the reader keeps it.
+    project.timeline.tracks[0]!.keyframes[0]!.timeMs = 500.25;
+
+    const result = readJson(toJson(project));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    expect(result.data.timeline.tracks[0]!.keyframes[0]!.timeMs).toBe(500.25);
+  });
+
+  it('reports bad-keyframe when two keys share a time', () => {
+    const project = oneProject();
+    addKeyframe(project.timeline, { kind: 'camera' }, 'fov', 1001, [80]);
+    const file = fileOf(project);
+    const fov = file.timeline.tracks.find((track) => track['channel'] === 'fov');
+    const keys = fov?.['keyframes'];
+    if (!Array.isArray(keys)) throw new Error('fixture: no fov keyframes');
+    (keys[1] as Record<string, unknown>)['timeMs'] = (keys[0] as Record<string, unknown>)['timeMs'];
+
+    expect(readJson(JSON.stringify(file))).toMatchObject({ ok: false, error: 'bad-keyframe' });
+  });
+
   it('reports parse-failed', () => {
     expect(readJson('not json at all')).toMatchObject({ ok: false, error: 'parse-failed' });
     expect(readJson('   ')).toMatchObject({ ok: false, error: 'parse-failed' });

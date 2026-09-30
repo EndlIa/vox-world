@@ -33,7 +33,7 @@ import {
 
 const CHANNELS: readonly TrackChannel[] = ['position', 'quaternion', 'scale', 'fov'];
 
-/** Keyframe times in array order, in the authoring unit (whole milliseconds). */
+/** Keyframe times in array order, in the authoring unit (milliseconds, at authored precision). */
 function times(track: Track | undefined): number[] {
   return (track?.keyframes ?? []).map((keyframe) => keyframe.timeMs);
 }
@@ -236,7 +236,7 @@ describe('keyframes', () => {
     expect(times(track)).toEqual([0, 500, 2000]);
   });
 
-  it('refuses to move a keyframe onto a millisecond another one holds, leaving both untouched', () => {
+  it('refuses to move a keyframe onto a time another one holds, and moves it to a nearby time', () => {
     const { project, car } = oneProject();
     const target = objectTarget(car.id);
     const timeline = project.timeline;
@@ -247,9 +247,10 @@ describe('keyframes', () => {
     const track = findTrack(timeline, target, 'position');
 
     expect(moveKeyframe(timeline, target, 'position', moved.keyframe.id, 500)).toBe(false);
-    // The candidate time is clamped before the collision is judged, so this lands on the same millisecond.
-    expect(moveKeyframe(timeline, target, 'position', moved.keyframe.id, 500.4)).toBe(false);
-    expect(times(track)).toEqual([0, 500, 1500]);
+    // A time that differs at all is a time of its own: the candidate is clamped, never rounded, so nothing lands on
+    // a neighbour, however close the author's time is.
+    expect(moveKeyframe(timeline, target, 'position', moved.keyframe.id, 500.4)).toBe(true);
+    expect(times(track)).toEqual([0, 500, 500.4]);
     expect(values(track)).toEqual([
       [0, 0, 0],
       [0.5, 0, 0],
@@ -369,16 +370,16 @@ describe('keyframes', () => {
 });
 
 describe('clamped authoring times', () => {
-  it('clamps an added time onto whole milliseconds inside the clip', () => {
+  it('clamps an added time onto the clip and keeps the precision it was authored at', () => {
     const { project, car } = oneProject();
     const target = objectTarget(car.id);
     const timeline = project.timeline;
     addKeyframe(timeline, target, 'position', 2500, [2.5, 0, 0]); // past the end
     addKeyframe(timeline, target, 'position', -750, [-0.75, 0, 0]); // before the start
-    addKeyframe(timeline, target, 'position', 500.6, [0.6, 0, 0]); // rounds up
-    addKeyframe(timeline, target, 'position', 500.4, [0.4, 0, 0]); // rounds down
+    addKeyframe(timeline, target, 'position', 500.6, [0.6, 0, 0]); // fractional, taken as authored
+    addKeyframe(timeline, target, 'position', 500.4, [0.4, 0, 0]);
     const track = findTrack(timeline, target, 'position');
-    expect(times(track)).toEqual([0, 500, 501, 2000]);
+    expect(times(track)).toEqual([0, 500.4, 500.6, 2000]);
     expect(values(track)).toEqual([
       [-0.75, 0, 0],
       [0.4, 0, 0],
@@ -387,18 +388,22 @@ describe('clamped authoring times', () => {
     ]);
   });
 
-  it('keeps the id and replaces the value when an add rounds onto the occupied millisecond', () => {
+  it('keeps the id and replaces the value when an add lands on an occupied time', () => {
     const { project, car } = oneProject();
     const target = objectTarget(car.id);
     const timeline = project.timeline;
     const first = addKeyframe(timeline, target, 'position', 500, [0.5, 0, 0]);
-    const second = addKeyframe(timeline, target, 'position', 500.4, [9, 9, 9]);
+    const second = addKeyframe(timeline, target, 'position', 500, [9, 9, 9]);
     if (!first.ok || !second.ok) throw new Error('both inserts must succeed');
     const track = findTrack(timeline, target, 'position');
     expect(times(track)).toEqual([500]);
     expect(values(track)).toEqual([[9, 9, 9]]);
     expect(ids(track)).toEqual([first.keyframe.id]);
     expect(second.keyframe).toBe(first.keyframe);
+    // A time that differs at all is a time of its own, however close: the clock is not snapped on the way in.
+    const third = addKeyframe(timeline, target, 'position', 500.25, [1, 1, 1]);
+    if (!third.ok) throw new Error('insert must succeed');
+    expect(times(track)).toEqual([500, 500.25]);
   });
 
   it('clamps a shortened duration and keeps the later of two keyframes that collapse', () => {

@@ -105,7 +105,7 @@ const EXPORT_FILENAME = 'vox-world.mp4';
 const PROJECT_FILENAME = 'vox-world-project.json';
 /** The carrier pivots about its own origin, which is the camera position. */
 const CAMERA_CONTROL_PIVOT = new Vector3(0, 0, 0);
-/** Clip length before the author edits it, in the authoring unit: whole milliseconds. */
+/** Clip length before the author edits it, in the authoring unit: milliseconds. */
 const DEFAULT_DURATION_MS = 10_000;
 const DEFAULT_FPS = 30;
 /** The dialog's extent seed before any import. */

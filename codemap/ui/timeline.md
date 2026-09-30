@@ -4,7 +4,7 @@ Ring: 4 · Layer: ui · Depends on: ./dom.js, ../document/timeline.js, ../docume
 
 ## Responsibility
 The timeline widget: one transport toggle, a scrub bar with its keyframe markers, the exact time, duration and frame-rate inputs, and a retime-in-place keyframe list with its add, seek, and delete actions against the active object and the output camera. It edits authoring data through the pure mutators of `document/timeline.ts` and never touches the mixer:
-seeking is delegated to `onScrub` and clip rebuilds to `onEdited`, and the transport press to `onTransport`, because a run of the clip changes the viewport too. It renders nothing about voxels. Every time it reads, displays, or hands over is the authoring unit, whole milliseconds, so the widget never converts: `onScrub` takes milliseconds and the app divides by 1000 for the clip, whose times are seconds. Its host is the bar along
+seeking is delegated to `onScrub` and clip rebuilds to `onEdited`, and the transport press to `onTransport`, because a run of the clip changes the viewport too. It renders nothing about voxels. Every time it reads, displays, or hands over is the authoring unit, milliseconds, so the widget never converts — and the only place it rounds is the display and an entered seek, never a stored time: `onScrub` takes milliseconds and the app divides by 1000 for the clip, whose times are seconds. Its host is the bar along
 the bottom of the page, and that bar starts collapsed: whether it is on screen is the app's flag, and `setVisible` is the view of it, the way
 `setTime` is the view of the playhead.
 
@@ -50,7 +50,8 @@ class TimelinePanel {
    list goes empty while the channel keeps its interpolation.
 7. Add reads the authoring value from project truth at the playhead — the target's `transform.position`/`quaternion`/`scale` components, or
    `project.camera.transform` and `project.camera.fov` for the camera — builds a fresh `number[]` of the channel length (3, 4, or 1), and calls
-   `addKeyframe(project.timeline, target, channel, timeMs, value)` with `timeMs = Math.round(playback.time * 1000)`, because the playhead is the
+   `addKeyframe(project.timeline, target, channel, timeMs, value)` with `timeMs = playback.time * 1000` — unrounded, so the key lands at the time the
+   playhead is actually at — because the playhead is the
    clip's seconds and the authoring time is milliseconds. The `position` channel is read through
    `project.keyframePosition(target, transform.position)` — whole cells for an object that aligns, a copy of the placement for the camera and for an
    unaligned object — so an aligned object's keyframes land on the lattice even while its live placement is a sampled one; that is
@@ -78,7 +79,7 @@ class TimelinePanel {
     widget's visibility, and the panel keeps no flag of its own. Only the host is hidden: the contents stay built and the render loop goes on
     calling `setTime`, so a bar that comes back shows the current playhead and whatever the channel held.
 14. `refresh()` rebuilds rows, marker positions, the duration field's `min`, the scrub's `max`, and the enabled/disabled state from the timeline,
-    and is the only code that reads the timeline for display. It ends by calling `setTime(Math.round(playback.time * 1000))`, so a rebuild
+    and is the only code that reads the timeline for display. It ends by calling `setTime(playback.time * 1000)`, which snaps to whole milliseconds for display alone, so a rebuild
     re-reads the playhead instead of moving it.
 
 ## Invariants

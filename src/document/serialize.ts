@@ -466,10 +466,10 @@ function readKeyframe(
   if (ids.has(id)) return fail('bad-keyframe', `${where}: keyframe id ${id} appears twice`);
   ids.add(id);
   const timeMs = value['timeMs'];
-  if (!isFiniteNumber(timeMs) || !Number.isInteger(timeMs) || timeMs < 0 || timeMs > durationMs) {
+  if (!isFiniteNumber(timeMs) || timeMs < 0 || timeMs > durationMs) {
     return fail(
       'bad-keyframe',
-      `${where}: keyframe ${id} is at ${String(timeMs)}, outside the whole milliseconds of [0, ${durationMs}]`,
+      `${where}: keyframe ${id} is at ${String(timeMs)}, outside the clip of [0, ${durationMs}]`,
     );
   }
   const size = channelValueSize(channel);
@@ -491,8 +491,8 @@ function readTimeline(value: unknown, objectIds: ReadonlySet<ObjectId>): Read<Ti
   if (!isJsonObject(value)) return fail('bad-structure', 'timeline: expected an object');
   const durationMs = value['durationMs'];
   const fps = value['fps'];
-  if (!isFiniteNumber(durationMs) || !Number.isInteger(durationMs) || durationMs < 0) {
-    return fail('bad-structure', `timeline: durationMs ${String(durationMs)} is not a non-negative integer`);
+  if (!isFiniteNumber(durationMs) || durationMs < 0) {
+    return fail('bad-structure', `timeline: durationMs ${String(durationMs)} is not a finite non-negative number`);
   }
   if (!isFiniteNumber(fps) || !Number.isInteger(fps) || fps < 1) {
     return fail('bad-structure', `timeline: fps ${String(fps)} is not a positive integer`);
