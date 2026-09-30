@@ -62,8 +62,8 @@ function objectTarget(objectId: ObjectId): TrackTarget {
 }
 
 /**
- * A mixer rig shaped like `SceneMirror`: one scene root, one node per project object, and the output camera as a child
- * of that root. `Playback.bind` names the nodes after their ids.
+ * A mixer rig shaped like `SceneMirror`: one scene root and one node per project object, which `Playback.bind` names
+ * after their ids. The output camera is not part of it: `SceneMirror.applyShot` owns the shot.
  */
 function mirrorFor(project: Project, objectId: ObjectId) {
   const root = new Object3D();
@@ -74,14 +74,12 @@ function mirrorFor(project: Project, objectId: ObjectId) {
     root.add(object);
     nodes.set(id, object);
   }
-  const camera = new PerspectiveCamera(50, 1, 0.1, 2000);
-  root.add(camera);
-  const playback = new Playback({ camera });
+  const playback = new Playback();
   playback.bind(nodes);
   playback.rebuild(project);
   const node = nodes.get(objectId);
   if (node === undefined) throw new Error(`no mirror node for ${objectId}`);
-  return { playback, node, camera };
+  return { playback, node };
 }
 
 describe('track identity', () => {
@@ -521,7 +519,7 @@ describe('playback sampling', () => {
     addKeyframe(project.timeline, target, 'quaternion', 0, [0, 0, 0, 1]);
     addKeyframe(project.timeline, target, 'quaternion', 1000, [0.5, 0.5, 0.5, 0.5]);
 
-    const { playback, node, camera } = mirrorFor(project, car.id);
+    const { playback, node } = mirrorFor(project, car.id);
     expect(playback.duration).toBe(2);
 
     // Authoring is milliseconds and the compiled clip is seconds, so these are the keyframe times over 1000.
@@ -552,7 +550,7 @@ describe('playback sampling', () => {
     const target = objectTarget(car.id);
     addKeyframe(project.timeline, target, 'position', 0, [0, 0, 0]);
     addKeyframe(project.timeline, target, 'position', 500, [0.5, 0, 0]);
-    const { playback, node, camera } = mirrorFor(project, car.id);
+    const { playback, node } = mirrorFor(project, car.id);
 
     playback.setTime(0.5);
     expect(playback.time).toBe(0.5);

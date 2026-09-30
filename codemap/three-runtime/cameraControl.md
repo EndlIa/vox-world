@@ -4,16 +4,16 @@ Ring: 2 · Layer: three-runtime · Depends on: `three`
 
 ## Responsibility
 The output camera's stand-in in the viewport: three's own `CameraHelper` draws the frustum wireframe, derived from the
-vertical field of view and the viewport's aspect, and the triangle the library puts above its near plane is what marks
-which way is up. The drawing hangs off a runtime-only pose node, and that node is what the edit gizmo moves while the
-carrier is selected; `app/main.ts` gives it the output camera's pose and writes a drag or a field back into the shot
-being edited — a key at the playhead, on the active take — so it is a handle on the authored camera and never
+shot's own projection — its kind, its lens, and the viewport's aspect — and the triangle the library puts above its near
+plane is what marks which way is up. The drawing hangs off a runtime-only pose node, and that node is what the edit
+gizmo moves while the carrier is selected; `app/main.ts` hands it the output camera itself and commits a drag or a
+field through the app's one camera write, a key on the active take, so it is a handle on the authored camera and never
 a second camera: it renders nothing, is no mixer target, is never serialized, and holds no document state of its own.
 
-`CameraHelper` derives its frame from a `Camera`'s projection, so the carrier owns a display-only `PerspectiveCamera`:
+`CameraHelper` derives its frame from a `Camera`'s projection, so the carrier owns a display-only `OutputCamera`:
 it is never added to a scene, never rendered, never read for a matrix, and exists so the library can be handed the two
-display planes `FRUSTUM_NEAR = 1` and `FRUSTUM_FAR = 2` and the current projection. Those planes are constants rather
-than the authored camera's own near and far, which a kilometre-scale world would turn into a frustum
+display planes `FRUSTUM_NEAR = 1` and `FRUSTUM_FAR = 2` and the projection the shot uses. Those planes are constants
+rather than the shot's own near and far, which a kilometre-scale world would turn into a frustum
 spanning the whole scene; the near plane is where the library draws the marker frame and the up triangle, and the far
 plane is a second frame behind it, which is the depth cue its frustum comes with.
 
@@ -27,7 +27,7 @@ never bind it.
 class CameraControl {
   constructor(scene: THREE.Scene);
   readonly node: THREE.Object3D;   // the pose node: the gizmo's target, and the app's handle on the carrier
-  setPose(position: THREE.Vector3, quaternion: THREE.Quaternion, fovDegrees: number, aspect: number): void;
+  setPose(camera: OutputCamera, aspect: number): void;
   setVisible(visible: boolean): void;
   setSelected(selected: boolean): void;
   dispose(): void;
@@ -35,7 +35,7 @@ class CameraControl {
 ```
 
 ## Internal logic
-1. Construction builds the node (`Object3D`) and one child `Group` — the helper, which owns the drawing and its fixed size — plus the display projection and the `CameraHelper` over it. The helper's own local
+1. Construction builds the node (`Object3D`) and one child `Group` — the helper, which owns the drawing and its fixed size — plus the display projection — an `OutputCamera` whose `near`/`far` are set to the two constants below — and the `CameraHelper` over it. The helper's own local
    matrix is replaced with a fresh identity `Matrix4` and `matrixAutoUpdate` is turned off: the library normally places
    the helper with the camera's world matrix — it holds that matrix by reference from its construction — which is only
    right for a scene child, while here the node owns the pose and the helper group owns the size, so the pose has to
@@ -45,10 +45,10 @@ class CameraControl {
    to the scene it was given (`mirror.scene`), paints the idle colour, hides it, and walks `node.traverse` to put every
    child, the node itself included, on `OVERLAY_LAYER` — layer 1, the number `overlay.ts`, `grid.ts`, and
    `controls.ts` share.
-2. `setPose(position, quaternion, fovDegrees, aspect)` copies the pose onto the node unconditionally and returns
-   before touching the projection when the FOV and aspect both equal the ones the current frustum was built for
-   (`builtFov`, `builtAspect`), so a still camera rebuilds no geometry while a pose still lands every frame.
-3. A projection change writes `fov` and `aspect` onto the display camera, calls its `updateProjectionMatrix()`, and
+2. `setPose(camera, aspect)` copies the shot's pose onto the node — position and quaternion — unconditionally and returns
+   before touching the projection when the kind, the lens, and the aspect all equal the ones the current frustum was built for
+   (`builtProjection`, `builtLens`, `builtAspect`), so a still shot rebuilds no geometry while a pose still lands every frame.
+3. A projection change writes `projection`, `lens`, and `aspect` onto the display camera, calls its `updateProjectionMatrix()`, and
    then the helper's `update()`, which is what unprojects the library's own point set — the near and far frames, the
    cone from the apex, the up triangle, the axis and the two crosses — into the geometry it already owns. No vertex is
    built here: the frustum math is three's.
@@ -81,8 +81,8 @@ class CameraControl {
   an exported frame. The node being on the layer too is what makes a later child safe by construction.
 - The node is unnamed, so the mixer's binding walk can never reach it, and the carrier is no keyframe target and no
   document node: it is a runtime-only handle on the authored camera.
-- The frustum is a function of the vertical FOV, the aspect, and the two display planes alone, and is never derived
-  from scene content; a `setPose` that changes neither projection input updates nothing.
+- The frustum is a function of the shot's projection kind, its lens, the aspect, and the two display planes alone, and is never derived
+  from scene content; a `setPose` that changes no projection input and no aspect updates nothing.
 - The display projection is never rendered, never added to a scene, and never read for a matrix: it is a projection
   descriptor for the helper. The app's two rendering cameras are untouched by this file.
 - One frame or drag allocates nothing: the helper's point set and colour attribute are built once by the constructor,
@@ -97,17 +97,22 @@ class CameraControl {
 - `TypeError` from the constructor when the argument is not a `THREE.Scene`: the node would otherwise be added to
   something that cannot hold it, leaving the drawing unreachable.
 - Everything else is total. `setSelected` and `setVisible` are legal at any time and `dispose()` is safe twice. Nothing here
-  validates `fovDegrees` or `aspect` — the FOV the app hands over is the one `setCameraFov` already clamped, and the aspect
-  comes from the canvas.
+  validates the shot or the aspect — the lens is the model's own number, which the model keeps positive and the panel's lens
+  field clamps, and the aspect comes from the canvas.
 
 ## Dependencies
-- `three` — `Scene`, `Object3D`, `Group`, `PerspectiveCamera`, `CameraHelper`, `Color`, `Vector3`, `Quaternion`.
-No outer-ring import: no project, editor, UI, or other three-runtime module. The caller hands in the scene, exactly
+- `three` — `Scene`, `Object3D`, `Group`, `CameraHelper`, `Color`, `Vector3`, `Quaternion`.
+- `./outputCamera.js` — `OutputCamera`, the display projection the frustum is built for and the type `setPose` takes.
+- `../document/camera.js` — the `ProjectionKind` union, type-only, so the comparison against the built frustum is written
+  against the model's own spelling of the two kinds.
+No outer-ring import beyond those types: no project, editor, UI, or other three-runtime module. The caller hands in the scene, exactly
 as it does for `Overlay` and `WorldGrid`, and `app/main.ts` is the only caller.
 
 ## Tests
 `tests/cameraControl.test.ts` pins the drawing and the two separations a drag depends on in the node environment —
-no DOM, no GPU — by reading the helper's own point map and colour attribute. What
+no DOM, no GPU — by reading the helper's own point map and colour attribute. It also pins that the frustum follows the
+projection the shot uses: a perspective lens widens with the aspect and keeps its height, and an orthographic one is the
+view height either side of the axis, the aspect widening it alone. What
 needs a GPU stays app-verified (README §10): the carrier on screen with its two colours, following the output camera as
 it is aimed and hidden while the viewport already is that camera, and absent from an exported frame.
 

@@ -73,6 +73,9 @@ export class ExportJob {
           return { ok: false, error: 'cancelled', detail: `render cancelled at frame ${i} of ${total}` };
         }
         playback.setTime(from + i / fps);
+        // The frame's camera is the shot the clip holds at this time: the same resolution the viewport draws through,
+        // so an exported frame and a scrubbed frame cannot disagree.
+        this.mirror.applyShot((from + i / fps) * 1000);
         capture.render(scene, this.mirror.camera);
         const frame = await capture.readFrame();
         if (!frame.ok) {
@@ -91,6 +94,7 @@ export class ExportJob {
       if (!finished) writer.cancel();
       this.mirror.setMaskMode(false);
       playback.setTime(restoreTime);
+      this.mirror.applyShot(restoreTime * 1000);
     }
   }
 

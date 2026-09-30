@@ -21,6 +21,7 @@
 import { el, fmt } from './dom.js';
 import { FloatingWindow } from './floatingWindow.js';
 import type { ObjectId, Project, SceneObject } from '../document/project.js';
+import type { ProjectionKind } from '../document/camera.js';
 import type { ActiveTool, EditResolution, EditorSession, SelectionShape } from '../editor/session.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 
@@ -39,6 +40,10 @@ export type CameraControlView = {
   /** The project's takes, and the one the fields are editing: the selector's list. */
   takes: { id: string; name: string }[];
   activeTakeId: string;
+  /** The shot's own projection and clip planes, which the projection selector and the two fields edit. */
+  projection: ProjectionKind;
+  near: number;
+  far: number;
   /** Whether a run of the clip is on, so the fields that would disturb it can wait. */
   playing: boolean;
   /** Whether the camera path is drawn, and whether the track holds a path at all (two keyframes or more). */
@@ -102,6 +107,8 @@ export type PanelContext = {
     addTake(): void;
     removeTake(): void;
     cutAtPlayhead(): void;
+    setCameraProjection(projection: ProjectionKind): void;
+    setCameraLensParams(params: { near: number; far: number }): void;
     toggleCameraControl(): void;
     toggleGizmoMode(): void;
     cameraToView(): void;
@@ -205,6 +212,10 @@ export class Panels {
   private readonly cameraAddTakeButton: HTMLButtonElement;
   private readonly cameraRemoveTakeButton: HTMLButtonElement;
   private readonly cameraCutButton: HTMLButtonElement;
+  private readonly cameraProjectionSelect: HTMLSelectElement;
+  private readonly cameraNearInput: HTMLInputElement;
+  private readonly cameraFarInput: HTMLInputElement;
+  private readonly cameraLensLabel: HTMLSpanElement;
   private readonly cameraSelectButton: HTMLButtonElement;
   private readonly cameraModeButton: HTMLButtonElement;
   private readonly cameraToViewButton: HTMLButtonElement;
@@ -223,6 +234,8 @@ export class Panels {
     exportFrom: boolean;
     exportTo: boolean;
     cameraFov: boolean;
+    cameraNear: boolean;
+    cameraFar: boolean;
     objectName: boolean;
     gridOffset: boolean;
   } = {
@@ -230,6 +243,8 @@ export class Panels {
     exportFrom: false,
     exportTo: false,
     cameraFov: false,
+    cameraNear: false,
+    cameraFar: false,
     objectName: false,
     gridOffset: false,
   };
@@ -503,12 +518,36 @@ export class Panels {
       title: 'split the shot at the playhead: the later half holds its own state from that instant on',
       on: { click: () => context.actions.cutAtPlayhead() },
     });
-
+    this.cameraProjectionSelect = el(
+      'select',
+      {
+        title: 'the projection of this shot; a switch is a cut, never an interpolation between kinds',
+        on: { change: () => context.actions.setCameraProjection(this.readProjection()) },
+      },
+      [
+        el('option', { value: 'perspective', text: 'perspective' }),
+        el('option', { value: 'orthographic', text: 'orthographic' }),
+      ],
+    );
+    this.cameraNearInput = el('input', {
+      type: 'number',
+      step: '0.1',
+      title: 'near clip plane of this shot',
+      on: { change: () => this.writeLensParams() },
+    });
+    this.cameraFarInput = el('input', {
+      type: 'number',
+      step: '1',
+      title: 'far clip plane of this shot',
+      on: { change: () => this.writeLensParams() },
+    });
+    this.cameraLensLabel = el('span', { class: 'dim', text: 'FOV (deg)' });
     group('Camera', [
       el('div', { class: 'row' }, [this.cameraSelectButton, this.cameraModeButton]),
       el('div', { class: 'row' }, [this.cameraToViewButton, this.viewToCameraButton]),
       el('div', { class: 'row' }, [this.cameraTakeSelect, this.cameraAddTakeButton, this.cameraRemoveTakeButton]),
-      el('div', { class: 'row' }, [this.cameraCutButton]),
+      el('div', { class: 'row' }, [this.cameraProjectionSelect, this.cameraCutButton]),
+      el('div', { class: 'row' }, [this.field('Near', this.cameraNearInput), this.field('Far', this.cameraFarInput)]),
       this.field('Show camera path', this.cameraPathInput),
       el('div', { class: 'row' }, [
         this.field('X', this.cameraPoseInputs[0]!),
@@ -521,7 +560,7 @@ export class Panels {
         this.field('QZ', this.cameraPoseInputs[5]!),
         this.field('QW', this.cameraPoseInputs[6]!),
       ]),
-      this.field('FOV (deg)', this.cameraFovInput),
+      el('label', undefined, [this.cameraLensLabel, this.cameraFovInput]),
     ]);
     group('Render', [
       this.field('Resolution', this.exportResolutionSelect),
@@ -609,16 +648,21 @@ export class Panels {
       // A path needs two keyframes to exist at all, so below that the box is unchecked as well as disabled.
       this.cameraPathInput.disabled = !cameraControl.pathAvailable;
       this.cameraPathInput.checked = cameraControl.pathAvailable && cameraControl.pathVisible;
-      // The take selector lists the project's takes: the shot the fields are editing is the active take's segment at
-      // the playhead.
+      // The take selector lists the project's takes; the projection, the clip planes, and the lens label follow the
+      // shot the fields are editing, which is the active take's segment at the playhead.
       this.cameraTakeSelect.replaceChildren(
         ...cameraControl.takes.map((take) => el('option', { value: take.id, text: take.name })),
       );
       this.cameraTakeSelect.value = cameraControl.activeTakeId;
+      this.cameraProjectionSelect.value = cameraControl.projection;
+      this.cameraLensLabel.textContent = cameraControl.projection === 'perspective' ? 'FOV (deg)' : 'View height';
+      if (!this.touched.cameraNear) this.cameraNearInput.value = String(cameraControl.near);
+      if (!this.touched.cameraFar) this.cameraFarInput.value = String(cameraControl.far);
       // A run owns the shot for its length, so the controls that would reshape it wait.
       this.cameraTakeSelect.disabled = cameraControl.playing;
       this.cameraAddTakeButton.disabled = cameraControl.playing;
       this.cameraRemoveTakeButton.disabled = cameraControl.playing || cameraControl.takes.length < 2;
+      this.cameraProjectionSelect.disabled = cameraControl.playing;
       this.cameraCutButton.disabled = cameraControl.playing;
       const authored = [...cameraControl.pose.position, ...cameraControl.pose.quaternion, cameraControl.pose.fov];
       // The lens is part of the same state: the shot the carrier draws is the shot the fields show.
@@ -698,6 +742,23 @@ export class Panels {
       quaternion: [qx!, qy!, qz!, qw!],
       fov,
     });
+  }
+
+  /** The projection the selector shows, narrowed back to the model's own union. */
+  private readProjection(): ProjectionKind {
+    return this.cameraProjectionSelect.value === 'orthographic' ? 'orthographic' : 'perspective';
+  }
+
+  /**
+   * Writes the shot's clip planes. Both fields go together because a camera with `near >= far` renders nothing, so
+   * the pair is one decision rather than two; the app refuses an unusable pair and the next `refresh()` re-seeds both.
+   */
+  private writeLensParams(): void {
+    const near = Number.parseFloat(this.cameraNearInput.value);
+    const far = Number.parseFloat(this.cameraFarInput.value);
+    this.touched.cameraNear = true;
+    this.touched.cameraFar = true;
+    if (Number.isFinite(near) && Number.isFinite(far)) this.context.actions.setCameraLensParams({ near, far });
   }
 
   private field(label: string, control: HTMLElement): HTMLLabelElement {

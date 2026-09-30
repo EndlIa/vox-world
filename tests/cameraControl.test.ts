@@ -8,6 +8,17 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { CameraControl } from '../src/three-runtime/cameraControl.js';
+import { OutputCamera } from '../src/three-runtime/outputCamera.js';
+
+/** The shot a `setPose` call is made of: the carrier reads its pose, its projection kind, and its lens. */
+function outputCameraAt(position: THREE.Vector3, lens: number, projection: 'perspective' | 'orthographic' = 'perspective') {
+  const camera = new OutputCamera();
+  camera.position.copy(position);
+  camera.lens = lens;
+  camera.projection = projection;
+  camera.updateProjectionMatrix();
+  return camera;
+}
 
 /** The viewport decoration layer. */
 const OVERLAY_LAYER = 1;
@@ -68,7 +79,7 @@ describe('camera carrier', () => {
 
   it('derives the frustum from the vertical field of view and the viewport aspect', () => {
     const control = new CameraControl(new THREE.Scene());
-    control.setPose(new THREE.Vector3(), new THREE.Quaternion(), 90, 1);
+    control.setPose(outputCameraAt(new THREE.Vector3(), 90), 1);
     for (const name of ['n1', 'n2', 'n3', 'n4']) {
       const point = corner(control, name);
       expect(Math.abs(point.y)).toBeCloseTo(1, 6);
@@ -76,7 +87,7 @@ describe('camera carrier', () => {
     }
 
     // The same field of view in a wider viewport widens the frame and leaves its height alone.
-    control.setPose(new THREE.Vector3(), new THREE.Quaternion(), 90, 2);
+    control.setPose(outputCameraAt(new THREE.Vector3(), 90), 2);
     for (const name of ['n1', 'n2', 'n3', 'n4']) {
       const point = corner(control, name);
       expect(Math.abs(point.x)).toBeCloseTo(2, 6);
@@ -91,9 +102,27 @@ describe('camera carrier', () => {
     control.dispose();
   });
 
+  it('draws the projection the shot actually uses, orthographic included', () => {
+    const control = new CameraControl(new THREE.Scene());
+    // A view height of eight is four world units either side of the axis, whatever the viewport aspect.
+    control.setPose(outputCameraAt(new THREE.Vector3(), 8, 'orthographic'), 1);
+    for (const name of ['n1', 'n2', 'n3', 'n4']) {
+      const point = corner(control, name);
+      expect(Math.abs(point.y)).toBeCloseTo(4, 6);
+      expect(Math.abs(point.x)).toBeCloseTo(4, 6);
+    }
+    control.setPose(outputCameraAt(new THREE.Vector3(), 8, 'orthographic'), 2);
+    for (const name of ['n1', 'n2', 'n3', 'n4']) {
+      const point = corner(control, name);
+      expect(Math.abs(point.x)).toBeCloseTo(8, 6);
+      expect(Math.abs(point.y)).toBeCloseTo(4, 6);
+    }
+    control.dispose();
+  });
+
   it('carries the pose on the node and a fixed world-size scale on the helper, never both on one', () => {
     const control = new CameraControl(new THREE.Scene());
-    control.setPose(new THREE.Vector3(3, 4, 5), new THREE.Quaternion(), 60, 1);
+    control.setPose(outputCameraAt(new THREE.Vector3(3, 4, 5), 60), 1);
     const helper = helperGroup(control);
     expect(control.node.position.toArray()).toEqual([3, 4, 5]);
     expect(control.node.scale.toArray()).toEqual([1, 1, 1]);
@@ -103,7 +132,7 @@ describe('camera carrier', () => {
     expect(helper.scale.toArray()).toEqual([1, 1, 1]);
 
     // A pose update moves the node and leaves the drawing's size alone.
-    control.setPose(new THREE.Vector3(6, 0, 0), new THREE.Quaternion(), 45, 1);
+    control.setPose(outputCameraAt(new THREE.Vector3(6, 0, 0), 45), 1);
     expect(helper.scale.toArray()).toEqual([1, 1, 1]);
     expect(control.node.position.x).toBe(6);
     control.dispose();
@@ -111,7 +140,7 @@ describe('camera carrier', () => {
 
   it('marks up above the marker frame, so a banked pose reads as banked', () => {
     const control = new CameraControl(new THREE.Scene());
-    control.setPose(new THREE.Vector3(), new THREE.Quaternion(), 60, 1);
+    control.setPose(outputCameraAt(new THREE.Vector3(), 60), 1);
     const top = Math.max(corner(control, 'n1').y, corner(control, 'n3').y);
     for (const name of ['u1', 'u2', 'u3']) {
       const point = corner(control, name);

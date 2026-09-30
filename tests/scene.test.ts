@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { Vector3 } from 'three';
 import { Project } from '../src/document/project.js';
-import { DEFAULT_FAR, DEFAULT_FOV, DEFAULT_NEAR } from '../src/document/camera.js';
+import { DEFAULT_FAR, DEFAULT_FOV, DEFAULT_NEAR, splitSegment, setSegmentProjection, upsertKey } from '../src/document/camera.js';
 import { SceneMirror } from '../src/three-runtime/scene.js';
 import { UniformGrid } from '../src/voxels/uniform/grid.js';
 
@@ -237,7 +237,8 @@ describe('project reload support', () => {
     const project = new Project();
     const mirror = new SceneMirror(project);
 
-    expect(mirror.camera.fov).toBe(DEFAULT_FOV);
+    expect(mirror.camera.lens).toBe(DEFAULT_FOV);
+    expect(mirror.camera.projection).toBe('perspective');
     expect(mirror.camera.near).toBe(DEFAULT_NEAR);
     expect(mirror.camera.far).toBe(DEFAULT_FAR);
     expect(mirror.camera.up.toArray()).toEqual([0, 0, 1]);
@@ -253,4 +254,63 @@ describe('project reload support', () => {
     expect(mirror.camera.position.toArray()).toEqual(before);
   });
 
+  it('writes the active take\u2019s shot into the output camera, jumping at a cut', () => {
+    const project = new Project();
+    project.setDuration(1000);
+    const mirror = new SceneMirror(project);
+    const take = project.camera.takes[0];
+    const segment = take?.segments[0];
+    if (take === undefined || segment === undefined) throw new Error('fixture: no shot');
+
+    const shot = (segmentId: string, timeMs: number, x: number, lens: number): void => {
+      upsertKey(project.camera, take.id, segmentId, {
+        timeMs,
+        position: new THREE.Vector3(x, 0, 0),
+        quaternion: new THREE.Quaternion(),
+        lens,
+      });
+    };
+    shot(segment.id, 0, 0, 30);
+    shot(segment.id, 1000, 10, 70);
+
+    mirror.applyShot(0);
+    expect(mirror.camera.position.toArray()).toEqual([0, 0, 0]);
+    expect(mirror.camera.lens).toBe(30);
+    mirror.applyShot(500);
+    expect(mirror.camera.position.x).toBeCloseTo(5, 12);
+    expect(mirror.camera.lens).toBeCloseTo(50, 12);
+    // The lens reaches the frame: the projection this camera draws with is rebuilt, not left stale.
+    expect(mirror.camera.projectionMatrix.elements).toEqual(new THREE.PerspectiveCamera(50, 1, 0.1, 2000).projectionMatrix.elements);
+
+    expect(splitSegment(project.camera, take.id, 500, 1000).ok).toBe(true);
+    const later = take.segments[1];
+    if (later === undefined) throw new Error('fixture: the split produced no second shot');
+    shot(later.id, 500, 0, 50);
+    mirror.applyShot(499.9);
+    expect(mirror.camera.position.x).toBeCloseTo(4.999, 9);
+    mirror.applyShot(500);
+    expect(mirror.camera.position.toArray()).toEqual([0, 0, 0]);
+  });
+
+  it('renders an orthographic segment with an orthographic projection', () => {
+    const project = new Project();
+    project.setDuration(1000);
+    const mirror = new SceneMirror(project);
+    const take = project.camera.takes[0];
+    const segment = take?.segments[0];
+    if (take === undefined || segment === undefined) throw new Error('fixture: no shot');
+    expect(setSegmentProjection(project.camera, take.id, segment.id, 'orthographic').ok).toBe(true);
+    upsertKey(project.camera, take.id, segment.id, {
+      timeMs: 0,
+      position: new THREE.Vector3(0, 0, 0),
+      quaternion: new THREE.Quaternion(),
+      lens: 8,
+    });
+
+    mirror.applyShot(0);
+    expect(mirror.camera.projection).toBe('orthographic');
+    const expected = new THREE.OrthographicCamera(-4, 4, 4, -4, 0.1, 2000);
+    expect(mirror.camera.projectionMatrix.elements).toEqual(expected.projectionMatrix.elements);
+    expect(mirror.camera.projectionMatrixInverse.elements).toEqual(expected.projectionMatrixInverse.elements);
+  });
 });

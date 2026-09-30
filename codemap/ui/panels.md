@@ -19,7 +19,7 @@ as its window is open, and two buttons do more than open a window: `Edit` also s
 its tools belong to, and it is disabled while no object is active, because that mode edits one object's
 voxels and there is nothing to edit until one is chosen; and `Animation` opens no window at all — it shows and hides
 the timeline bar along the bottom of the page, and carries `on` while that bar is on screen. Everything that is *about the camera* lives in
-the `Camera` group — the carrier that aims the output camera, the take being edited, and the cut — while
+the `Camera` group — the carrier that aims the output camera, the take being edited, the shot's projection and clip planes, the cut, and the lens — while
 the object keyframes stay in the timeline
 bar, because they are animation. The camera's own keys are not listed anywhere: the carrier and the fields write them at the playhead, and
 `document/camera.ts` owns the takes they belong to.
@@ -34,10 +34,12 @@ type CameraPose = {                 // one authored camera pose: the carrier's f
 type CameraControlView = {          // what the carrier's controls read
   selected: boolean;                // whether the gizmo currently drives the carrier
   mode: 'translate' | 'rotate';     // the gizmo's mode, shared with objects
-  playing: boolean;                 // whether a run is in flight; the app skips the `Camera -> View` capture while one is, and the take controls wait
+  playing: boolean;                 // whether a run is in flight; the app skips the `Camera -> View` capture while one is, and the reshaping controls wait
   pose: CameraPose;                 // the shot the playhead resolves, i.e. what a key would hold
   takes: { id: string; name: string }[];   // the project's takes, for the selector
   activeTakeId: string;             // the take the fields are editing
+  projection: ProjectionKind;       // the shot's own kind: the projection selector's value
+  near: number; far: number;        // the shot's clip planes, which the two fields edit
   pathVisible: boolean;             // whether the camera path is drawn; the app's flag, not the panel's
   pathAvailable: boolean;           // whether the take holds a path at all (two keys or more)
 };
@@ -71,6 +73,8 @@ type PanelContext = {
     addTake(): void;                         // copies the active take and switches to the copy
     removeTake(): void;                      // deletes the active take; the model refuses the last one
     cutAtPlayhead(): void;                   // splits the shot the playhead is in
+    setCameraProjection(projection: ProjectionKind): void;   // switches the shot's projection kind
+    setCameraLensParams(params: { near: number; far: number }): void;   // writes the shot's clip planes together
     toggleCameraControl(): void;             // selects or deselects the carrier
     toggleGizmoMode(): void;                 // flips the gizmo between moving and rotating, for whatever it is on
     cameraToView(): void;                    // `Camera -> View`: authors the pose the viewport shows
@@ -119,25 +123,27 @@ class Panels {
    ignoring a blank, fractional, or negative field so the session keeps the height it had while the field is retyped — which is why the setter's own
    `RangeError` is unreachable from here. `Color` is the `editColor` shared with the add and paint tools: `refresh()` seeds it from `session.editColor` and it
    forwards an unsigned hex number through `setEditColor(hex)`.
-6. `Camera` group: everything that is *about the camera* lives here — the take selector with its `Copy take` and `Delete take` buttons and `Cut here`, the
-   carrier that aims the output camera (`Select`/`Deselect`, the gizmo-mode button,
-   `Camera -> View`, `View -> Camera`, and the seven `X`, `Y`, `Z`, `QX`, `QY`, `QZ`, `QW` number fields, built in that order), and the
-   `FOV (deg)` field, which follows them in the same window — while the object keyframes stay
+6. `Camera` group: everything that is *about the camera* lives here — the take selector with its `Copy take` and `Delete take` buttons, the projection
+   selector beside `Cut here`, the `Near`/`Far` fields, the carrier that aims the output camera (`Select`/`Deselect`, the gizmo-mode button,
+   `Camera -> View`, `View -> Camera`, and the seven `X`, `Y`, `Z`, `QX`, `QY`, `QZ`, `QW` number fields, built in that order), and the lens field, whose
+   label is `FOV (deg)` while the shot is perspective and `View height` while it is orthographic — all in the same window — while the object keyframes stay
    in the timeline bar, because they are animation. The four carrier buttons and the
    seven fields are plain forwards over the carrier and the shot, and any pose field's `change` event sends the whole pose — the seven values plus the lens
    field — because the fields are one state and a change to any component is a change to it; a cleared or non-finite component makes that write refresh instead,
    so the fields come back showing what the shot actually holds rather than a half-written pose. The take selector forwards the chosen id through
-   `setActiveTake`, and `Copy take`, `Delete take`, and `Cut here` forward nothing, because the app owns what they do. With `context.cameraControl()` present `refresh()` seeds the
+   `setActiveTake`, `Copy take` and `Delete take` forward nothing, `Cut here` forward nothing, and the projection selector forwards its own narrowed value; the
+   two clip-plane fields go together through `setCameraLensParams` — the pair is one decision, because a camera with `near >= far` renders nothing — and both
+   are marked touched, so a refused pair comes back from the next `refresh()`. With `context.cameraControl()` present `refresh()` seeds the
    seven fields from the shot the playhead resolves (skipping whichever field is focused, so the field being typed into is never overwritten) and swaps the two button
    labels: the select reads `Deselect` while the carrier is selected, and the mode button names the mode a press would move *to*, so a `rotate` carrier reads
    `-> Move`. The four carrier controls are gated rather than tracked: with no provider the select, the mode, and the two view switches are all `disabled`, because a
    context with no carrier has nothing for them to aim, and the mode button is disabled too while the carrier is not selected, since a mode with nothing to move
-   is no choice. The four take controls — the selector, both buttons, and `Cut here` — are `disabled` while `playing`, and `Delete take` also while the project holds
-   one take, so the model's own refusal of the last one is unreachable
+   is no choice. The five controls that would reshape the camera while it is being rendered — the take selector, both take buttons, the projection selector, and
+   `Cut here` — are `disabled` while `playing`, and `Delete take` also while the project holds one take, so the model's own refusal of the last one is unreachable
    from here. `Show camera path` is seeded from the same provider — `checked = pathAvailable && pathVisible`, `disabled = !pathAvailable` — because a path
    needs two keys to exist at all, so a take below two is unchecked as well as disabled, and the panel holds no path flag of its own. The seven pose
    fields and the lens field are never disabled: they author the shot whether or not the carrier is selected. The lens field displays the shot's own
-   `pose.fov` until the user types in it, and forwards `parseFloat` of its value through `setCameraFov(fov)` on every `input` event; it holds no camera and no clamped copy of
+   `pose.fov` — the resolved lens, under whichever label its projection asks for — until the user types in it, and forwards `parseFloat` of its value through `setCameraFov(fov)` on every `input` event; it holds no camera and no clamped copy of
    its own, and the app validates and clamps what it receives.
 7. `Render` group, the export: the `Render MP4` button reads the resolution select (`960x540`, `1280x720`, `1920x1080`, the middle one selected by default), the
    fps, `from`, and `to` inputs, and the mode select (`beauty | mask`, where `mask` is the per-object identity-color render), and calls
@@ -215,7 +221,7 @@ class Panels {
   it back into the checkbox, so the panel invents no state of its own and holds none, and it needs no active object. With no `gridVisible()` in the
   context the checkbox is forward-only and `refresh()` never rewrites it, exactly like `Show raw meshes` without `sceneVisible()` — the panel then shows
   the user's last click and the app is the only thing that knows the real state.
-- The lens field is the panel's view of the shot's own lens — the seven carrier fields are the pose half of the same view: it displays the lens the playhead resolves while untouched, forwards the parsed number, and keeps no camera and no clamped copy of its own.
+- The lens field is the panel's view of the shot's own lens — the seven carrier fields are the pose half of the same view: it displays the lens the playhead resolves while untouched, forwards the parsed number, and keeps no camera and no clamped copy of its own. Its label follows the shot's projection, because the same scalar is a vertical field of view in degrees on a perspective shot and a visible world height on an orthographic one.
 - The `Visible` checkbox is a view of `object.visible` and the `Name` field a view of `object.name`: neither holds document state, neither writes
   anything itself, and both are `disabled` while nothing is active. The `Name` field forwards only on `change`, so no keystroke of a name half-typed
   can reach the app, and a rejected rename simply re-seeds it from the project on the next `refresh()`.
@@ -269,7 +275,9 @@ field parses to `NaN` and is forwarded as-is: refusing non-finite input is the a
 field is forwarded the same way — trimming it and refusing an empty name belong to the op, so a blank name comes back as a reported failure and the
 field re-seeds from the project. The carrier's pose is the one place the panel refuses before forwarding: `writeCameraPose` sends the seven fields
 plus the lens as one pose, and a cleared or non-finite component makes it refresh instead — the fields come back showing what the shot holds — rather
-than handing over a partial pose; the app checks what it receives again and refuses a zero-length quaternion.
+than handing over a partial pose; the app checks what it receives again and refuses a zero-length quaternion. The clip-plane fields refuse only a
+non-finite pair: an unusable `near`/`far` is forwarded and the model's own refusal reaches the console, with both fields re-seeded from the shot on the
+next `refresh()`.
 
 ## Dependencies
 - `./dom.js` — `el`, `fmt` for construction and the row's cell counts.
@@ -290,19 +298,20 @@ than handing over a partial pose; the app checks what it receives again and refu
   same way, a `timelineVisible` closure and `setTimelineVisible`, so the rail's `Animation` button costs the panel no import either;
   the settings themselves are the dialog's, not the
   panel's, which is why neither `defaults` nor a voxelize target crosses this boundary any more, and why the panel holds no voxelize-related member at all.
-  The carrier's four actions, its pose write, and the four camera-model commands — the take switch, the copy, the delete, and the cut —
-  arrive the same way: plain `PanelContext` callbacks that `main` implements over the carrier, the camera model, and the project, so none of
+  The carrier's four actions, its pose write, and the six camera-model commands — the take switch, the copy, the delete, the cut, the projection, and the
+  clip-plane pair — arrive the same way: plain `PanelContext` callbacks that `main` implements over the carrier, the camera model, and the project, so none of
   them costs the panel an import — and so does the camera path's toggle, `setCameraPathVisible`, which
   `main` implements over the drawing and the app's flag.
+- `../document/camera.js` — the `ProjectionKind` union, type-only, for the projection selector's value and the `setCameraProjection` callback.
 
 ## Tests
 None. The panel needs a DOM and vitest runs in the node environment, so it is verified by running the app: the panel must show no
 voxelize control or setting anywhere — no representation select, voxel size, cell size, root size, or max depth, and no button that would open the
 dialog — so importing a GLB must ask for the settings in the modal and nothing in the panel asks again. The rest of the walk: set a mask color, type a name and confirm the object list and the HUD follow it — the row read-out is the object's size in cells, `Demo cube · uniform · 4×4×4` beside the boot cube, not a length in metres — clear the name to see the refusal, untick `Visible` and confirm the
 object disappears, click a row and confirm a trash appears at its right end on that row and on no other and that pressing it removes that object
-from the list while the HUD stops naming it, reparent an object, press the carrier's `Select` and steer the shot, type a `FOV` and confirm the output camera
-and the next export both take it, copy a take and confirm the fields switch to a copy the original does not follow, and cut at the
-playhead. Tick and untick `Show raw meshes` against the raw meshes of an imported object and confirm they appear over and
+from the list while the HUD stops naming it, reparent an object, press the carrier's `Select` and steer the shot, type a lens and confirm the output camera
+and the next export both take it, copy a take and confirm the fields switch to a copy the original does not follow, cut at the playhead, switch the
+shot's projection, and type a `Near`/`Far` pair that is not a range and see both fields come back. Tick and untick `Show raw meshes` against the raw meshes of an imported object and confirm they appear over and
 disappear behind the voxels — in the same place — without changing what an export renders. The carrier walk is on the same group:
 pressing `Select` must put the gizmo on the camera carrier and enable `Camera -> View`, `View -> Camera`, and the mode button, `Camera -> View` must author
 the pose the viewport shows into the seven fields, a drag on the carrier must aim the shot and commit one pose into them, typing any of `X`, `Y`, `Z`,

@@ -21,6 +21,8 @@
  * else, instead of inflating it into a huge wireframe.
  */
 
+import { OutputCamera } from './outputCamera.js';
+import type { ProjectionKind } from '../document/camera.js';
 import * as THREE from 'three';
 
 /** The viewport decoration layer; `overlay.ts`, `controls.ts`, and `grid.ts` use the same number. */
@@ -56,12 +58,13 @@ export class CameraControl {
   /** The scaled drawing. Not the node, so the pose never carries the drawing's fixed world-size scale. */
   private readonly helper: THREE.Group;
   /** The display projection the frustum is built for: no scene, no renderer, no matrix anyone reads. */
-  private readonly projection: THREE.PerspectiveCamera;
+  private readonly projection: OutputCamera;
   private readonly frustum: THREE.CameraHelper;
   private readonly material: THREE.LineBasicMaterial;
 
-  /** The projection the current frustum was built for, so a pose update that changes neither rebuilds nothing. */
-  private builtFov = 0;
+  /** The projection the current frustum was built for, so an update that changes none of it rebuilds nothing. */
+  private builtProjection: ProjectionKind | null = null;
+  private builtLens = 0;
   private builtAspect = 0;
   private selected = false;
 
@@ -80,7 +83,9 @@ export class CameraControl {
     // given a local matrix of its own — the identity, never recomputed — and the pose reaches it from its parents.
     // It also carries the library's default colour scheme until the idle colour is applied below. Its material comes
     // from the library with a generic `Material` type, so it is narrowed once.
-    this.projection = new THREE.PerspectiveCamera(50, 1, FRUSTUM_NEAR, FRUSTUM_FAR);
+    this.projection = new OutputCamera();
+    this.projection.near = FRUSTUM_NEAR;
+    this.projection.far = FRUSTUM_FAR;
     this.frustum = new THREE.CameraHelper(this.projection);
     this.frustum.matrix = new THREE.Matrix4();
     this.frustum.matrixAutoUpdate = false;
@@ -102,16 +107,22 @@ export class CameraControl {
   }
 
   /**
-   * Adopts a camera pose and the projection to draw around it. `fovDegrees` is the vertical field of view, the
-   * number an authored key holds, and `aspect` is the aspect of the viewport the drawing leads.
+   * Adopts the shot the output camera holds: its pose, and the projection it draws with, so the carrier's frustum
+   * looks like what the shot sees. `aspect` is the aspect of the viewport the drawing leads, which is the viewport's
+   * rather than an export's. The display keeps its own clip planes: a kilometre-scale shot would otherwise draw a
+   * frustum spanning the whole scene.
    */
-  setPose(position: THREE.Vector3, quaternion: THREE.Quaternion, fovDegrees: number, aspect: number): void {
-    this.node.position.copy(position);
-    this.node.quaternion.copy(quaternion);
-    if (fovDegrees === this.builtFov && aspect === this.builtAspect) return;
-    this.builtFov = fovDegrees;
+  setPose(camera: OutputCamera, aspect: number): void {
+    this.node.position.copy(camera.position);
+    this.node.quaternion.copy(camera.quaternion);
+    if (camera.projection === this.builtProjection && camera.lens === this.builtLens && aspect === this.builtAspect) {
+      return;
+    }
+    this.builtProjection = camera.projection;
+    this.builtLens = camera.lens;
     this.builtAspect = aspect;
-    this.projection.fov = fovDegrees;
+    this.projection.projection = camera.projection;
+    this.projection.lens = camera.lens;
     this.projection.aspect = aspect;
     this.projection.updateProjectionMatrix();
     this.frustum.update();

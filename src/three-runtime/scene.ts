@@ -16,7 +16,8 @@
  */
 
 import type { ObjectId, Project, SceneObject } from '../document/project.js';
-import { DEFAULT_FAR, DEFAULT_FOV, DEFAULT_NEAR } from '../document/camera.js';
+import { resolveCameraAt } from '../document/camera.js';
+import { OutputCamera } from './outputCamera.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
 import { Outlines } from '@pmndrs/vanilla/core/Outlines';
@@ -105,8 +106,8 @@ type UniformPayload = NonNullable<SceneObject['uniform']>;
 
 export class SceneMirror {
   readonly scene: THREE.Scene;
-  /** The **output** camera: the shot the project's active take holds, posed by `animation/playback.ts`. */
-  readonly camera: THREE.PerspectiveCamera;
+  /** The **output** camera: the shot the project's active take holds, written by `applyShot`. */
+  readonly camera: OutputCamera;
 
   private readonly project: Project;
   private readonly shadingMaterial: THREE.MeshLambertMaterial;
@@ -155,9 +156,9 @@ export class SceneMirror {
     // No colour at all and no transparent tricks: this exists to leave depth, which is what cuts the hull to a rim.
     this.outlineDepthMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true });
 
-    // Built on the camera model's defaults, and posed by `animation/playback.ts` from the take the project holds: the
-    // mirror owns the one instance every render and every export goes through, and never the value it renders.
-    this.camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, DEFAULT_NEAR, DEFAULT_FAR);
+    // Built on the camera model's defaults; `applyShot` writes the state the project's active take holds. The mirror
+    // owns the one instance every render and every export goes through, and never the value it renders.
+    this.camera = new OutputCamera();
     // The world is Z-up and three's default `up` is Y, so a later `lookAt` on this output camera would roll the
     // frame a quarter turn without this.
     this.camera.up.set(0, 0, 1);
@@ -306,7 +307,7 @@ export class SceneMirror {
    * exist: the hull is then cut by that object and by nothing else, and stands over everything in front of it. The
    * camera's layers, the auto-clear flag, and the scene's background are all restored before it returns.
    */
-  renderSelectionOutline(renderer: THREE.WebGLRenderer, camera: THREE.PerspectiveCamera): boolean {
+  renderSelectionOutline(renderer: THREE.WebGLRenderer, camera: THREE.Camera): boolean {
     const outline = this.selectedId === null ? undefined : this.entries.get(this.selectedId)?.outline;
     if (outline === undefined || !outline.visible) return false;
     const layers = camera.layers.mask;
@@ -436,6 +437,27 @@ export class SceneMirror {
     const settings = this.project.settings;
     this.scene.background = new THREE.Color(settings.background);
     this.ambientLight.intensity = settings.ambientIntensity;
+  }
+
+  /**
+   * Writes the shot the project's active take holds at `timeMs` into the output camera: pose, clip planes, and the lens
+   * in whichever projection the segment authors. It is the one place a take becomes a frame, so a scrub, a run, and an
+   * export cannot disagree about the camera they render through — and a cut is exact here because nothing interpolates
+   * across a segment boundary.
+   *
+   * A camera the active take cannot answer for leaves the last shot standing rather than failing: the frame still has to
+   * be drawn, and a project this class can hold always resolves.
+   */
+  applyShot(timeMs: number): void {
+    const state = resolveCameraAt(this.project.camera, timeMs);
+    if (state === undefined) return;
+    this.camera.position.copy(state.position);
+    this.camera.quaternion.copy(state.quaternion);
+    this.camera.projection = state.projection;
+    this.camera.lens = state.lens;
+    this.camera.near = state.near;
+    this.camera.far = state.far;
+    this.camera.updateProjectionMatrix();
   }
 
   /**

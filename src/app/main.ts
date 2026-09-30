@@ -15,8 +15,11 @@ import {
   resolveCameraAt,
   segmentAt,
   setActiveTake,
+  setSegmentLensParams,
+  setSegmentProjection,
   splitSegment,
   upsertKey,
+  type ProjectionKind,
   type ResolvedCamera,
 } from '../document/camera.js';
 import type { ObjectId, ProjectData } from '../document/project.js';
@@ -260,7 +263,7 @@ export function main(): void {
   // 3. Editor and animation objects.
   const session = new EditorSession(project);
   const picker = new Picker(mirror);
-  const playback = new Playback({ camera: mirror.camera });
+  const playback = new Playback();
 
   const dirtyIds = new Set<ObjectId>();
   let boundIds: ReadonlySet<ObjectId> = new Set<ObjectId>();
@@ -310,6 +313,9 @@ export function main(): void {
         },
         takes: project.camera.takes.map((take) => ({ id: take.id, name: take.name })),
         activeTakeId: activeTake(project.camera)?.id ?? '',
+        projection: shot.projection,
+        near: shot.near,
+        far: shot.far,
       };
     },
     actions: {
@@ -334,6 +340,8 @@ export function main(): void {
       addTake: applyAddTake,
       removeTake: applyRemoveTake,
       cutAtPlayhead: applyCutAtPlayhead,
+      setCameraProjection: applySetCameraProjection,
+      setCameraLensParams: applySetCameraLensParams,
       setCameraPose,
       toggleCameraControl,
       toggleGizmoMode,
@@ -613,6 +621,7 @@ export function main(): void {
     //    which a load that reuses ids satisfies — so the frame loop would never rebind on its own.
     rebuildBindings();
     playback.setTime(0);
+    mirror.applyShot(0);
     // 9. The views of the loaded project.
     refreshCameraPath();
     refreshReadouts();
@@ -684,6 +693,7 @@ export function main(): void {
     project.setDuration(durationMs);
     playback.rebuild(project);
     playback.setTime(playback.time);
+    mirror.applyShot(playback.time * 1000);
     refreshCameraPath();
     panels.refresh();
   }
@@ -730,7 +740,7 @@ export function main(): void {
    * frame later.
    */
   function refreshShotViews(): void {
-    playback.setTime(playback.time);
+    mirror.applyShot(playback.time * 1000);
     refreshCameraPath();
     panels.refresh();
   }
@@ -773,6 +783,32 @@ export function main(): void {
       return;
     }
     refreshShotViews();
+  }
+
+  /**
+   * Switches the shot's projection. The lens scalar is reinterpreted rather than converted, so the number stands and
+   * the author sets it for the new kind; the clip planes are the shot's own and are kept.
+   */
+  function applySetCameraProjection(projection: ProjectionKind): void {
+    const shot = shotTarget();
+    if (shot === undefined) return;
+    const result = setSegmentProjection(project.camera, shot.takeId, shot.segmentId, projection);
+    if (!result.ok) {
+      reportFailure(result);
+      return;
+    }
+    refreshShotViews();
+  }
+
+  /** Writes the shot's clip planes, which the model refuses unless they are a usable pair. */
+  function applySetCameraLensParams(params: { near: number; far: number }): void {
+    const shot = shotTarget();
+    if (shot === undefined) return;
+    const result = setSegmentLensParams(project.camera, shot.takeId, shot.segmentId, params);
+    if (!result.ok) {
+      reportFailure(result);
+      refreshShotViews();
+    }
   }
 
   /**
@@ -1278,6 +1314,9 @@ export function main(): void {
       if (!bindingsCurrent()) rebuildBindings();
     }
     controls.update();
+    // The shot reaches the frame here, once per drawn frame, and stands back while a drag owns the pose: the carrier
+    // and any preview render through the same camera, and neither can show a state the document does not hold.
+    if (!controls.gizmoBusy()) mirror.applyShot(playback.time * 1000);
     // While a clip runs the viewport *is* the shot, which is what makes a camera animation visible at all: the loop
     // renders through the output camera and hands navigation nothing but the editor camera, so nothing can re-aim the
     // pose the mixer just applied — the failure the removed camera lock had, where `OrbitControls.update()` ended with
@@ -1300,7 +1339,7 @@ export function main(): void {
     // A camera cannot see itself: the carrier and the outline are viewport decoration, and the preview draws the shot.
     cameraControl.setVisible(!previewing);
     if (!(cameraControlSelected && controls.gizmoBusy())) {
-      cameraControl.setPose(mirror.camera.position, mirror.camera.quaternion, mirror.camera.fov, canvasAspect(viewport));
+      cameraControl.setPose(mirror.camera, canvasAspect(viewport));
     }
     // The path's marker size comes from how far the drawing camera is, floored at the distance navigation orbits from: a
     // viewport that sits *on* the carrier — which is exactly what `View -> Camera` produces — would otherwise shrink the

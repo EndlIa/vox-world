@@ -31,15 +31,16 @@ class ExportJob {
 3. Prepare: `mirror.sync()` once so objects marked dirty before the export render their current document state; `new Mp4Writer(choice, { width, height, fps })`; and `mirror.setMaskMode(true)` when `mode === 'mask'` — the mask pass is the mirror's per-object `maskColor` material switch, which `Capture` knows nothing about.
 4. The loop is `for (let i = 0; i < total; i++)` with `t = from + i / fps` computed from the index rather than accumulated, so frame times carry no float drift:
    - abort check first: `signal?.aborted` leaves the loop and returns `'cancelled'` after the writer is cancelled;
-   - `playback.setTime(t)` for frame-exact sampling — it clamps to the clip's length in seconds (`timeline.durationMs / 1000`), zeroes the mixer clock, updates once, and refreshes the camera projection itself, so the same `t` always produces the same frame and nothing is inherited from the viewport;
-   - `capture.render(request.scene, mirror.camera)`: the render camera is the document camera, the same `PerspectiveCamera` instance `playback` drives with the camera track, never the viewport navigation camera — which is why exported framing equals authored framing;
+   - `playback.setTime(t)` for frame-exact sampling — it clamps to the clip's length in seconds (`timeline.durationMs / 1000`), zeroes the mixer clock, and updates once, so the same `t` always produces the same frame and nothing is inherited from the viewport;
+   - `mirror.applyShot((from + i / fps) * 1000)` — the frame's camera is the shot the active take holds at this time, resolved by the same code and into the same output camera the viewport draws through, so an exported frame and a scrubbed frame cannot disagree. The loop is the time it applies at: the camera is a derived state of the playhead, not a second timeline the mixer carries;
+   - `capture.render(request.scene, mirror.camera)`: the render camera is the mirror's output camera, with the shot already applied to it, never the viewport navigation camera — which is why exported framing equals authored framing;
    - `const frame = await capture.readFrame()`; a `{ ok: false }` result cancels the writer and returns `{ ok: false, error: 'encoder-failed', detail: 'capture: ' + detail }`;
    - `writer.push(frame.bitmap, i)`;
    - yield to the host once per frame with `await new Promise<void>(resolve => { setTimeout(resolve, 0) })`, a macrotask so the browser stays responsive and a cancel click lands between frames. The loop yields per frame rather than per `CHUNK` items because a frame is the unit of work and a cancel must land within one.
 5. Finish: `const written = await this.finishWriter(writer, total)`; failure is returned as `{ ok: false, error: written.error, detail: written.detail }` with the writer's literal unchanged; success returns `{ ok: true, blob: written.blob, codec: written.codec, frames: total }`.
    `finishWriter` races the writer's own teardown against `FINISH_DEADLINE_MS = 20_000`: the teardown waits for the encoder's queue to drain and then for its flush, and an encoder that has accepted frames and stopped answering leaves both pending for good, which was measured as an export that walked its whole range, returned nothing, reported nothing, and held the app's one job slot. The deadline cancels the writer — closing its frames, dropping its muxer, and closing the encoder, so the wait inside resolves instead of staying pending — and reports `'encoder-failed'` with the frame count, because a stall has to reach the console like every other failure. On the normal path the timer is cleared and the writer's result is returned untouched.
-6. Cleanup in a `finally` on every path: `writer.cancel()` when `finish()` was never reached (idempotent, closes any bitmap the sink still holds), `mirror.setMaskMode(false)` unconditionally — the job does not try to read what mask mode was before, because `SceneMirror` exposes no getter, so it always leaves the mirror unmasked — and `playback.setTime(restoreTime)` with the time found on entry. The job never calls `play`/`pause`/`stop`, so the transport state the user sees is untouched.
-7. The loop never mutates the project: it reads `mirror.camera`, writes only mixer-driven `Object3D` transforms (derived render state), and calls `capture.render`, `capture.readFrame`, and `writer.push`. It calls no `editor/ops.ts` function, no `Project` mutator, and no container mutator, so `Project.objects`, the voxel containers, the timeline, and the camera settings are byte-identical after a successful, cancelled, or failed export.
+6. Cleanup in a `finally` on every path: `writer.cancel()` when `finish()` was never reached (idempotent, closes any bitmap the sink still holds), `mirror.setMaskMode(false)` unconditionally — the job does not try to read what mask mode was before, because `SceneMirror` exposes no getter, so it always leaves the mirror unmasked — and the frame handed back: `playback.setTime(restoreTime)` with the time found on entry, and `mirror.applyShot(restoreTime * 1000)` so the output camera is left on the shot that time holds rather than the last exported one. The job never calls `play`/`pause`/`stop`, so the transport state the user sees is untouched.
+7. The loop never mutates the project: it reads `mirror.camera`, writes only mixer-driven `Object3D` transforms and the output camera's shot (derived render state), and calls `capture.render`, `capture.readFrame`, and `writer.push`. It calls no `editor/ops.ts` function, no `Project` mutator, and no container mutator, so `Project.objects`, the voxel containers, the timeline, and the camera — takes, segments, and keys alike — are byte-identical after a successful, cancelled, or failed export.
 8. `ExportJob` keeps only the `SceneMirror` between runs. `run` may be called again after it settles, but two overlapping runs on one job would fight over mask mode and each need their own writer, so `app` starts an export only when none is in flight.
 
 ## Invariants
@@ -47,7 +48,7 @@ class ExportJob {
 - Exactly one `capture.readFrame()` and one `writer.push` per index, so the encoded frame count is `total` and the success result's `frames` is that clamped count; success carries a finalized blob plus the chosen codec string and failure carries no blob.
 - `signal` is re-read before every frame, so cancellation is honoured within one frame.
 - Frame times are exactly `from + i / fps` for `i` in `0..total-1` with `end = min(to, playback.duration)`, so the exported range covers the clamped span and never samples past the timeline.
-- Mask mode is turned off unconditionally in the `finally` block on every path, including cancel and encoder failure, and `playback.time` is restored to its entry value.
+- Mask mode is turned off unconditionally in the `finally` block on every path, including cancel and encoder failure, and the project's frame is handed back — `playback.time` at its entry value and the output camera on the shot that time holds.
 - No failure path presents a partial file as success: only a finalized MP4 returns `ok: true`.
 
 ## Errors
@@ -60,9 +61,9 @@ class ExportJob {
 
 ## Dependencies
 - `../document/project.ts` — `Project`, carried by the request so one object identifies the timeline; the loop reads nothing mutable from it.
-- `../animation/playback.ts` — `Playback`: `setTime` for frame-exact sampling and `time` for the restore.
-- `../three-runtime/scene.ts` — `SceneMirror`: `camera` (the document camera), `sync`, `setMaskMode`.
-- `../three-runtime/capture.ts` — `Capture`: `render` and `readFrame` at export resolution.
+- `../animation/playback.ts` — `Playback`: `setTime` for frame-exact sampling and `time` for the restore. It is camera-free: the shot is the mirror's.
+- `../three-runtime/scene.ts` — `SceneMirror`: `camera` (the output camera), `sync`, `setMaskMode`, and `applyShot(timeMs)` for the frame's camera.
+- `../three-runtime/capture.ts` — `Capture`: `render` and `readFrame` at export resolution, over the mirror's own `OutputCamera`.
 - `./encode.ts` — `selectCodec`, `Mp4Writer`, `FrameSink`: the encode seam; `three` — `Scene` for the render call.
 Not imported: `editor/*`. That the export path cannot reach an edit operation is part of why an export cannot corrupt authored data.
 

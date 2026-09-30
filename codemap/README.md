@@ -218,8 +218,8 @@ SceneObject {
 
 ### Cameras and render state
 
-- Exactly two cameras exist at runtime. `SceneMirror.camera` is the **output** camera: posed by
-  `animation/playback.ts` from the take the project holds at the playhead, and the camera the
+- Exactly two cameras exist at runtime. `SceneMirror.camera` is the **output** camera: an `OutputCamera` carrying
+  whichever projection the active segment authors, written by `SceneMirror.applyShot(timeMs)` from the camera the
   document holds — the active take resolved at the playhead — and the one every render, every export and the carrier
   goes through. The **viewport** camera is
   app-owned runtime state, never project data: it is what navigation moves, what picking resolves

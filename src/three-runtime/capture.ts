@@ -10,6 +10,7 @@
  */
 
 import * as THREE from 'three';
+import { OutputCamera } from './outputCamera.js';
 
 export type CaptureResult =
   | { ok: true; bitmap: ImageBitmap }
@@ -60,10 +61,10 @@ export class Capture {
   /**
    * Draws one frame at the export size.
    *
-   * The capture owns the export aspect; `fov`, `near`, `far`, and the transform stay the caller's
-   * data, so the camera passed here is the output camera derived from `project.camera`.
+   * The capture owns the export aspect; the projection kind, the lens, `near`, `far`, and the transform stay the
+   * caller's data, so the camera passed here is the mirror's output camera with the shot already applied to it.
    */
-  render(scene: THREE.Scene, camera: THREE.PerspectiveCamera): void {
+  render(scene: THREE.Scene, camera: OutputCamera): void {
     this.requireUsable();
 
     camera.aspect = this.frameWidth / this.frameHeight;
