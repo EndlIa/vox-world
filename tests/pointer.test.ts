@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PerspectiveCamera, Vector3 } from 'three';
 import { Project } from '../src/document/project.js';
+import { EditHistory } from '../src/editor/history.js';
 import { EditorSession } from '../src/editor/session.js';
 import { PointerTool } from '../src/editor/pointer.js';
 import type { PickHit } from '../src/three-runtime/picking.js';
@@ -58,6 +59,7 @@ function fixture() {
     overlay: { clear: () => undefined, showBox: () => undefined } as never,
     getCamera: () => camera,
     getGizmoBusy: () => false,
+    history: new EditHistory(project),
     callbacks: { onSessionChange: () => undefined, onProjectChange: () => undefined },
   });
   /** A pointer event at one NDC position on the 100 x 100 element. */

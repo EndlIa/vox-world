@@ -134,6 +134,18 @@ export function regionBounds(grid: UniformGrid, shape: RegionShape): IntBox3 | n
 }
 
 /**
+ * Reads the cells a shape names, one call per cell, without touching the grid: the walk a caller needs to see a
+ * region before it is written to, which is what an edit recorder captures.
+ */
+export function visitRegion(
+  grid: UniformGrid,
+  shape: RegionShape,
+  visit: (x: number, y: number, z: number, color: HexColor | undefined) => void,
+): void {
+  forEachShapeCell(grid, shape, visit);
+}
+
+/**
  * Writes every cell a shape names and returns how many it wrote. A box takes the grid's own box fill, so the
  * common path costs what it always did; the other shapes collect their cells first and write after, because
  * walking reads the very map a write mutates.

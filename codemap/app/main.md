@@ -64,6 +64,11 @@ function main(): void;
    agree from the first frame — `index.html` carries `hidden` rather than leaving it to the module, because a bar laid out by the first paint and hidden
    only when the bundle runs would flash. There is no status line and no message area: the overlay holds the rail and the windows only.
 6. **Flow wiring**, the only place the modules meet:
+   - History — one `EditHistory` for the session, and every document write goes through `recorded(run)`, which captures the state before the write and commits
+     after it: a refused operation records nothing without a check of its own, and a write that changed nothing records nothing either. The viewport press
+     records its own step the same way, through the history the pointer tool is given. The panel's two buttons and Ctrl/Cmd+Z (back) and Ctrl/Cmd+Shift+Z or
+     Ctrl/Cmd+Y (forward) run one step and mark exactly the objects it touched, dropping an active object or a selection the step deleted. A loaded document
+     starts a new stack (`history.reset()`), because it has no past, and the stack is never saved: it is session state, not truth.
    - Import — an arriving model is put on the unit lattice first (`DEFAULT_VOXELS_ACROSS`), because one voxel is one world unit: the count the prompt asks
      for is the model's length, and the raw meshes and the payload live in that one unit. The import becomes **one** object, and every node — outline
      shells included, since the whole file is displayed — gets its raw mesh on layer 2 placed by its own baked world matrix, because the model's placement

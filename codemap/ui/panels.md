@@ -117,7 +117,7 @@ class Panels {
    disabled, because a press is what creates the region those tools work on. `detach` is a plain button that is never a tool: its click is
    `context.actions.detachSelection()` and nothing else, no click writes a tool, and `refresh()` never gives it the `on` class — it is a command on the region
    the `Select` tool already chose rather than a tool choice, so pressing it runs the operation and leaves no mode behind, and it is `disabled` exactly while
-   `session.selection.kind === 'none'`, because with no region there is nothing for it to detach. The `Select` field is the select tool's shape parameter —
+   `session.selection.kind === 'none'`, because with no region there is nothing for it to detach. The `undo` and `redo` buttons beside the tools are the history's own view rather than commands of their own: each writes nothing but its action, and `refresh()` disables it from `context.historyState` — a context that keeps no history leaves both disabled, since a stack that cannot be read has no step to offer. The `Select` field is the select tool's shape parameter —
    `box`, `color` and `island`, the three `RegionShape` kinds, and forwards the value through `session.setSelectionShape(shape)`. `Add wall` is the add tool's own
    thickness in cells and a view of `session.addHeight`: `refresh()` seeds it and it forwards a whole number at least one through `setAddHeight(height)`,
    ignoring a blank, fractional, or negative field so the session keeps the height it had while the field is retyped — which is why the setter's own

@@ -39,6 +39,7 @@ import {
   setTransformFromWorldMatrix,
 } from '../editor/ops.js';
 import { PointerTool } from '../editor/pointer.js';
+import { EditHistory } from '../editor/history.js';
 import type { PointerCallbacks } from '../editor/pointer.js';
 import { DEFAULT_CELL_BUDGET, voxelize } from '../voxels/voxelize/voxelize.js';
 import type { VoxelizeSource } from '../voxels/voxelize/voxelize.js';
@@ -191,6 +192,8 @@ export function main(): void {
   const hudRoot = elementById('hud');
 
   const project = new Project();
+  /** The session's undo stack: it holds edits, never the camera or the timeline (see `editor/history.ts`). */
+  const history = new EditHistory(project);
   project.setDuration(DEFAULT_DURATION_MS);
   project.timeline.fps = DEFAULT_FPS;
   project.createVoxelObject({
@@ -318,7 +321,10 @@ export function main(): void {
         far: shot.far,
       };
     },
+    historyState: () => ({ canUndo: history.canUndo, canRedo: history.canRedo }),
     actions: {
+      undo: () => applyHistoryStep('undo'),
+      redo: () => applyHistoryStep('redo'),
       pickImportFile: openImportDialog,
       saveProject,
       openProject: openProjectDialog,
@@ -389,6 +395,7 @@ export function main(): void {
     overlay,
     getCamera: () => viewportCamera,
     getGizmoBusy: () => controls.gizmoBusy(),
+    history,
     callbacks: pointerCallbacks,
   });
 
@@ -543,9 +550,11 @@ export function main(): void {
       reportFailure(result);
       return;
     }
-    const applied = applyVoxelizeResult(project, result, {
+    const applied = recorded(() =>
+    applyVoxelizeResult(project, result, {
       attachTo: new Map([[source.sourceId, objectId]]),
-    });
+    }),
+  );
     for (const id of applied.objectIds) dirtyIds.add(id);
     bindingsDirty = true;
     commitDirty();
@@ -608,6 +617,8 @@ export function main(): void {
     session.setActiveObject(null);
     // 5. The truth, and the two things `sync()` never publishes: the scene's settings and the output camera.
     project.restore(data);
+    // A loaded document has no past: its own edits start from here.
+    history.reset();
     mirror.applySettings();
     // 6. Every loaded object is rebuilt. `sync()` keeps the node of an id it already has, and a load normally
     //    reuses ids, so without a dirty mark the replaced project's geometry would stay on screen.
@@ -990,8 +1001,20 @@ export function main(): void {
     controls.setViewFrom(shot.position, shot.quaternion);
   }
 
+  /**
+   * Runs one document write as a single history step: the state before it, the write itself, and what the history
+   * made of the difference. Wrapping the operation rather than the button is what lets a refusal record nothing
+   * without a check of its own — an operation that wrote nothing leaves no difference to keep.
+   */
+  function recorded<T>(run: () => T): T {
+    const capture = history.begin();
+    const result = run();
+    history.commit(capture);
+    return result;
+  }
+
   function applyCreateGroup(): void {
-    const result = createGroup(project, 'Group');
+    const result = recorded(() => createGroup(project, 'Group'));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1004,7 +1027,7 @@ export function main(): void {
 
   /** Deletes one object by id: the row's trash button names it, so the active object need not be it. */
   function applyDeleteObject(objectId: ObjectId): void {
-    const result = deleteObject(project, objectId);
+    const result = recorded(() => deleteObject(project, objectId));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1018,7 +1041,7 @@ export function main(): void {
   function applyMaskColor(color: HexColor): void {
     const objectId = session.activeObjectId;
     if (objectId === null) return;
-    const result = setObjectMaskColor(project, objectId, color);
+    const result = recorded(() => setObjectMaskColor(project, objectId, color));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1040,7 +1063,7 @@ export function main(): void {
   function applySetActiveVisible(visible: boolean): void {
     const objectId = session.activeObjectId;
     if (objectId === null) return;
-    const result = setObjectVisible(project, objectId, visible);
+    const result = recorded(() => setObjectVisible(project, objectId, visible));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1056,7 +1079,7 @@ export function main(): void {
   function applySetActiveSubdivision(subdivision: number): void {
     const objectId = session.activeObjectId;
     if (objectId === null) return;
-    const result = setObjectSubdivision(project, objectId, subdivision);
+    const result = recorded(() => setObjectSubdivision(project, objectId, subdivision));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1069,7 +1092,7 @@ export function main(): void {
   function applySetActiveAlignToGrid(alignToGrid: boolean): void {
     const objectId = session.activeObjectId;
     if (objectId === null) return;
-    const result = setObjectAlignToGrid(project, objectId, alignToGrid);
+    const result = recorded(() => setObjectAlignToGrid(project, objectId, alignToGrid));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1091,7 +1114,7 @@ export function main(): void {
   function applyRenameActive(name: string): void {
     const objectId = session.activeObjectId;
     if (objectId === null) return;
-    const result = renameObject(project, objectId, name);
+    const result = recorded(() => renameObject(project, objectId, name));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1100,10 +1123,32 @@ export function main(): void {
     commitDirty();
   }
 
+  /**
+   * Puts the document one step back or forward. Only the objects the step touched are rebuilt, and a step that took
+   * the active object away unsets it — the session names a live object or none at all — while a selection that named
+   * the same object is cleared for the same reason.
+   */
+  function applyHistoryStep(direction: 'undo' | 'redo'): void {
+    const touched = direction === 'undo' ? history.undo() : history.redo();
+    if (touched === null) return;
+    for (const id of touched) {
+      if (project.get(id) === undefined) dirtyIds.delete(id);
+      else dirtyIds.add(id);
+    }
+    bindingsDirty = true;
+    const active = session.activeObjectId;
+    if (active !== null && project.get(active) === undefined) session.setActiveObject(null);
+    const selection = session.selection;
+    if (selection.kind === 'region' && project.get(selection.objectId) === undefined) {
+      session.setSelection({ kind: 'none' });
+    }
+    commitDirty();
+  }
+
   function applyReparent(parentId: ObjectId | null): void {
     const objectId = session.activeObjectId;
     if (objectId === null) return;
-    const result = reparentObject(project, objectId, parentId);
+    const result = recorded(() => reparentObject(project, objectId, parentId));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1267,7 +1312,7 @@ export function main(): void {
     if (objectId === null || project.get(objectId) === undefined) return;
     // The world matrix the gizmo derived, not the node's own: the gizmo moves a pivot proxy and never the
     // node, and the object's live transform is discarded by the rebuild this write triggers.
-    const result = setTransformFromWorldMatrix(project, objectId, matrix);
+    const result = recorded(() => setTransformFromWorldMatrix(project, objectId, matrix));
     if (!result.ok) {
       reportFailure(result);
       return;
@@ -1287,6 +1332,24 @@ export function main(): void {
     resizeViewport(renderer, viewport, viewportCamera);
   }
   window.addEventListener('resize', handleResize);
+  /**
+   * Undo and redo on the keyboard: Ctrl/Cmd+Z back, Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y forward. This is the only key
+   * handling the file owns; the transport and the text fields keep their own.
+   */
+  function handleHistoryKey(event: KeyboardEvent): void {
+    if (!event.ctrlKey && !event.metaKey) return;
+    const key = event.key.toLowerCase();
+    if (key === 'z' && !event.shiftKey) {
+      event.preventDefault();
+      applyHistoryStep('undo');
+      return;
+    }
+    if (key === 'y' || (key === 'z' && event.shiftKey)) {
+      event.preventDefault();
+      applyHistoryStep('redo');
+    }
+  }
+  window.addEventListener('keydown', handleHistoryKey);
   // Anything that moves the boundary between the canvas and the timeline bar changes how much of the column the
   // canvas has — the bar's visibility, a keyframe row, its message line — and three's `setSize` never touches the
   // canvas' style, so the drawing buffer has to be refitted whenever that happens or the buffer and the box

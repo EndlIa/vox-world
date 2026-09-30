@@ -88,7 +88,7 @@ graph BT
 | 1 | `animation` | Keyframe authoring data compiled to a Three.js `AnimationClip`; frame-exact sampling through `AnimationMixer`. | `document`, `three` (any) |
 | 2 | `three-runtime` | Scene and render state: GLB import into document objects, document-to-scene mirror, derived meshes, raycast picking, viewport controls, offscreen frame capture. | `voxels/*`, `document`, `three`, `@pmndrs/vanilla` (the grid's `Grid`, the outline's `Outlines`) |
 | 2 | `workers` | Job boundary for off-main-thread work. Payloads must be plain records and transferables. | `voxels/*`, `document` |
-| 3 | `editor` | Editing session: active object, selection, target cell selection, edit operations, output camera versus viewport navigation. | `voxels/*`, `document`, `animation`, `three-runtime` |
+| 3 | `editor` | Editing session: active object, selection, target cell selection, edit operations, the undo stack of what each completed gesture changed, output camera versus viewport navigation. | `voxels/*`, `document`, `animation`, `three-runtime` |
 | 3 | `export` | Export job: frame loop over the timeline, capture orchestration, encoder and muxer. | `document`, `animation`, `three-runtime`, encoder library |
 | 4 | `ui` | DOM panels, toolbars, timeline widget, export dialog, HUD. Renders state and forwards intent; owns no project state. | `document`, `animation`, `editor`, `export` |
 | 4 | `app` | Composition root: the only place that knows every module. Session, jobs with cancel, file input and output, and the console report a failure gets. | everything |
@@ -149,7 +149,8 @@ The root configuration files are covered by `codemap/toolchain.md`.
 Voxel and timeline data are plain records and typed arrays, not Three.js render objects: no project
 object's truth is a `Mesh`, and no project object's identity is an `Object3D`. Three.js *value*
 types (`Color`, `Vector3`, `Quaternion`, `Box3`) are used freely inside that data. Derived resources
-are keyed by project object id and invalidated by a per-object `dirty` flag.
+are keyed by project object id and invalidated by a per-object `dirty` flag. The undo stack is neither: it holds what a gesture changed and is
+session state, so it is never saved and a loaded document starts a new one.
 
 ### Scene objects
 

@@ -1,5 +1,6 @@
 import type { ObjectId, Project } from '../document/project.js';
 import type { ActiveTool, EditorSession, SelectionShape } from './session.js';
+import type { EditHistory } from './history.js';
 import { addRegion, detachSelection, paintRegion, removeRegion } from './ops.js';
 import type { OpResult } from './ops.js';
 import type { PickHit, Picker } from '../three-runtime/picking.js';
@@ -143,6 +144,10 @@ const _viewNormal = new Vector3();
  * Every voxel write goes through `./ops.js`; every pick resolves `getCamera()` at call
  * time, so it always uses the app-owned viewport camera — the one navigation moves, never the
  * authored output camera.
+ *
+ * A press that writes is one history step: the tool captures the region the selection names before the operation
+ * runs and hands the capture to the history, which keeps the difference — or nothing, when the operation changed
+ * nothing at all, which is how a refused commit leaves no step behind.
  */
 export class PointerTool {
   private readonly dom: HTMLElement;
@@ -153,6 +158,7 @@ export class PointerTool {
   private readonly getCamera: () => PerspectiveCamera;
   private readonly getGizmoBusy: () => boolean;
   private readonly callbacks: PointerCallbacks;
+  private readonly history: EditHistory;
   private readonly ndc = new Vector2();
   private drag: DragState | null = null;
   /** True between an accepted left press and its pointer-up: at most one commit per press. */
@@ -167,6 +173,7 @@ export class PointerTool {
     overlay: Overlay;
     getCamera: () => PerspectiveCamera;
     getGizmoBusy: () => boolean;
+    history: EditHistory;
     callbacks: PointerCallbacks;
   }) {
     this.dom = opts.dom;
@@ -177,6 +184,7 @@ export class PointerTool {
     this.getCamera = opts.getCamera;
     this.getGizmoBusy = opts.getGizmoBusy;
     this.callbacks = opts.callbacks;
+    this.history = opts.history;
     this.dom.addEventListener('pointerdown', this.onPointerDown);
     this.dom.addEventListener('pointermove', this.onPointerMove);
     window.addEventListener('pointerup', this.onPointerUp);
@@ -358,6 +366,9 @@ export class PointerTool {
       this.paintSelection();
       return;
     }
+    // The capture is taken before the operation and committed after it: the history reads the region the selection
+    // names, the operation writes, and the history keeps the difference for one undo step.
+    const capture = this.history.begin([{ objectId: selection.objectId, shape: selection.shape }]);
     // Every region selection names its object; the optional id is what a detach adds, for the object it created.
     const result: OpResult & { objectId?: ObjectId } =
       tool === 'add'
@@ -367,6 +378,7 @@ export class PointerTool {
           : tool === 'remove'
             ? removeRegion(this.project, selection.objectId, selection.shape)
             : detachSelection(this.project, selection);
+    this.history.commit(capture);
     // Both halves of a detach change geometry, and only reporting the object that gained cells would leave the
     // source drawing cells it no longer holds.
     const changed: ObjectId[] = [selection.objectId];

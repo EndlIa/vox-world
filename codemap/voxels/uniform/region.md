@@ -25,6 +25,7 @@ type RegionShape =
 
 function regionCount(grid: UniformGrid, shape: RegionShape): number;
 function regionBounds(grid: UniformGrid, shape: RegionShape): IntBox3 | null;
+function visitRegion(grid: UniformGrid, shape: RegionShape, visit: (x: number, y: number, z: number, color: HexColor | undefined) => void): void;
 function fillRegion(grid: UniformGrid, shape: RegionShape, color: HexColor): number;
 function clearRegion(grid: UniformGrid, shape: RegionShape): number;
 function paintRegion(grid: UniformGrid, shape: RegionShape, color: HexColor): number;
@@ -54,11 +55,14 @@ function paintRegion(grid: UniformGrid, shape: RegionShape, color: HexColor): nu
    holds nothing, because the extent is what the shape says; a colour or an island accumulates the extremes
    of the cells it found and answers `null` when it found none. A caller that draws a frame can therefore
    tell "a region with no cells" from "a box over empty space".
-7. The three writers share one shape-blind structure: a box delegates to the grid's own box operation
+7. `visitRegion` is the same walk, exposed for reading rather than writing: a caller that has to see the
+   region before it is written to — an edit recorder capturing what an operation is about to change — walks
+   it through here rather than reimplementing the shapes. It touches nothing.
+8. The three writers share one shape-blind structure: a box delegates to the grid's own box operation
    (`fillBox`, `clearBox`, `paintBox`), and every other shape collects its keys through the walker and writes
    afterwards. Collecting first is not an optimisation — the walk reads the very map a write mutates, so
    writing during the walk would skip or revisit cells.
-8. A writer returns the number of cells it touched, with the same meaning the grid's box operations give it:
+9. A writer returns the number of cells it touched, with the same meaning the grid's box operations give it:
    `fillRegion` counts the cells it wrote, `clearRegion` the occupied cells it removed, `paintRegion` the
    occupied cells it recoloured. Nothing creates a cell except `fillRegion`.
 

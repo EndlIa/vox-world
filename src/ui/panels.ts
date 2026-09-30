@@ -72,6 +72,11 @@ export type PanelContext = {
    */
   timelineVisible?: () => boolean;
   /**
+   * Whether there is a step to undo or redo, if the app keeps a history. When present, the Edit group's two buttons
+   * are a view of it and `refresh()` disables each one; a context without a history disables both.
+   */
+  historyState?: () => { canUndo: boolean; canRedo: boolean };
+  /**
    * The camera carrier's state, if the app has one. When present the `Camera` group's carrier controls are a view of
    * it — `refresh()` seeds the pose fields and the two label swaps from it — and it is what gates them: a context
    * without a carrier has nothing for them to aim.
@@ -96,6 +101,8 @@ export type PanelContext = {
     setActiveAlignToGrid(alignToGrid: boolean): void;
     setActiveSubdivision(subdivision: number): void;
     detachSelection(): void;
+    undo(): void;
+    redo(): void;
     setSourceVisible(enabled: boolean): void;
     setGridVisible(visible: boolean): void;
     setTimelineVisible(visible: boolean): void;
@@ -195,6 +202,9 @@ export class Panels {
   private readonly selectionShapeSelect: HTMLSelectElement;
   /** Not a tool: a command on the region the selection already holds, so it is disabled without one. */
   private readonly detachButton: HTMLButtonElement;
+  /** The two document commands beside the tools: a step back, and a step forward. */
+  private readonly undoButton: HTMLButtonElement;
+  private readonly redoButton: HTMLButtonElement;
   private readonly editColorInput: HTMLInputElement;
   private readonly addHeightInput: HTMLInputElement;
   private readonly maskColorInput: HTMLInputElement;
@@ -305,6 +315,8 @@ export class Panels {
       text: 'detach',
       on: { click: () => context.actions.detachSelection() },
     });
+    this.undoButton = el('button', { text: 'undo', on: { click: () => context.actions.undo() } });
+    this.redoButton = el('button', { text: 'redo', on: { click: () => context.actions.redo() } });
     this.editColorInput = el('input', {
       type: 'color',
       on: { input: () => context.session.setEditColor(parseInt(this.editColorInput.value.slice(1), 16)) },
@@ -467,6 +479,7 @@ export class Panels {
       'Edit',
       [
         toolRow,
+        el('div', { class: 'row' }, [this.undoButton, this.redoButton]),
         el('div', { class: 'row' }, [this.detachButton]),
         this.field('Select', this.selectionShapeSelect),
         this.field('Add wall', this.addHeightInput),
@@ -696,6 +709,11 @@ export class Panels {
     // Detach acts on the selection and on nothing else, so with an empty selection there is nothing for it to
     // do. The tools stay live: a press is what creates the region they work on.
     this.detachButton.disabled = session.selection.kind === 'none';
+    // The history is a view like the detach button is: a step exists or it does not, and a context without one has
+    // nothing for either button to do.
+    const historyState = this.context.historyState?.();
+    this.undoButton.disabled = historyState === undefined || !historyState.canUndo;
+    this.redoButton.disabled = historyState === undefined || !historyState.canRedo;
     this.editColorInput.value = hexInputValue(session.editColor);
     this.addHeightInput.value = String(session.addHeight);
     this.maskColorInput.disabled = active === undefined;
