@@ -1217,8 +1217,15 @@ export function main(): void {
   /** Reads the session selection as text: the HUD shows this verbatim. */
   function selectionText(): string {
     const selection = session.selection;
-    if (selection.kind === 'box') return `${boxText(selection.box)} on ${objectName(selection.objectId)}`;
-    return 'none';
+    if (selection.kind !== 'region') return 'none';
+    const shape = selection.shape;
+    const what =
+      shape.kind === 'box'
+        ? boxText(shape)
+        : shape.kind === 'color'
+          ? `color #${shape.color.toString(16).padStart(6, '0')}`
+          : `island at ${shape.seed.join(', ')}`;
+    return `${what} on ${objectName(selection.objectId)}`;
   }
 
   function hudState(): HudState {

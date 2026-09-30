@@ -126,7 +126,11 @@ const TOOLS: readonly ActiveTool[] = ['select', 'paint', 'add', 'remove'];
 const SUBDIVISIONS: readonly number[] = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 
 /** The shapes the select tool offers; one so far, and the list it will grow into. */
-const SELECTION_SHAPES: readonly SelectionShape[] = ['box'];
+/**
+ * What a press can build. A box is the shape a drag extends; a colour group and an island are named by the cell
+ * the press lands on and are never dragged, which is why the viewport only arms a drag while this is `box`.
+ */
+const SELECTION_SHAPES: readonly SelectionShape[] = ['box', 'color', 'island'];
 
 /** Export resolutions offered by the panel; the value doubles as the option label. */
 const DEFAULT_EXPORT_RESOLUTION = '1280x720';

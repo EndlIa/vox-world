@@ -81,7 +81,7 @@ graph BT
 
 | Ring | Module | Responsibility | May import |
 | --- | --- | --- | --- |
-| 0 | `voxels/uniform` | Sparse uniform voxel grid, cell access and mutation, integer box region query, fill, clear, and extract. | `three` (any) |
+| 0 | `voxels/uniform` | Sparse uniform voxel grid, cell access and mutation, integer box region query, fill, clear, and extract; the region shapes an edit addresses (a box, a colour, an island) and the writes over them. | `three` (any) |
 | 0 | `voxels/voxelize` | Surface voxelization of `BufferGeometry` into a uniform payload, including color sampling and per-primitive object separation. | `voxels/*`, `three` (any) |
 | 1 | `document` | Project truth: scene objects, identity, parent/child hierarchy, transforms, representation binding, timeline data, the authored camera (takes of segments), mask colors. | `voxels/*`, `three` (any) |
 | 1 | `document/detach` | Detach: a uniform box region becomes a new scene object. | `voxels/*`, `three` (any) |
@@ -205,16 +205,21 @@ SceneObject {
   gives the new object a translation-only transform equal to the extracted region's world min corner
   — composed against the parent's world matrix — so the world-space position, volume, and appearance
   are unchanged. The source container must not keep a duplicate occupancy at that location.
-- **Uniform region selection is an axis-aligned integer box.** The anchor is taken where the pointer
-  goes down, the opposite corner follows the pointer, and both resolve to integer cell coordinates in
-  the object's local grid, inclusive on both corners and one cell deep on the axis the drag runs along,
-  so what the pointer draws is what commits. `add`'s box is that region stepped one cell out of the
+- **A uniform region is a shape, and there are three.** A press names one and the operations act on
+  that region: the `box` a drag draws — the anchor is taken where the pointer goes down, the opposite
+  corner follows the pointer, and both resolve to integer cell coordinates in the object's local grid,
+  inclusive on both corners and one cell deep on the axis the drag runs along, so what the pointer draws
+  is what commits — the `color` group of every occupied cell carrying the picked cell's colour, and the
+  `island` of everything face-connected to the picked cell. Only a box is dragged: a colour group and an
+  island are named by the cell the press landed on, which is what decides whether the viewport arms a
+  drag. `add`'s box is that region stepped one cell out of the
   pressed face — its anchor is the empty cell the face opens onto — and a tracked drag with the Edit
   group's `Add wall` field above one builds it that many cells deep along the same face normal, while
   `select`, `paint`, and `remove` take the cells the pointer named, so a press on a face edits what the
   user sees. A single click is the degenerate 1×1×1 box, so point editing needs no separate tool.
   Detaching the region is a command on it rather than a fourth mode, and no tool can be left armed to
-  detach the next thing a press lands on.
+  detach the next thing a press lands on; a detach needs a box, because it extracts one, so any other
+  shape is refused with data instead of being detached as its bounding box.
 
 ### Cameras and render state
 
@@ -354,7 +359,7 @@ npm run build       # production build
 git diff --check
 ```
 
-Unit tests cover our own modules — voxels, document, animation: uniform box region math and extraction,
+Unit tests cover our own modules — voxels, document, animation: uniform box region math, the region shapes an edit addresses (a box, a colour, an island) and extraction,
 detach identity and world-space preservation, project hierarchy legality and payload transitions, clip
 compilation and frame-exact sampling, and voxelization surface correctness. Rendering, picking, and
 export are verified by running the application and by inspecting the produced MP4.

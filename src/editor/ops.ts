@@ -1,7 +1,18 @@
 import type { ObjectId, Project, Representation, SceneObject } from '../document/project.js';
 import { detachUniformBox } from '../document/detach.js';
-import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
-import { KEY_MAX, KEY_MIN, boxCount, isSubdivision, normalizeBox } from '../voxels/uniform/grid.js';
+import type { HexColor } from '../voxels/uniform/grid.js';
+import { KEY_MAX, KEY_MIN, isSubdivision } from '../voxels/uniform/grid.js';
+/*
+ * The ring-0 writers are aliased because this file's own verbs are named for what the user asks for (`add`,
+ * `remove`, `paint`) while ring 0 names what the container does (`fill`, `clear`, `paint`).
+ */
+import {
+  clearRegion as clearRegionCells,
+  fillRegion as fillRegionCells,
+  paintRegion as paintRegionCells,
+  regionCount,
+} from '../voxels/uniform/region.js';
+import type { RegionShape } from '../voxels/uniform/region.js';
 import { DEFAULT_CELL_BUDGET, type VoxelizeResult } from '../voxels/voxelize/voxelize.js';
 import type { Selection } from './session.js';
 import type { Matrix4, Vector3 } from 'three';
@@ -90,13 +101,13 @@ export function applyVoxelizeResult(
   return { objectIds };
 }
 
-/** Writes every cell of an inclusive integer box, after the budget check that can refuse it. */
-export function addBox(project: Project, objectId: ObjectId, box: IntBox3, color: HexColor): OpResult {
+/** Writes every cell a region names, after the budget check that can refuse it. */
+export function addRegion(project: Project, objectId: ObjectId, shape: RegionShape, color: HexColor): OpResult {
   const found = requireUniform(project, objectId);
   if (!found.ok) return found.result;
-  const region = normalizeBox(box.min, box.max);
-  const added = boxCount(region);
-  const total = found.grid.size + added;
+  // The count is what the shape names rather than what it would add: a box counts its whole extent, a colour or
+  // an island the cells it reaches. That over-estimates a write, which is the safe direction for a budget.
+  const total = found.grid.size + regionCount(found.grid, shape);
   if (total > DEFAULT_CELL_BUDGET) {
     return {
       ok: false,
@@ -104,32 +115,46 @@ export function addBox(project: Project, objectId: ObjectId, box: IntBox3, color
       detail: `${total} cells would exceed the budget of ${DEFAULT_CELL_BUDGET}`,
     };
   }
-  const cells = found.grid.fillBox(region, color);
+  const cells = fillRegionCells(found.grid, shape, color);
   return { ok: true, detail: `added ${cells} cells to ${objectId}`, cells };
 }
 
-/** Clears occupied cells inside the box; it can only shrink the grid, so there is no budget check. */
-export function removeBox(project: Project, objectId: ObjectId, box: IntBox3): OpResult {
+/** Clears the occupied cells a region names; it can only shrink the grid, so there is no budget check. */
+export function removeRegion(project: Project, objectId: ObjectId, shape: RegionShape): OpResult {
   const found = requireUniform(project, objectId);
   if (!found.ok) return found.result;
-  const cells = found.grid.clearBox(normalizeBox(box.min, box.max));
+  const cells = clearRegionCells(found.grid, shape);
   return { ok: true, detail: `removed ${cells} cells from ${objectId}`, cells };
 }
 
-/** Recolors occupied cells inside the box and never creates one. */
-export function paintBox(project: Project, objectId: ObjectId, box: IntBox3, color: HexColor): OpResult {
+/** Recolors the occupied cells a region names and never creates one. */
+export function paintRegion(project: Project, objectId: ObjectId, shape: RegionShape, color: HexColor): OpResult {
   const found = requireUniform(project, objectId);
   if (!found.ok) return found.result;
-  const cells = found.grid.paintBox(normalizeBox(box.min, box.max), color);
+  const cells = paintRegionCells(found.grid, shape, color);
   return { ok: true, detail: `painted ${cells} cells in ${objectId}`, cells };
 }
 
-/** Turns the selected box region into a new scene object. */
+/**
+ * Turns the selected region into a new scene object. A detach extracts a box, so only a box selection can name
+ * one: a colour or an island is refused with data rather than quietly detached as its bounding box, which would
+ * take cells the user never named.
+ */
 export function detachSelection(project: Project, selection: Selection): OpResult & { objectId?: ObjectId } {
   if (selection.kind === 'none') {
     return { ok: false, error: 'empty-selection', detail: 'nothing is selected to detach' };
   }
-  const result = detachUniformBox(project, selection.objectId, selection.box);
+  if (selection.shape.kind !== 'box') {
+    return {
+      ok: false,
+      error: 'wrong-region',
+      detail: `detach needs a box region, this one is a ${selection.shape.kind}`,
+    };
+  }
+  const result = detachUniformBox(project, selection.objectId, {
+    min: selection.shape.min,
+    max: selection.shape.max,
+  });
   if (!result.ok) return { ok: false, error: result.error, detail: result.detail };
   return { ok: true, detail: `detached ${result.name} as ${result.objectId}`, objectId: result.objectId };
 }

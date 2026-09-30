@@ -1,11 +1,13 @@
 import type { ObjectId, Project } from '../document/project.js';
-import type { ActiveTool, EditorSession } from './session.js';
-import { addBox, detachSelection, paintBox, removeBox } from './ops.js';
+import type { ActiveTool, EditorSession, SelectionShape } from './session.js';
+import { addRegion, detachSelection, paintRegion, removeRegion } from './ops.js';
 import type { OpResult } from './ops.js';
 import type { PickHit, Picker } from '../three-runtime/picking.js';
 import type { Overlay } from '../three-runtime/overlay.js';
-import type { IntBox3 } from '../voxels/uniform/grid.js';
+import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
 import { KEY_MAX, KEY_MIN, normalizeBox } from '../voxels/uniform/grid.js';
+import { regionBounds } from '../voxels/uniform/region.js';
+import type { RegionShape } from '../voxels/uniform/region.js';
 import { Matrix3, Matrix4, Plane, Raycaster, Vector2, Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
 
@@ -112,6 +114,22 @@ function dragBox(
   return { min: box.min, max };
 }
 
+/**
+ * The region a press names. A box is the cells the drag draws — one cell until a drag extends it — while a colour
+ * takes every cell that carries the picked cell's colour and an island takes everything face-connected to it. Both
+ * are named by the picked cell alone and never grow with the pointer, which is why only a box arms a drag.
+ */
+function pressShape(
+  kind: SelectionShape,
+  box: IntBox3,
+  cell: readonly [number, number, number],
+  color: HexColor,
+): RegionShape {
+  if (kind === 'color') return { kind: 'color', color };
+  if (kind === 'island') return { kind: 'island', seed: [cell[0], cell[1], cell[2]] };
+  return { kind: 'box', min: box.min, max: box.max };
+}
+
 /** Scratch, so a pointer move allocates nothing: the drag's ray, its plane hit, that point in cell space, and the
  *  matrices that turn the pressed face into a world normal. */
 const _ray = new Raycaster();
@@ -208,13 +226,15 @@ export class PointerTool {
       this.callbacks.onSessionChange();
       return;
     }
-    // The shape the select tool is set to is what the press selects; the region is one cell until a drag
-    // extends it, and `add` steps that cell out of the pressed face so its press writes empty space.
+    // The shape the session is set to is what the press names: the box it draws — one cell until a drag extends
+    // it, stepped out of the pressed face when the tool is `add` so its press writes empty space — or the colour
+    // or island the picked cell names.
     const outer = outerCell(this.session.activeTool, hit.normal);
+    const box = dragBox(hit.cell, hit.cell, outer, false, this.session.addHeight);
     this.session.setSelection({
-      kind: this.session.selectionShape,
+      kind: 'region',
       objectId: hit.objectId,
-      box: dragBox(hit.cell, hit.cell, outer, false, this.session.addHeight),
+      shape: pressShape(this.session.selectionShape, box, hit.cell, hit.color),
     });
     this.armDrag(event.pointerId, hit, outer);
     this.paintSelection();
@@ -234,7 +254,11 @@ export class PointerTool {
     this.pressActive = false;
     if (drag !== null) {
       const box = dragBox(drag.anchorCell, drag.cornerCell, drag.outer, drag.dragging, this.session.addHeight);
-      this.session.setSelection({ kind: 'box', objectId: drag.objectId, box });
+      this.session.setSelection({
+        kind: 'region',
+        objectId: drag.objectId,
+        shape: { kind: 'box', min: box.min, max: box.max },
+      });
     }
     this.commit();
   };
@@ -255,9 +279,13 @@ export class PointerTool {
     return this.ndc;
   }
 
-  /** Arms a box drag only in edit mode, for a box-dragging tool, on a uniform object; otherwise the click stands. */
+  /**
+   * Arms a box drag only in edit mode, for a box-dragging tool, on a uniform object, and while the session builds
+   * boxes: a colour or an island is named by the cell the press landed on, so a drag has nothing to extend.
+   */
   private armDrag(pointerId: number, hit: Extract<PickHit, { kind: 'cell' }>, outer: [number, number, number]): void {
     if (this.session.mode !== 'edit' || !BOX_TOOLS[this.session.activeTool]) return;
+    if (this.session.selectionShape !== 'box') return;
     // Only a uniform object has cells to address; a group or a fresh import has nothing to drag over.
     const grid = this.project.get(hit.objectId)?.uniform;
     if (grid === undefined) return;
@@ -330,14 +358,14 @@ export class PointerTool {
       this.paintSelection();
       return;
     }
-    // `objectId` is optional on the union: only a detach carries one, and it is checked below.
+    // Every region selection names its object; the optional id is what a detach adds, for the object it created.
     const result: OpResult & { objectId?: ObjectId } =
       tool === 'add'
-        ? addBox(this.project, selection.objectId, selection.box, this.session.editColor)
+        ? addRegion(this.project, selection.objectId, selection.shape, this.session.editColor)
         : tool === 'paint'
-          ? paintBox(this.project, selection.objectId, selection.box, this.session.editColor)
+          ? paintRegion(this.project, selection.objectId, selection.shape, this.session.editColor)
           : tool === 'remove'
-            ? removeBox(this.project, selection.objectId, selection.box)
+            ? removeRegion(this.project, selection.objectId, selection.shape)
             : detachSelection(this.project, selection);
     // Both halves of a detach change geometry, and only reporting the object that gained cells would leave the
     // source drawing cells it no longer holds.
@@ -368,7 +396,11 @@ export class PointerTool {
     this.overlay.clear();
   }
 
-  /** Redraws the overlay for the current selection: the committed box. */
+  /**
+   * Redraws the overlay for the current selection: the frame the committed region spans. A box reports its own
+   * extent and a colour group or an island the extent of what it found, so this is a marker around the region
+   * rather than the region itself.
+   */
   private paintSelection(): void {
     const selection = this.session.selection;
     if (selection.kind === 'none') {
@@ -376,10 +408,16 @@ export class PointerTool {
       return;
     }
     const object = this.project.get(selection.objectId);
-    if (object?.uniform !== undefined) {
-      this.overlay.showBox(selection.box, this.project.worldMatrix(selection.objectId), object.uniform.cellSize);
+    const grid = object?.uniform;
+    if (grid === undefined) {
+      this.overlay.clear();
       return;
     }
-    this.overlay.clear();
+    const bounds = regionBounds(grid, selection.shape);
+    if (bounds === null) {
+      this.overlay.clear();
+      return;
+    }
+    this.overlay.showBox(bounds, this.project.worldMatrix(selection.objectId), grid.cellSize);
   }
 }

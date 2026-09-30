@@ -1,6 +1,6 @@
 # src/editor/ops.ts
 
-Ring: 3 · Layer: editor · Depends on: document/project.ts, document/detach.ts, editor/session.ts, voxels/uniform/grid.ts, voxels/voxelize/voxelize.ts, three
+Ring: 3 · Layer: editor · Depends on: document/project.ts, document/detach.ts, editor/session.ts, voxels/uniform/grid.ts, voxels/uniform/region.ts, voxels/voxelize/voxelize.ts, three
 
 ## Responsibility
 The edit operations: each mutates the project in place and returns an `OpResult` summarizing what happened. There is no undo, no command object, and no transaction here — they are plain functions so a command layer can wrap them later unchanged. Selection state, pointer handling, and rendering are not part of this file.
@@ -8,8 +8,10 @@ The edit operations: each mutates the project in place and returns an `OpResult`
 ## Public interface
 ```ts
 import type { ObjectId, Project } from '../document/project.js';
-import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
-import { KEY_MAX, KEY_MIN, boxCount, isSubdivision, normalizeBox } from '../voxels/uniform/grid.js';
+import type { HexColor } from '../voxels/uniform/grid.js';
+import { KEY_MAX, KEY_MIN, isSubdivision } from '../voxels/uniform/grid.js';
+import { clearRegion as clearRegionCells, fillRegion as fillRegionCells, paintRegion as paintRegionCells, regionCount } from '../voxels/uniform/region.js';
+import type { RegionShape } from '../voxels/uniform/region.js';
 import { DEFAULT_CELL_BUDGET, type VoxelizeResult } from '../voxels/voxelize/voxelize.js';
 import type { Selection } from './session.js';
 import type * as THREE from 'three';
@@ -17,9 +19,9 @@ import type * as THREE from 'three';
 type OpResult = { ok: true; detail: string; cells?: number } | { ok: false; error: string; detail: string };
 
 function applyVoxelizeResult(project: Project, result: Extract<VoxelizeResult, { ok: true }>, opts?: { attachTo?: ReadonlyMap<string, ObjectId>; parentId?: ObjectId | null }): { objectIds: ObjectId[] };  // attaching a payload leaves the object translation-only
-function addBox(project: Project, objectId: ObjectId, box: IntBox3, color: HexColor): OpResult;
-function removeBox(project: Project, objectId: ObjectId, box: IntBox3): OpResult;
-function paintBox(project: Project, objectId: ObjectId, box: IntBox3, color: HexColor): OpResult;
+function addRegion(project: Project, objectId: ObjectId, shape: RegionShape, color: HexColor): OpResult;
+function removeRegion(project: Project, objectId: ObjectId, shape: RegionShape): OpResult;
+function paintRegion(project: Project, objectId: ObjectId, shape: RegionShape, color: HexColor): OpResult;
 function detachSelection(project: Project, selection: Selection): OpResult & { objectId?: ObjectId };
 function createGroup(project: Project, name: string): OpResult & { objectId: ObjectId };
 function deleteObject(project: Project, objectId: ObjectId): OpResult;
@@ -34,10 +36,10 @@ function renameObject(project: Project, objectId: ObjectId, name: string): OpRes
 
 ## Internal logic
 1. Guard order is the same everywhere: resolve the object (`missing-object`), check the representation (`wrong-representation`), then mutate. A failed guard returns before any write, so no operation can leave a half-applied edit.
-2. Uniform region operations consume one inclusive integer box in the addressed object's local grid. It arrives from `pointer.ts` already normalized and is re-normalized with `normalizeBox` before measuring, because `boxCount` drives the budget check.
-3. Budget before write: `addBox` computes `boxCount(box)` and compares `grid.size + added` against `DEFAULT_CELL_BUDGET` imported from `voxels/voxelize/voxelize.ts` before calling `fillBox`. Over budget returns `error: 'budget-exceeded'` and leaves `grid.size` unchanged. `removeBox` and `paintBox` cannot grow the grid and are not checked.
-4. `addBox` writes every cell through `grid.fillBox`, `removeBox` clears through `grid.clearBox`, `paintBox` recolors only occupied cells through `grid.paintBox`; the call's return value becomes `cells`. A region that touches nothing is not a failure: `ok: true` with `cells: 0`, so a click on empty space yields a status line instead of an error.
-5. `detachSelection` handles the two selection kinds: `'none'` → `'empty-selection'`; `'box'` → `detachUniformBox(project, objectId, box)`. A `DetachResult` failure keeps its literal unchanged; success returns `ok: true` with the new object's id. That the source container no longer holds those cells is `document/detach.ts`'s guarantee, not re-checked here.
+2. The uniform region operations take a `RegionShape` — an inclusive integer box, a colour, or an island seed — and never enumerate a region themselves: `voxels/uniform/region.ts` turns a shape into cells, and it is the only module that reads the container to do it. Every shape is in the addressed object's own cell coordinates, the space the grid's box operations already work in.
+3. Budget before write: `addRegion` counts what the shape names with `regionCount` and compares `grid.size + named` against `DEFAULT_CELL_BUDGET` imported from `voxels/voxelize/voxelize.ts` before writing anything. The count is an upper bound rather than an exact delta — a box counts its whole extent, cells that already exist included — so the check can only refuse too much and never allow too much. Over budget returns `error: 'budget-exceeded'` and leaves `grid.size` unchanged. `removeRegion` and `paintRegion` cannot grow the grid and are not checked.
+4. `addRegion` writes every cell the shape names through `fillRegion`, `removeRegion` clears through `clearRegion`, `paintRegion` recolors only occupied cells through `paintRegion`; the ring-0 call's return value becomes `cells`. Ring 0 takes its own fast path for a box (`grid.fillBox` and its siblings) and collects keys before writing for a colour or an island, because walking a region reads the very map a write mutates. A region that touches nothing is not a failure: `ok: true` with `cells: 0`, so a click on empty space yields a status line instead of an error.
+5. `detachSelection` handles the selection kinds: `'none'` → `'empty-selection'`; a `'region'` whose shape is a box → `detachUniformBox(project, objectId, { min, max })`; any other shape → `'wrong-region'`, because a detach extracts a box and detaching a colour group or an island as its bounding box would take cells the user never named. A `DetachResult` failure keeps its literal unchanged; success returns `ok: true` with the new object's id. That the source container no longer holds those cells is `document/detach.ts`'s guarantee, not re-checked here.
 6. Object operations delegate to `Project`: `createGroup` → `createObject({ name, parentId: null, representation: 'empty' })`; `deleteObject` → `remove(id)`; `reparentObject` → `reparent(id, parentId)` mapping `'missing' | 'cycle'` through; `setObjectMaskColor` assigns the identity field `maskColor` directly (never a cell color). None touch the session; the caller clears a selection that named a deleted object.
 7. `setObjectVisible` and `renameObject` write the two object-level identity fields the mirror reads, `visible` and `name`, in place on the object — no payload, cell, transform, or mask-color write. `setObjectVisible` stores the flag verbatim (the mirror assigns it to the scene node); `renameObject` trims the argument with `String.prototype.trim` and refuses a result of length 0 as `'invalid-name'` before writing, so a stored name is never blank or padded.
 8. `setObjectAlignToGrid` writes the flag behind the panel's `Grid align` checkbox. Switching it off stops there and reports `<id> may now be placed between cells`, because the flag is a property the object has to satisfy from that moment on, not a mode a later edit applies. Switching it on snaps first: `project.alignedPosition` gives the nearest cell, that value is copied into the object's own `position` (`quaternion` and `scale` untouched), and the detail says whether the placement changed — `aligned <id> to [x, y, z]` with the cell it landed on, or `<id> is already on the grid` when the object was whole already.
@@ -49,7 +51,7 @@ function renameObject(project: Project, objectId: ObjectId, name: string): OpRes
 ## Invariants
 - Guards precede writes: an `ok: false` return never leaves project state modified, and the uniform budget check runs before the first cell is written.
 - Every voxel write goes through the addressed object's own container; no operation reaches a second object, the session, or the mirror.
-- A region edit is expressed only as an `IntBox3` — never a cell list, a screen rectangle, or a connected component. Selection is exactly one dragged integer box (no marquee, no flood fill).
+- A region edit is expressed only as a `RegionShape`. The operations never enumerate a region themselves: cell enumeration, the box fast path, and the flood fill all live in `voxels/uniform/region.ts`, so the shapes the operations accept and the shapes the viewport builds cannot drift apart.
 - Deletion and detach leave no dangling parent: `Project.remove` reparents children, and detach parents the new object to the source's parent.
 - `applyVoxelizeResult` preserves identity where `attachTo` matches: the existing object keeps its id, name, parent, and mask color, and only its payload and transform change.
 - Attaching a payload is what makes a node translation-only, on both paths: after `applyVoxelizeResult` the object's `quaternion` is the identity and its `scale` is `(1, 1, 1)`, because the payload's cells are axis-aligned in world space and any imported rotation or non-uniform scale would transform them a second time. This is an invariant of the operation, not a side effect of `createVoxelObject` happening to start from an identity transform.
@@ -62,7 +64,7 @@ function renameObject(project: Project, objectId: ObjectId, name: string): OpRes
 - Both snaps are taken in the object's own frame — the parent chain is divided out before the local write — so an aligned child of a moved or turned parent stores whole cells even though its world placement is fractional.
 
 ## Errors
-- Returned: `'missing-object'`, `'wrong-representation'`, `'budget-exceeded'`, `'unsupported-subdivision'`, `'exceeds-grid'`, `'empty-selection'`, `'degenerate-transform'`, `'invalid-name'`; passed through: `'missing'`, `'cycle'`, `'empty-region'`.
+- Returned: `'missing-object'`, `'wrong-representation'`, `'budget-exceeded'`, `'unsupported-subdivision'`, `'exceeds-grid'`, `'empty-selection'`, `'wrong-region'`, `'degenerate-transform'`, `'invalid-name'`; passed through: `'missing'`, `'cycle'`, `'empty-region'`.
 - Nothing throws for a user-facing failure, and no operation returns a degenerate success.
 - Programmer errors propagate instead of being converted: cell coordinates outside the packable `[-512, 511]` range throw `RangeError` from `grid.ts`, and a `Matrix4` argument is checked only for finiteness and invertibility.
 - `setObjectAlignToGrid` refuses an unknown id with `'missing-object'` before touching the flag; a placement that is already whole is a success carrying the `is already on the grid` detail, not a failed no-op.
@@ -71,10 +73,10 @@ function renameObject(project: Project, objectId: ObjectId, name: string): OpRes
 ## Dependencies
 - `../document/project.ts` — `Project`, `ObjectId`, `SceneObject`: lookup, hierarchy, id allocation, `nextMaskColor`, and the alignment rule the two object operations call (`alignedPosition`, `alignWorldMatrix`).
 - `../document/detach.ts` — `detachUniformBox` for `detachSelection`.
-- `./session.ts` — `Selection` (type only); `../voxels/uniform/grid.ts` — `IntBox3`, `HexColor`, `boxCount`, `normalizeBox`, and — for `setObjectSubdivision` — `isSubdivision`, `KEY_MIN`, `KEY_MAX`.
-- `../voxels/voxelize/voxelize.ts` — `DEFAULT_CELL_BUDGET` (the budget `addBox` and `setObjectSubdivision` enforce) and `VoxelizeResult` (type only).
+- `./session.ts` — `Selection` (type only); `../voxels/uniform/grid.ts` — `HexColor` and — for `setObjectSubdivision` — `isSubdivision`, `KEY_MIN`, `KEY_MAX`; `../voxels/uniform/region.ts` — `RegionShape` (type only) plus the writers and the counter the region operations call (`fillRegion`, `clearRegion` and `paintRegion`, aliased to `…Cells` because this file's own verbs are named for what the user asks for).
+- `../voxels/voxelize/voxelize.ts` — `DEFAULT_CELL_BUDGET` (the budget `addRegion` and `setObjectSubdivision` enforce) and `VoxelizeResult` (type only).
 - `three` — `Matrix4` for `setTransformFromWorldMatrix` and `Vector3` (type only) for the `placePayload` argument.
 No `three-runtime` import: operations neither render nor pick, and marking the mirror dirty is the caller's step.
 
 ## Tests
-`tests/ops.test.ts` is the direct unit coverage for this module, and it pins the grid-alignment half of the object operations: `setObjectAlignToGrid` pulling a fractional placement onto the nearest cell as the flag turns on while turning it off writes the flag alone, `setTransformFromWorldMatrix` storing whole cells whose parent-frame translation is the placement `alignWorldMatrix` previewed for the same matrix, and that same call keeping a fractional placement verbatim while the flag is off. It also pins `setObjectSubdivision` on a 2×2×2 cube at subdivision 1: every cell becoming a block of itself with the placement and the flag untouched, the level already held as a success and a coarser one refused, a cell at 300 leaving the key space as `'exceeds-grid'`, an object with no grid refused as `'wrong-representation'`, and a level of 3 throwing. The rule the two alignment operations apply has its own suite in `tests/project.test.ts`. README section 10 lists no further editor coverage, so the region operations (the budget refusal, the representation guard, `detachSelection`'s dispatch), `renameObject`'s `'invalid-name'`, and `applyVoxelizeResult` leaving every object it filled translation-only — identity quaternion, unit scale, `position` equal to the output's `origin` — including on the `attachTo` path are reached by running the application.
+`tests/ops.test.ts` is the direct unit coverage for this module, and it pins the grid-alignment half of the object operations: `setObjectAlignToGrid` pulling a fractional placement onto the nearest cell as the flag turns on while turning it off writes the flag alone, `setTransformFromWorldMatrix` storing whole cells whose parent-frame translation is the placement `alignWorldMatrix` previewed for the same matrix, and that same call keeping a fractional placement verbatim while the flag is off. It also pins `setObjectSubdivision` on a 2×2×2 cube at subdivision 1: every cell becoming a block of itself with the placement and the flag untouched, the level already held as a success and a coarser one refused, a cell at 300 leaving the key space as `'exceeds-grid'`, an object with no grid refused as `'wrong-representation'`, and a level of 3 throwing. The rule the two alignment operations apply has its own suite in `tests/project.test.ts`, and the shapes these operations accept are pinned one level down in `tests/region.test.ts`: a box's count and extent even where it is empty, a colour's reach across the container, an island's face connectivity (a corner neighbour is not one) and its stop at the key space's edge. The operations are driven through `tests/pointer.test.ts`, which presses with each shape and reads the document — one press recolouring a whole colour group, one press removing exactly one island. README section 10 lists no further editor coverage, so the budget refusal, the representation guard, `detachSelection`'s dispatch and its `'wrong-region'` refusal, `renameObject`'s `'invalid-name'`, and `applyVoxelizeResult` leaving every object it filled translation-only — identity quaternion, unit scale, `position` equal to the output's `origin` — including on the `attachTo` path are reached by running the application.

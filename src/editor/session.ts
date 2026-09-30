@@ -1,10 +1,11 @@
 import type { ObjectId, Project } from '../document/project.js';
-import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
+import type { HexColor } from '../voxels/uniform/grid.js';
+import type { RegionShape } from '../voxels/uniform/region.js';
 
-/** The one region an edit addresses: nothing, or a uniform cell box. */
+/** The one region an edit addresses: nothing, or a shape over one object's own cells. */
 export type Selection =
   | { kind: 'none' }
-  | { kind: 'box'; objectId: ObjectId; box: IntBox3 };
+  | { kind: 'region'; objectId: ObjectId; shape: RegionShape };
 
 export type ActiveTool = 'select' | 'paint' | 'add' | 'remove';
 
@@ -16,10 +17,10 @@ export type ActiveTool = 'select' | 'paint' | 'add' | 'remove';
 export type EditorMode = 'object' | 'edit';
 
 /**
- * What a press selects. `box` is the only shape so far, and the only variant `Selection` has: an
- * inclusive cell region, one cell when the press and the release are the same cell.
+ * What a press builds. The kinds live in `RegionShape`, so a new way of naming a region is a variant there and
+ * nothing here; the viewport builds whichever kind the session is set to.
  */
-export type SelectionShape = 'box';
+export type SelectionShape = RegionShape['kind'];
 
 /**
  * What the active object's voxels look like right now: its representation, the subdivision of its own grid,

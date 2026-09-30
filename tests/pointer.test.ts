@@ -109,9 +109,9 @@ describe('box drag', () => {
     // Both corners are the cells the hits reported: a face's own plane is never floored into the next cell, which
     // is what used to make a drag across a far face address cells the cube does not have.
     expect(scene.session.selection).toEqual({
-      kind: 'box',
+      kind: 'region',
       objectId: scene.objectId,
-      box: { min: [1, 1, 0], max: [1, 1, 1] },
+      shape: { kind: 'box', min: [1, 1, 0], max: [1, 1, 1] },
     });
     scene.pointer.dispose();
   });
@@ -158,9 +158,9 @@ describe('box drag', () => {
     expect(grid.getColor(1, 1, 1)).toBe(0x3366ff);
     expect(grid.size).toBe(9);
     expect(scene.session.selection).toEqual({
-      kind: 'box',
+      kind: 'region',
       objectId: scene.objectId,
-      box: { min: [1, 1, 2], max: [1, 1, 2] },
+      shape: { kind: 'box', min: [1, 1, 2], max: [1, 1, 2] },
     });
     scene.pointer.dispose();
   });
@@ -206,13 +206,57 @@ describe('box drag', () => {
     scene.move(0.1);
     scene.up(0.1);
     expect(scene.session.selection).toEqual({
-      kind: 'box',
+      kind: 'region',
       objectId: scene.objectId,
-      box: { min: [0, 0, 1], max: [0, 0, 3] },
+      shape: { kind: 'box', min: [0, 0, 1], max: [0, 0, 3] },
     });
     expect(grid.getColor(0, 0, 2)).toBe(0xff0000);
     expect(grid.getColor(0, 0, 3)).toBe(0xff0000);
     expect(grid.size).toBe(10);
+    scene.pointer.dispose();
+  });
+
+  it('names one colour group on a paint press and leaves the other colours alone', () => {
+    const scene = fixture();
+    const grid = scene.project.get(scene.objectId)!.uniform!;
+    // A second block in another colour, far enough away that no island could reach it.
+    grid.set(4, 0, 0, 0xff00ff);
+    scene.session.setTool('paint');
+    scene.session.setEditColor(0x00ff00);
+    scene.session.setSelectionShape('color');
+    scene.setHit(faceHit([1, 1, 1]));
+    scene.down(0);
+    scene.up(0);
+
+    // Every cell carrying the picked colour is recoloured and the press creates nothing: a colour region is the
+    // colour the seed cell holds, not the box around it.
+    expect(grid.getColor(0, 0, 0)).toBe(0x00ff00);
+    expect(grid.getColor(1, 1, 1)).toBe(0x00ff00);
+    expect(grid.getColor(4, 0, 0)).toBe(0xff00ff);
+    expect(grid.size).toBe(9);
+    expect(scene.session.selection).toEqual({
+      kind: 'region',
+      objectId: scene.objectId,
+      shape: { kind: 'color', color: 0x3366ff },
+    });
+    scene.pointer.dispose();
+  });
+
+  it('removes the island the seed cell belongs to, and leaves a corner neighbour alone', () => {
+    const scene = fixture();
+    const grid = scene.project.get(scene.objectId)!.uniform!;
+    // A second block that touches the first only at a corner, so the two are two islands rather than one.
+    grid.set(3, 3, 3, 0x3366ff);
+    scene.session.setTool('remove');
+    scene.session.setSelectionShape('island');
+    scene.setHit(faceHit([1, 1, 1]));
+    scene.down(0);
+    scene.up(0);
+
+    // The whole face-connected block goes and the diagonal cell stays: an island is face-connected.
+    expect(grid.size).toBe(1);
+    expect(grid.getColor(3, 3, 3)).toBe(0x3366ff);
+    expect(grid.has(1, 1, 1)).toBe(false);
     scene.pointer.dispose();
   });
 });

@@ -1,6 +1,6 @@
 # src/editor/session.ts
 
-Ring: 3 · Layer: editor · Depends on: document/project.ts, voxels/uniform/grid.ts
+Ring: 3 · Layer: editor · Depends on: document/project.ts, voxels/uniform/grid.ts, voxels/uniform/region.ts
 
 ## Responsibility
 Holds the editing state no other module owns: active object, active tool, selection, and the subscriber list. It is a view-model — it holds no project data, mutates no voxel container, and performs no edit; operations live in `editor/ops.ts` and are invoked by the caller.
@@ -8,14 +8,15 @@ Holds the editing state no other module owns: active object, active tool, select
 ## Public interface
 ```ts
 import type { ObjectId, Project } from '../document/project.js';
-import type { HexColor, IntBox3 } from '../voxels/uniform/grid.js';
+import type { HexColor } from '../voxels/uniform/grid.js';
+import type { RegionShape } from '../voxels/uniform/region.js';
 
 type Selection =
   | { kind: 'none' }
-  | { kind: 'box'; objectId: ObjectId; box: IntBox3 };
+  | { kind: 'region'; objectId: ObjectId; shape: RegionShape };
 type ActiveTool = 'select' | 'paint' | 'add' | 'remove';
 type EditorMode = 'object' | 'edit';   // what a viewport press is for
-type SelectionShape = 'box';   // what a press selects; the only variant `Selection` has
+type SelectionShape = RegionShape['kind'];   // what a press builds; the kinds live in `RegionShape`
 type EditResolution = { representation: 'empty' | 'uniform'; subdivision?: number; cells?: [number, number, number] };
 
 class EditorSession {
@@ -45,11 +46,11 @@ class EditorSession {
 2. `notify()` iterates a copy of the set, so a listener that subscribes or unsubscribes during the fan-out cannot corrupt the iteration or skip a sibling. It is synchronous, and every mutator calls it exactly once after the new state is fully assigned.
 3. `setActiveObject(null)` clears the active object, the selection, and the mode: it assigns `mode = 'object'` as well, because the edit mode
    edits one object's voxels and has nothing to do without one — which is what lets the UI disable both ways into it while nothing is active. A non-null id must resolve through `project.get(id)`. When the active object actually changes, the selection resets to `{ kind: 'none' }`, because a `Selection` names the object it describes and must not outlive it; re-selecting the current id keeps the selection.
-4. `setSelection` validates before assigning: `'none'` is always legal, `'box'` requires `representation === 'uniform'`. An invalid selection throws and leaves the previous one in place.
+4. `setSelection` validates before assigning: `'none'` is always legal, and a `'region'` requires its object to resolve and to carry `representation === 'uniform'`, because a region names cells of a grid. An invalid selection throws and leaves the previous one in place. The shape itself is not inspected: a region that names no cell — an island seed in empty space, a colour no cell carries — is a legal, empty region rather than an error.
 5. `setMode(mode)` only assigns and notifies, like `setTool`, and drops the selection when the mode it assigns is `object`: a cell
    region is what the edit mode works on, and the gizmo mode has no use for one.
 6. `setTool` only assigns and notifies. It does not clear the selection, because the box tools — `select`, `add`, `paint` and `remove` — all share the same region; a detach is a command on the selected region rather than a tool, so it is not in the union at all.
-7. `setSelectionShape(shape)` only assigns and notifies, like `setTool`: the shapes are a closed union, so there is nothing to validate. The shape is what `pointer.ts` builds a selection as when a press hits an object, which is why `box` is the only value and the only variant `Selection` has.
+7. `setSelectionShape(shape)` only assigns and notifies, like `setTool`: the shapes are a closed union, so there is nothing to validate. The shape is what `pointer.ts` builds a selection as when a press hits an object, so the values are exactly the `RegionShape` kinds: a box a drag extends, and a colour group or an island, the last two named by the cell the press landed on and never dragged.
 8. `setEditColor(color)` assigns and notifies. The color is the *appearance* channel the add and paint operations write (`HexColor`, `0xRRGGBB`) and has nothing to do with `SceneObject.maskColor`, which is the identity channel. The session stores it so the paint tool has no hidden constant: `pointer.ts` reads `session.editColor` at commit time.
 9. `setAddHeight(height)` validates and assigns: a whole number of cells at least one, or a `RangeError`. `1` is the width of the add tool's box — the single layer the pressed face opens onto — so it is the value that means "no override" rather than a separate flag, and the height is that tool's own thickness: `pointer.ts` reads `session.addHeight` when it builds a drag's box and only ever stretches the box for `add`.
 10. `resolutionOf` reads the project on every call, so the reported resolution cannot go stale: `undefined` for an unknown id; `{ representation: 'empty' }` for a node whose representation carries no payload — a transform-only node, or a uniform object whose grid has not been attached yet; and for a uniform object that has a grid, `{ representation: 'uniform', subdivision: grid.subdivision }`, because the subdivision is a property of the grid and is reported whenever one is attached, occupied or not. `cells` is added on top of that, derived from `grid.bounds()` as `bounds.max[i] - bounds.min[i] + 1` per axis, while the grid holds at least one occupied cell, and there is no `cells` while it holds none — the counts need an occupied cell to have a size at all. A cell is `1 / subdivision` of the world unit, so `cells` is a per-axis count of the active object's own cells and the subdivision is what says how much world each of them spans. This value is what the HUD shows.
