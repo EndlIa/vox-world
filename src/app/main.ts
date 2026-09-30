@@ -4,9 +4,21 @@
  * the render loop; it owns no algorithm, only calls into inner rings.
  */
 
-import { Matrix4, Mesh, PerspectiveCamera, Vector3, WebGLRenderer } from 'three';
-import type { Box3, Object3D, Quaternion } from 'three';
+import { Matrix4, Mesh, PerspectiveCamera, Quaternion, Vector3, WebGLRenderer } from 'three';
+import type { Box3, Object3D } from 'three';
 import { Project } from '../document/project.js';
+import {
+  DEFAULT_FOV,
+  activeTake,
+  addTake,
+  removeTake,
+  resolveCameraAt,
+  segmentAt,
+  setActiveTake,
+  splitSegment,
+  upsertKey,
+  type ResolvedCamera,
+} from '../document/camera.js';
 import type { ObjectId, ProjectData } from '../document/project.js';
 import { readJson, toJson } from '../document/serialize.js';
 import { EditorSession } from '../editor/session.js';
@@ -176,7 +188,7 @@ export function main(): void {
   const hudRoot = elementById('hud');
 
   const project = new Project();
-  project.timeline.durationMs = DEFAULT_DURATION_MS;
+  project.setDuration(DEFAULT_DURATION_MS);
   project.timeline.fps = DEFAULT_FPS;
   project.createVoxelObject({
     name: 'Demo cube',
@@ -185,13 +197,22 @@ export function main(): void {
     // The world's ground is the xy plane, so the cube stands off the origin with its base at z = 0.
     position: new Vector3(-2, -2, 0),
   });
-  // The demo's opening shot: a camera that stands off the content and aims at it, so the shot is a real one and the
-  // carrier the viewport draws points at what it frames. The document's own camera starts at the identity transform —
-  // at the origin, looking down its own `-Z`, which in this Z-up world is straight down at the ground.
-  project.camera.transform.position.copy(OPENING_SHOT_POSITION);
-  project.camera.transform.quaternion.setFromRotationMatrix(
-    new Matrix4().lookAt(OPENING_SHOT_POSITION, OPENING_SHOT_TARGET, WORLD_UP),
-  );
+  // The demo's opening shot, written as the first key of the project's one shot: a camera that stands off the content
+  // and aims at it, so the shot is a real one and the carrier the viewport draws points at what it frames. A project's
+  // own camera starts at the identity transform, which in this Z-up world is a camera at the origin looking straight
+  // down its `-Z`, and the model's own default is what the boot replaces here.
+  const openingTake = activeTake(project.camera);
+  const openingSegment = openingTake?.segments[0];
+  if (openingTake !== undefined && openingSegment !== undefined) {
+    upsertKey(project.camera, openingTake.id, openingSegment.id, {
+      timeMs: 0,
+      position: OPENING_SHOT_POSITION,
+      quaternion: new Quaternion().setFromRotationMatrix(
+        new Matrix4().lookAt(OPENING_SHOT_POSITION, OPENING_SHOT_TARGET, WORLD_UP),
+      ),
+      lens: DEFAULT_FOV,
+    });
+  }
 
   // 2. Viewport: renderer, mirror and its output camera, navigation, decorations, capture.
   const viewportCamera = new PerspectiveCamera(VIEWPORT_FOV, 1, VIEWPORT_NEAR, VIEWPORT_FAR);
@@ -274,27 +295,23 @@ export function main(): void {
     timelineVisible: () => timelineVisible,
     // The carrier's controls are a view of the app's own flags and of the authored camera, never of the carrier
     // node: what the fields show is what a keyframe would record.
-    cameraControl: () => ({
-      selected: cameraControlSelected,
-      mode: gizmoMode,
-      playing: playback.playing,
-      pathVisible: cameraPathVisible,
-      pathAvailable: cameraKeyframePositions(project).length >= 2,
-      pose: {
-        position: [
-          project.camera.transform.position.x,
-          project.camera.transform.position.y,
-          project.camera.transform.position.z,
-        ],
-        quaternion: [
-          project.camera.transform.quaternion.x,
-          project.camera.transform.quaternion.y,
-          project.camera.transform.quaternion.z,
-          project.camera.transform.quaternion.w,
-        ],
-        fov: project.camera.fov,
-      },
-    }),
+    cameraControl: () => {
+      const shot = currentShot();
+      return {
+        selected: cameraControlSelected,
+        mode: gizmoMode,
+        playing: playback.playing,
+        pathVisible: cameraPathVisible,
+        pathAvailable: cameraKeyframePositions(project).length >= 2,
+        pose: {
+          position: [shot.position.x, shot.position.y, shot.position.z],
+          quaternion: [shot.quaternion.x, shot.quaternion.y, shot.quaternion.z, shot.quaternion.w],
+          fov: shot.lens,
+        },
+        takes: project.camera.takes.map((take) => ({ id: take.id, name: take.name })),
+        activeTakeId: activeTake(project.camera)?.id ?? '',
+      };
+    },
     actions: {
       pickImportFile: openImportDialog,
       saveProject,
@@ -313,6 +330,10 @@ export function main(): void {
       renameActive: applyRenameActive,
       reparentActive: applyReparent,
       setCameraFov,
+      setActiveTake: applySetActiveTake,
+      addTake: applyAddTake,
+      removeTake: applyRemoveTake,
+      cutAtPlayhead: applyCutAtPlayhead,
       setCameraPose,
       toggleCameraControl,
       toggleGizmoMode,
@@ -336,11 +357,7 @@ export function main(): void {
       // A keyframe edit is what changes the camera's trajectory, so the path is redrawn here.
       refreshCameraPath();
     },
-    // A camera key records what the author aimed: while the carrier is selected that is the shot the gizmo or the pose
-    // fields just moved, which the document already holds; otherwise it is the view being looked through.
-    adoptViewAsCamera: (): void => {
-      if (!cameraControlSelected) captureViewAsCamera();
-    },
+    setDuration: applyDuration,
   };
 
   const panels = new Panels(panelsRoot, panelContext);
@@ -584,7 +601,6 @@ export function main(): void {
     // 5. The truth, and the two things `sync()` never publishes: the scene's settings and the output camera.
     project.restore(data);
     mirror.applySettings();
-    mirror.applyCamera();
     // 6. Every loaded object is rebuilt. `sync()` keeps the node of an id it already has, and a load normally
     //    reuses ids, so without a dirty mark the replaced project's geometry would stay on screen.
     for (const id of project.objects.keys()) dirtyIds.add(id);
@@ -661,17 +677,112 @@ export function main(): void {
   }
 
   /**
-   * Writes the authored vertical FOV and applies it to the output camera at once: the projection
-   * matrix is refreshed here because assigning `fov` alone leaves it stale. A run's viewport and
-   * the next export then both show the authored value, and a `fov` keyframe records it instead of
-   * whatever the camera was constructed with.
+   * Writes the clip's length through the document, which drags the camera's coverage with it, and then rebuilds what
+   * reads the clip: the mixer, the shot the playhead is on, and the drawn path.
+   */
+  function applyDuration(durationMs: number): void {
+    project.setDuration(durationMs);
+    playback.rebuild(project);
+    playback.setTime(playback.time);
+    refreshCameraPath();
+    panels.refresh();
+  }
+
+  /**
+   * The shot the camera holds at the playhead: what the carrier draws, what the panel's fields show, and what a key
+   * holds. It always resolves — a take never has an empty segment chain — so a state that does not resolve is a broken
+   * project rather than an expected case.
+   */
+  function currentShot(): ResolvedCamera {
+    const state = resolveCameraAt(project.camera, playback.time * 1000);
+    if (state === undefined) throw new Error('camera: the project holds no take to resolve');
+    return state;
+  }
+
+  /**
+   * The one camera write: a key at the playhead, in the segment the playhead is in, holding the state it is given.
+   * Every camera gesture ends here — a carrier drag, the pose fields, the lens field, `Camera -> View` — which is what
+   * makes a take's state at any time exactly the sum of its keys. A running clip refuses the write, because the clip
+   * owns the playhead and the camera for the length of a run.
+   */
+  function writeShot(state: { position: Vector3; quaternion: Quaternion; lens: number }): void {
+    if (playback.playing) return;
+    const shot = shotTarget();
+    if (shot === undefined) return;
+    const result = upsertKey(project.camera, shot.takeId, shot.segmentId, { timeMs: playback.time * 1000, ...state });
+    if (!result.ok) {
+      reportFailure(result);
+      return;
+    }
+    refreshShotViews();
+  }
+
+  /** The take and the segment the playhead is in: the shot every camera gesture edits. */
+  function shotTarget(): { takeId: string; segmentId: string } | undefined {
+    const take = activeTake(project.camera);
+    const segment = take === undefined ? undefined : segmentAt(take, playback.time * 1000);
+    return take === undefined || segment === undefined ? undefined : { takeId: take.id, segmentId: segment.id };
+  }
+
+  /**
+   * After anything that reshapes the shot: the frame, the drawn path, and the fields all read the camera, so they are
+   * re-read together. The output camera takes the new state at once, so a gesture is visible as it lands rather than a
+   * frame later.
+   */
+  function refreshShotViews(): void {
+    playback.setTime(playback.time);
+    refreshCameraPath();
+    panels.refresh();
+  }
+
+  /** The take being edited, which the whole `Camera` group is about. */
+  function applySetActiveTake(takeId: string): void {
+    if (setActiveTake(project.camera, takeId)) refreshShotViews();
+  }
+
+  /**
+   * Copies the take being edited and switches to the copy — the point of takes: a different shooting plan is made by
+   * editing a copy, and going back is a switch rather than an undo chain.
+   */
+  function applyAddTake(): void {
+    const source = activeTake(project.camera);
+    const copy = addTake(project.camera, {
+      ...(source === undefined ? {} : { source }),
+      durationMs: project.timeline.durationMs,
+    });
+    setActiveTake(project.camera, copy.id);
+    refreshShotViews();
+  }
+
+  /** Deletes the take being edited. The model refuses the last one, which is why the button is disabled instead. */
+  function applyRemoveTake(): void {
+    const take = activeTake(project.camera);
+    if (take !== undefined && removeTake(project.camera, take.id)) refreshShotViews();
+  }
+
+  /**
+   * Cuts at the playhead: the shot is split in two, and the later half holds its own state from that instant — which is
+   * an exact cut until the author moves it, and a seamless split if they never do.
+   */
+  function applyCutAtPlayhead(): void {
+    const take = activeTake(project.camera);
+    if (take === undefined) return;
+    const result = splitSegment(project.camera, take.id, playback.time * 1000, project.timeline.durationMs);
+    if (!result.ok) {
+      reportFailure(result);
+      return;
+    }
+    refreshShotViews();
+  }
+
+  /**
+   * Writes the lens of the shot the author is on. It is a key at the playhead like every other camera write, because
+   * in a take the state at a time *is* a key: the field, a drag, and `Camera -> View` all end in the same write.
    */
   function setCameraFov(fov: number): void {
     if (!Number.isFinite(fov)) return;
-    const value = Math.min(179, Math.max(1, fov));
-    project.camera.fov = value;
-    mirror.camera.fov = value;
-    mirror.camera.updateProjectionMatrix();
+    const shot = currentShot();
+    writeShot({ position: shot.position, quaternion: shot.quaternion, lens: Math.min(179, Math.max(1, fov)) });
   }
 
   /**
@@ -687,45 +798,40 @@ export function main(): void {
   }
 
   /**
-   * Writes a world matrix into the authored camera, which is what a drag on the carrier commits. Both the document
-   * and the mirror take it: the mirror's camera is the instance a run's viewport and every export render through, and
-   * `SceneMirror.sync` never touches it.
+   * Writes a world matrix into the shot the author is on, which is what a drag on the carrier commits. The lens is
+   * kept, because a drag moves the camera and does not change what it sees through.
    */
   function applyCameraMatrix(matrix: Matrix4): void {
-    const transform = project.camera.transform;
-    matrix.decompose(transform.position, transform.quaternion, transform.scale);
-    transform.quaternion.normalize();
-    mirror.camera.position.copy(transform.position);
-    mirror.camera.quaternion.copy(transform.quaternion);
+    const shot = currentShot();
+    const position = new Vector3();
+    const quaternion = new Quaternion();
+    matrix.decompose(position, quaternion, new Vector3());
+    quaternion.normalize();
+    writeShot({ position, quaternion, lens: shot.lens });
     // The viewport is deliberately left where it is: the carrier exists so a shot can be aimed from the third person,
     // which a view that followed every drag would make impossible — and a commit that moved nothing would still move
     // the view. `View -> Camera` is the one explicit way to look through the shot.
-    panels.refresh();
   }
 
   /**
-   * Writes the carrier's numeric grid into the authored camera. The fields are the same state a drag produces, so
-   * both paths end in the same two writes; the FOV goes through `setCameraFov`, which owns its clamp and the
-   * projection refresh.
+   * Writes the carrier's numeric grid into the shot the author is on. The fields are the same state a drag produces,
+   * so both paths end in the same write, and a refused field leaves the shot exactly as it was.
    */
   function setCameraPose(pose: CameraPose): void {
     const [qx, qy, qz, qw] = pose.quaternion;
     const numbers = [...pose.position, qx, qy, qz, qw, pose.fov];
     if (numbers.some((value) => !Number.isFinite(value))) return;
-    // A zero quaternion is not a rotation, so it is refused — before anything is written, so a refused field
-    // leaves the camera exactly as it was.
+    // A zero quaternion is not a rotation, so it is refused before anything is written.
     const lengthSq = qx * qx + qy * qy + qz * qz + qw * qw;
     if (lengthSq < 1e-12) return;
     const normalize = 1 / Math.sqrt(lengthSq);
-    const transform = project.camera.transform;
-    transform.quaternion.set(qx * normalize, qy * normalize, qz * normalize, qw * normalize);
-    transform.position.set(pose.position[0], pose.position[1], pose.position[2]);
-    setCameraFov(pose.fov);
-    mirror.camera.position.copy(transform.position);
-    mirror.camera.quaternion.copy(transform.quaternion);
+    writeShot({
+      position: new Vector3(pose.position[0], pose.position[1], pose.position[2]),
+      quaternion: new Quaternion(qx * normalize, qy * normalize, qz * normalize, qw * normalize),
+      lens: pose.fov,
+    });
     // The viewport is left alone for the same reason a drag leaves it alone: the pose fields edit the shot, and the
     // view is only ever moved by an explicit command.
-    panels.refresh();
   }
 
   /**
@@ -823,13 +929,8 @@ export function main(): void {
    */
   function captureViewAsCamera(): void {
     if (playback.playing) return;
-    const { position, quaternion } = viewportCamera;
-    const transform = project.camera.transform;
-    transform.position.copy(position);
-    transform.quaternion.copy(quaternion);
-    mirror.camera.position.copy(position);
-    mirror.camera.quaternion.copy(quaternion);
-    panels.refresh();
+    const shot = currentShot();
+    writeShot({ position: viewportCamera.position, quaternion: viewportCamera.quaternion, lens: shot.lens });
   }
 
   /**
@@ -849,7 +950,8 @@ export function main(): void {
    * nothing, which is what makes it a safe way to look at what a render would frame.
    */
   function viewToCamera(): void {
-    controls.setViewFrom(project.camera.transform.position, project.camera.transform.quaternion);
+    const shot = currentShot();
+    controls.setViewFrom(shot.position, shot.quaternion);
   }
 
   function applyCreateGroup(): void {

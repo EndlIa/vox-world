@@ -1,15 +1,15 @@
 # src/animation/trajectory.ts
 
-Ring: 1 · Layer: animation · Depends on: ./compile.js, ../document/timeline.js, ../document/project.js, three
+Ring: 1 · Layer: animation · Depends on: ../document/camera.js, ../document/project.js, three
 
 ## Responsibility
-Turns the authored camera position track into the two plain point lists the viewport drawing needs: the sampled
-polyline of where the camera travels, and one point per authored keyframe, which is where the rings go. The sampling
-is not a second interpolation — it runs the compiled track through a scratch `AnimationMixer`, so the curve between
-keyframes is three's own, discrete, linear, or the smooth spline exactly as the track was built — and the
-only thing decided here is the set of times to ask for: an even walk over the clip's length. It stores nothing, holds
-no mixer, and writes nothing into the project; every call builds fresh points and releases the mixer it built
-(`animation/playback.ts` is the long-lived one, this is a throwaway). It exists for the camera path drawing.
+Turns the active take into the two plain point lists the viewport drawing needs: the sampled polyline of where the
+camera travels, and one point per authored key, which is where the rings go. The sampling is not a second
+interpolation — it walks each segment through `document/camera.ts`'s own evaluator, `resolveSegmentAt`, the same
+evaluation a render uses, cuts included — and the only thing decided here is the set of times to ask for: an even walk
+over each segment, both of its ends included. It stores nothing, holds no mixer and no clip, and writes nothing into
+the project; every call builds fresh points. It exists for the camera path drawing.
+(`animation/playback.ts` is the long-lived mixer, and it is not this file's business either: the shot is the mirror's.)
 
 ## Public interface
 ```ts
@@ -21,61 +21,61 @@ function cameraKeyframePositions(project: Project): Vector3[];
 ## Internal logic
 1. `CAMERA_PATH_SEGMENTS` is 128: enough that a curved move reads as a curve at demo scale, and few enough that the
    polyline is rebuilt cheaply on every redraw.
-2. `sampleCameraTrajectory` compiles the timeline with `buildClip(project)` and looks for the track named `camera` +
-   `channelBinding('position').path`, i.e. `camera.position`. That lookup is written against the two literals of the
-   binding contract `compile.ts` and `playback.ts` share: the camera target's binding name is `'camera'` and the
-   channel path is `channelBinding`'s.
-3. No such track returns `[]`. A camera with no authored position keyframes has no path to draw, which is a normal
-   state rather than a failure.
-4. Sampling runs the one track, not the whole clip: a fresh `AnimationClip` carries the compiled clip's name and
-   duration and only the camera position track. A scratch `Object3D` named `camera` is added to an unnamed scratch
-   root, and the mixer is created over that root. The root stays unnamed so only the child can be bound, and because
-   no object track enters the sampling clip the mixer never has to resolve a node named after an `ObjectId` at all.
-5. The action is set to `LoopOnce, 1` with `clampWhenFinished = true` and played. A repeating action folds the sample
-   taken at the clip's length back onto the first keyframe, and the drawn path has to reach the last one; the clamp is
-   what puts that final sample on the last keyframe instead.
-6. Times: `steps = Math.max(1, Math.floor(segments))`, then a sample at each `clip.duration * step / steps` for
-   `step` 0 to `steps` inclusive — both ends of the clip included. Each iteration calls `mixer.setTime(time)` and
-   pushes `node.position.clone()`, so what is returned is copies.
-7. `mixer.uncacheRoot(root)` releases the scratch binding walk before the points are returned; the scratch nodes and
-   sampler clip go with it.
-8. `cameraKeyframePositions` is the marker list, and it is deliberately separate from the sampled one: a ring belongs
-   to an authored keyframe, not to a sample of the curve between two of them. It reads
-   `findTrack(project.timeline, CAMERA, 'position')` and maps every `Keyframe.value` to a `Vector3` in the track's own
-   order — which `document/timeline.ts` keeps strictly ascending by time — and returns `[]` for a camera without that
-   track.
-9. `CAMERA` is the module-private `{ kind: 'camera' }` by which the timeline names the camera target.
+2. `sampleCameraTrajectory` reads `activeTake(project.camera)`. No take at all, or a take whose segment chain is
+   empty, returns `[]`: a camera with nothing to draw is the empty list, which is the state the drawing turns into
+   nothing, not a failure.
+3. Times are per segment, because that is where a cut lives: `steps = Math.max(1, Math.floor(segments))` is split as
+   `perSegment = Math.max(1, Math.round(steps / take.segments.length))`, and each segment is sampled at
+   `startMs + (endMs - startMs) * step / perSegment` for `step` 0 to `perSegment` inclusive. An even walk of that
+   shot, both of its ends included; the clip's own end is included because the last segment's `endMs` is the clip's
+   length after `retimeCamera`.
+4. Sampling is per segment rather than over the clip, which is what keeps a cut honest:
+   `resolveSegmentAt(segment, time, take.id)` answers one segment's own state, so the run of the earlier shot reaches
+   its own last state and the run of the later one starts at its own first — a jump where the states differ, drawn
+   where the cut is, with no interpolated flight between them and no sample across the seam.
+5. Each pushed point is the `Vector3` the resolve allocated for it, so nothing here aliases a key's own vector and a
+   caller may mutate what it is handed.
+6. `cameraKeyframePositions` is the marker list, and it is deliberately separate from the sampled one: a ring belongs
+   to an authored key, not to a sample of the curve between two of them. It maps every segment's `keys` — in take
+   order, which is time order because the segments tile the clip and each segment's keys ascend — to a clone of each
+   key's `position`, so a segment boundary adds no marker of its own: only the keys appear.
+7. There is no mixer, node, or clip to build, uncache, or release: the evaluator is pure and this file keeps nothing.
 
 ## Invariants
-- Interpolation is entirely three's: no easing, no curve math, and no keyframe arithmetic happens here. `step` holds
-  the earlier keyframe, `linear` lands between two, and `smooth` follows the spline, because that is what the compiled
-  track interpolates.
-- `points.length === Math.max(1, Math.floor(segments)) + 1`; the first point is the clip's start and the last is the
-  clip's length, so a path always spans the whole clip rather than ending at the last keyframe.
-- Every returned point is a fresh `Vector3`: mutating one reaches neither the project, the clip, nor a later sample,
-  and no authored array is aliased.
-- The camera position track is the only thing that can bind: the sampling clip holds exactly that track, its target is
-  the scratch child named `camera`, and the root above it is unnamed, so `PropertyBinding` finds nothing else and no
-  object track can enter the walk.
-- A camera without a position track yields `[]` from both functions, and neither of them throws.
+- Interpolation is entirely the camera model's: no easing, no curve math, and no keyframe arithmetic happens here.
+  Inside a segment, position and orientation are interpolated and the ends are held, exactly as `resolveSegmentAt`
+  does it for a render — so the drawn path is the travel the camera really makes.
+- The polyline is per segment: the number of points is `take.segments.length * (perSegment + 1)` with
+  `perSegment = Math.max(1, Math.round(Math.max(1, Math.floor(segments)) / take.segments.length))`, and each run's
+  first and last point are that segment's own states at its own start and end.
+- A cut is drawn where it is: consecutive runs meet at the same time holding each side's own state, so a `cut` shows
+  as the jump it is and a `continuous` seam shows as no visible break at all.
+- Every returned point is a fresh `Vector3`: mutating one reaches neither the project nor a later sample, and no
+  authored vector is aliased — the evaluations allocate their own state, and the markers are clones.
+- A camera with no take, or with an empty segment chain, yields `[]` from both functions, and neither of them throws.
 - Nothing is retained and nothing is serialized: no mixer, node, clip, or point survives a call.
 
 ## Errors
-No `Result` and no failure path: both functions are total. A missing track is the empty list, which is the state the
-drawing turns into nothing. `segments` is floored and floored at one, so a caller asking for less than one segment
-still gets a drawable two-point line rather than an exception.
+No `Result` and no failure path: both functions are total. A camera with nothing to resolve is the empty list, which
+is the state the drawing turns into nothing. `segments` is floored and floored at one, so a caller asking for less
+than one sample still gets a drawable line rather than an exception — and a take of many segments gets at least one
+step in each of them, so a cut can never be sampled away.
 
 ## Dependencies
-- `./compile.js` — `buildClip` for the clip and `channelBinding` for the `'.position'` path of the mirror's object name.
-- `../document/timeline.js` — `findTrack` and the `TrackTarget` type for the marker list.
+- `../document/camera.js` — `activeTake` for the take and `resolveSegmentAt` for the per-segment evaluation;
+  `resolveCameraAt` is imported alongside them but nothing here calls it. The camera data itself is read through
+  `project.camera`, so no mutator is imported.
 - `../document/project.js` — `Project`.
-- `three` — `AnimationClip`, `AnimationMixer`, `LoopOnce`, `Object3D`, `Vector3`; allowed in ring 1.
+- `three` — `Vector3`; allowed in ring 1.
 
 ## Tests
-- `tests/trajectory.test.ts` — even sampling with both ends included, the sampler following the track's interpolation
-  instead of assuming a straight line, one marker point per keyframe in time order, and nothing at all without a
-  track. The clip the sampler leans on, and the interpolation modes it maps, are pinned by `tests/timeline.test.ts`.
+- `tests/trajectory.test.ts` — even sampling with both ends included, a cut reached as a jump (each segment sampled on
+  its own, so the samples either side of the seam are the two shots' own states), one marker point per authored key in
+  time order, and a single-key take drawing one repeated point, which the panel calls no path. The evaluation the
+  sampler leans on is `document/camera.ts`'s, pinned by `tests/camera.test.ts`.
 
 ## Open questions
 - `segments` has no caller beyond its default: `app/main.ts` always takes `CAMERA_PATH_SEGMENTS`. Either the path's
   density becomes a setting or the parameter should be dropped — the same question `compile.ts`'s `only` carries.
+- `resolveCameraAt` is imported here and never called; it is the clip-level resolve the sampler used to go through.
+  Dropping the import is the whole of the fix.

@@ -16,6 +16,7 @@
  */
 
 import type { ObjectId, Project, SceneObject } from '../document/project.js';
+import { DEFAULT_FAR, DEFAULT_FOV, DEFAULT_NEAR } from '../document/camera.js';
 import type { HexColor } from '../voxels/uniform/grid.js';
 import * as THREE from 'three';
 import { Outlines } from '@pmndrs/vanilla/core/Outlines';
@@ -104,7 +105,7 @@ type UniformPayload = NonNullable<SceneObject['uniform']>;
 
 export class SceneMirror {
   readonly scene: THREE.Scene;
-  /** The **output** camera: derived from `project.camera`, used for export and for FOV tracks. */
+  /** The **output** camera: the shot the project's active take holds, posed by `animation/playback.ts`. */
   readonly camera: THREE.PerspectiveCamera;
 
   private readonly project: Project;
@@ -154,15 +155,13 @@ export class SceneMirror {
     // No colour at all and no transparent tricks: this exists to leave depth, which is what cuts the hull to a rim.
     this.outlineDepthMaterial = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: true });
 
-    const settings = project.camera;
-    this.camera = new THREE.PerspectiveCamera(settings.fov, 1, settings.near, settings.far);
+    // Built on the camera model's defaults, and posed by `animation/playback.ts` from the take the project holds: the
+    // mirror owns the one instance every render and every export goes through, and never the value it renders.
+    this.camera = new THREE.PerspectiveCamera(DEFAULT_FOV, 1, DEFAULT_NEAR, DEFAULT_FAR);
     // The world is Z-up and three's default `up` is Y, so a later `lookAt` on this output camera would roll the
-    // frame a quarter turn without this. Set before the author's pose is copied on, which is what aims it.
+    // frame a quarter turn without this.
     this.camera.up.set(0, 0, 1);
     this.camera.name = 'camera';
-    this.camera.position.copy(settings.transform.position);
-    this.camera.quaternion.copy(settings.transform.quaternion);
-    this.camera.scale.copy(settings.transform.scale);
     this.scene.add(this.camera);
   }
 
@@ -170,7 +169,7 @@ export class SceneMirror {
    * Reconciles the mirror with the project: membership, hierarchy, the objects marked dirty, and the
    * raw meshes the app attached. A clean object keeps its node, its meshes and
    * its lookup identity, and its transform is never rewritten, so a mixer-driven transform is not
-   * clobbered and the output camera — which the timeline owns — is never touched at all.
+   * clobbered and the output camera — which `animation/playback.ts` owns — is never touched at all.
    */
   sync(): void {
     const project = this.project;
@@ -437,22 +436,6 @@ export class SceneMirror {
     const settings = this.project.settings;
     this.scene.background = new THREE.Color(settings.background);
     this.ambientLight.intensity = settings.ambientIntensity;
-  }
-
-  /**
-   * Re-reads the authored camera into the output camera: pose, field of view, and the near/far range, with the
-   * projection refreshed. `sync()` never writes the camera node because the timeline owns it, so a
-   * load says so explicitly here; `app/main.ts`'s `setCameraFov` is the other writer of the same state.
-   */
-  applyCamera(): void {
-    const settings = this.project.camera;
-    this.camera.fov = settings.fov;
-    this.camera.near = settings.near;
-    this.camera.far = settings.far;
-    this.camera.position.copy(settings.transform.position);
-    this.camera.quaternion.copy(settings.transform.quaternion);
-    this.camera.scale.copy(settings.transform.scale);
-    this.camera.updateProjectionMatrix();
   }
 
   /**

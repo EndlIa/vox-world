@@ -1,8 +1,8 @@
 import type { ObjectId } from './project.js';
 
 export type Interpolation = 'step' | 'linear' | 'smooth';
-export type TrackChannel = 'position' | 'quaternion' | 'scale' | 'fov';
-export type TrackTarget = { kind: 'object'; objectId: ObjectId } | { kind: 'camera' };
+export type TrackChannel = 'position' | 'quaternion' | 'scale';
+export type TrackTarget = { kind: 'object'; objectId: ObjectId };
 export type Keyframe = { id: string; timeMs: number; value: number[] };
 export type Track = {
   target: TrackTarget;
@@ -20,7 +20,6 @@ const VALUE_SIZE: Record<TrackChannel, number> = {
   position: 3,
   quaternion: 4,
   scale: 3,
-  fov: 1,
 };
 
 /**
@@ -51,7 +50,7 @@ function clampTime(timeMs: number, durationMs: number): number {
  * so its spelling may change.
  */
 export function trackKey(target: TrackTarget, channel: TrackChannel): string {
-  return target.kind === 'camera' ? `camera:${channel}` : `object:${target.objectId}:${channel}`;
+  return `object:${target.objectId}:${channel}`;
 }
 
 /** The only lookup primitive: a linear scan, because a `Timeline` stays a plain round-trippable record. */
@@ -231,13 +230,13 @@ export function sortKeyframes(timeline: Timeline): void {
 
 /**
  * Deletion hook for `Project.remove`. Tracks are spliced out of the existing array so holders of
- * `timeline.tracks` keep a live reference; camera tracks are untouched.
+ * `timeline.tracks` keep a live reference; every other track is left alone.
  */
 export function removeTracksFor(timeline: Timeline, objectId: ObjectId): void {
   for (let i = timeline.tracks.length - 1; i >= 0; i -= 1) {
     const track = timeline.tracks[i];
     if (track === undefined) continue;
-    if (track.target.kind === 'object' && track.target.objectId === objectId) {
+    if (track.target.objectId === objectId) {
       timeline.tracks.splice(i, 1);
     }
   }

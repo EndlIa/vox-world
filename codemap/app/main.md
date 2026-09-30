@@ -24,18 +24,20 @@ function main(): void;
 1. **Entry and project.** `index.html` pins the elements `main` resolves — `<canvas id="viewport">`, and the `#modebar`, `#panels`, `#timeline`, and `#hud`
    divs. The long-lived objects live in one `AppContext`; everything else stays `main`-local. The project opens with one demo voxel object — a
    `DEMO_CELLS`³ cube of unit cells, standing off the origin on the world's xy ground, so the viewport is not empty before the first import — and a clip
-   of `DEFAULT_DURATION_MS` (10 000, the authoring unit, i.e. ten seconds once the clip is compiled) at `DEFAULT_FPS`. A cell coordinate is a world
-   coordinate, so the demo content occupies the cells it names. The demo's opening shot is placed here too, from `OPENING_SHOT_POSITION` aimed at
-   `OPENING_SHOT_TARGET`: a camera that stands off the content and looks at it, because a document's own camera starts at the identity transform, which in
-   this Z-up world is a camera at the origin looking straight down its own `-Z`.
+   of `DEFAULT_DURATION_MS` (10 000, the authoring unit, i.e. ten seconds once the clip is compiled) at `DEFAULT_FPS`, written through
+   `project.setDuration`, which is the clip's one length write and retimes the camera's coverage with it. A cell coordinate is a world
+   coordinate, so the demo content occupies the cells it names. The demo's opening shot is written here too, as the one key of the project's first take
+   and segment — `upsertKey` at time `0`, holding `OPENING_SHOT_POSITION` aimed at
+   `OPENING_SHOT_TARGET` and the model's `DEFAULT_FOV`: a camera that stands off the content and looks at it, because a project's own camera starts at
+   the identity transform, which in this Z-up world is a camera at the origin looking straight down its own `-Z`.
 2. **Viewport.** `viewportCamera` is app-owned viewport state built on the world's frame — `up` set to the z axis before `ViewportControls` is built,
    because `OrbitControls` snapshots `object.up` into its orbit axis in its constructor — with camera layers 1 and 2 enabled: the viewport draws the
    overlay, the gizmo, and the other decorations (layer 1) and the imported raw meshes (layer 2), while the raycaster tests layers 0 and 2 and the export
    camera — and the `Capture` that renders through it — tests layer 0 alone. `mirror.camera` is the output camera; the `Capture` opens at the initial export size and every export resizes
    it to the resolution the panel asked for. Everything else in this step is viewport-only decoration: on layer 1, holding no document data, never picked,
    never in an export frame, and never bound by the mixer. That is the `Overlay`, the `WorldGrid` (its `root` added to `mirror.scene`), the `CameraControl`
-   — the runtime-only carrier the edit gizmo aims the output camera with, which reports the authored camera rather than owning data and pivots at
-   `CAMERA_CONTROL_PIVOT`, its own origin, the camera position — and the `CameraPath`, the runtime-only drawing of the authored camera's trajectory, hidden
+   — the runtime-only carrier the edit gizmo aims the output camera with, which reports the output camera's pose and lens rather than owning data and pivots at
+   `CAMERA_CONTROL_PIVOT`, its own origin, the camera position — and the `CameraPath`, the runtime-only drawing of the active take's trajectory, hidden
    and unnamed and holding the points the app hands it. `DEFAULT_VIEW_OFFSET` aims the viewport once before that fit — from the front-right and above —
    because a camera looks along its own `-Z`, which is this world's downward axis, and `frameAll` preserves the direction it is handed: an unaimed
    viewport would open on a top-down view of the ground. The viewport is fitted once at boot.
@@ -45,16 +47,17 @@ function main(): void;
    dirty, and re-reads the readouts and the UI; the ids an operation wrote go straight to a mark-dirty plus a commit, so exactly those objects are rebuilt
    — which is what leaves neither half of a detach, whose two objects both changed, drawing stale geometry. The flags no module can own are the app's:
    `cameraControlSelected` (`false`; whether the gizmo drives the carrier instead of the active object), `gizmoMode` (`'translate'`; the one mode the
-   carrier and an object share), and `cameraPathVisible` (`false`, which `refreshCameraPath` clears whenever the track holds fewer than two keyframes).
+   carrier and an object share), and `cameraPathVisible` (`false`, which `refreshCameraPath` clears whenever the active take holds fewer than two keys).
    `playbackView` is the viewport state a run started from — the camera's pose, the orbit target, and the playhead — or `undefined` when no run has
    captured one; it is what lets a pause hand the frame over and a run's end undo the whole thing.
-4. **Animation.** `Playback` is built over the output camera — whose `fov` a track animates — and bound to every object's mirrored node; it names the bound
-   objects itself.
+4. **Animation.** `Playback` is built over the output camera — whose shot it resolves from the active take at the playhead — and bound to every object's mirrored
+   node; it names the bound objects itself.
 5. **UI.** `ModeBar` is a view of the session like the panels are, and the `VoxelizeDialog` is mounted into the same element as the panels; both, like
    them, receive callbacks and no state. They live in this file, and so does the file dialog, because `ui` never imports `app/`: the closure that seeds the
-   dialog, the handling of its outcome, and the file dialog itself are the app's. The `Camera` group's view is read from the app's flags and from
-   `project.camera.transform` and `project.camera.fov` — never from the carrier node, because what the fields show is what a keyframe would record — and
-   `pathAvailable` is whether the track holds the two keyframes a path needs to exist at all. The timeline bar's visibility is the app's `timelineVisible`,
+   dialog, the handling of its outcome, and the file dialog itself are the app's. The `Camera` group's view is read from the app's flags and from the shot
+   the playhead resolves — `currentShot`, never from the carrier node, because what the fields show is what a key would hold — together with the
+   project's takes and the active take's id; `pathAvailable` is whether the take holds the two keys a path
+   needs to exist at all. The timeline bar's visibility is the app's `timelineVisible`,
    `false` so the bar opens collapsed; `setTimelineVisible` is its only writer, and the panel is told the flag as soon as it exists, so flag and markup
    agree from the first frame — `index.html` carries `hidden` rather than leaving it to the module, because a bar laid out by the first paint and hidden
    only when the bundle runs would flash. There is no status line and no message area: the overlay holds the rail and the windows only.
@@ -104,22 +107,28 @@ function main(): void;
      the grid. The commit half is the one write, from the world matrix the gizmo reports and not from the node it was attached to; the rebuild that write
      triggers discards the preview and replaces the node, which is why the render loop compares `gizmoNodeNow()` against the attached node and re-attaches
      (see 7).
-   - Camera carrier — the four `Camera` group commands. Both toggles flip their flag and re-sync, so selecting the carrier takes the gizmo from the active
-     object and deselecting it gives the gizmo back from the session alone. `Camera -> View` authors the viewport's pose into both the document and the
-     output camera and selects the carrier, because aiming it is what the user came for. `View -> Camera` moves the viewport to the authored shot and
-     writes nothing, which is what makes it a safe way to look at what a render would frame. Only a command that changes what the `Camera` group shows
-     refreshes it: `View -> Camera` refreshes nothing.
-   - Camera path — `refreshCameraPath` is the one writer of the drawing and of `cameraPathVisible`: it clears the flag when the track holds fewer than two
-     keyframes, and hands the sampled trajectory and the keyframe positions to the drawing, which is what keeps the `Show camera path` box a view of both.
+   - Camera carrier — the `Camera` group's commands, which are of three kinds. The two toggles flip their flag and re-sync, so selecting the carrier takes
+     the gizmo from the active object and deselecting it gives the gizmo back from the session alone. `Camera -> View` authors the viewport's pose into the
+     shot and selects the carrier, because aiming it is what the user came for; `View -> Camera` moves the viewport to the shot the playhead resolves and
+     writes nothing, which is what makes it a safe way to look at what a render would frame. The rest reshape the camera and refuse rather than report a
+     refusal to the user: `applySetActiveTake`, `applyAddTake` (which copies the active take and switches to the copy, because the point of a take is to
+     edit a copy and go back by switching), `applyRemoveTake`, and `applyCutAtPlayhead` (splitting the segment the playhead is in). Their refusals are `Result` values, so they reach the console through `reportFailure`; the two whose model call
+     cannot refuse (`setActiveTake`, `removeTake`) simply act on `true`. Only a command that changes what the `Camera` group shows refreshes it:
+     `View -> Camera` refreshes nothing.
+   - Camera path — `refreshCameraPath` is the one writer of the drawing and of `cameraPathVisible`: it clears the flag when the active take holds fewer than two
+     keys, and hands the sampled trajectory and the key positions to the drawing, which is what keeps the `Show camera path` box a view of both.
      It runs on the timeline's `onEdited` (a keyframe edit is what changes the trajectory), from the toggle — which only writes the flag and calls it — and
-     once at boot. The path is a view of the authored camera track and writes nothing: no keyframe, no pose, no transform, no document data of its own.
-   - Authored-camera writes — the two write helpers end in the same two places, the document's `project.camera.transform` and the mirror's output camera,
-     because `SceneMirror.sync` never touches that camera and every export renders through it. A carrier drag commits through `applyCameraMatrix`: the
-     world matrix decomposed into the document transform, quaternion normalized, position and quaternion copied onto `mirror.camera`. The numeric grid
-     writes through `setCameraPose`, which refuses rather than reports — a non-finite component, or a zero-length quaternion that is not to be normalized
-     into a rotation, returns before the document is touched, so a refused field leaves the camera exactly as it was — and, past both checks, normalizes,
-     writes the position, routes the FOV through `setCameraFov` (which owns the clamp and the projection refresh), and copies the pose onto the mirror
-     camera. Both refresh the panel, so a refused field is re-seeded from what the camera then holds. Neither one moves the viewport: a shot is aimed from
+     once at boot, and again after every camera write. The path is a view of the active take and writes nothing: no key, no pose, no transform, no document
+     data of its own.
+   - Authored-camera writes — there is one write. `writeShot` refuses while a clip is running, resolves the take and the segment the playhead is in through
+     `shotTarget`, and calls `upsertKey` with `playback.time * 1000`, so a gesture stores a key at the playhead in the segment that owns it; a refusal comes
+     back as a `Result` and goes to `reportFailure`. Every camera gesture ends there — a carrier drag (`applyCameraMatrix`, which decomposes the reported
+     world matrix into a fresh position and quaternion, normalizes, and keeps the shot's lens because moving a camera does not change what it sees
+     through), the numeric grid (`setCameraPose`, which refuses a non-finite component or a zero-length quaternion *before* the write, so a refused field
+     leaves the shot exactly as it was), the lens field (`setCameraFov`, which clamps `[1, 179]` and keeps the shot's pose), and `Camera -> View`
+     (`captureViewAsCamera`, which takes the viewport camera's pose and keeps the shot's lens). `refreshShotViews` then does the reads at once: the playhead is
+     re-applied through `playback.setTime`, so the output camera takes the new state immediately, the path is redrawn, and the panel is re-read — a gesture is
+     visible as it lands rather than a frame later. No gesture moves the viewport: a shot is aimed from
      the third person, so a view that followed every commit — including one that changed nothing — would make that impossible. `View -> Camera` is the one
      explicit way to look through the shot, and the transport is the only other thing that moves the view on its own.
    - Raw meshes — `setSourceVisible` is the panel's one entry point for the override, and it writes the mirror's flag and nothing else: the mirror owns it,
@@ -136,19 +145,21 @@ function main(): void;
      and a little larger, so seeding from them would stretch the printed dimensions for content they do not cover. A scene of nothing but outlines has no
      outline-free bounds, so it falls back to `scene.bounds`, which is what framing uses either way, because every node is displayed.
    - Animate — `onEdited` rebuilds the mixer, and the path refresh rides the same callback; `onTransport` is `togglePlayback`, so the widget's toggle
-     reports the press and the app is what starts or pauses the run; `adoptViewAsCamera` is the app's own guard — it captures the viewport only while the
-     carrier is *not* selected, so a camera keyframe records the shot the carrier was aimed at and the view only when the view is what the author is
-     aiming; `onScrub` pauses and then seeks, the one place the widget's milliseconds become the clip's seconds — the scrub
+     reports the press and the app is what starts or pauses the run; `setDuration` is `applyDuration`; `onScrub` pauses and then seeks, the one place the
+     widget's milliseconds become the clip's seconds — the scrub
      bar, the exact-time field, and a keyframe row's `key` all seek through it.
+   - Duration — `applyDuration` is the one place the clip's length changes: it calls `project.setDuration`, which writes `timeline.durationMs` and retimes
+     the camera's coverage with it, and then re-reads everything that depends on the length — the rebuilt mixer at the same playhead, the shot the output
+     camera now holds, the drawn path, and the panel.
    - Transport — the transport is the app's, not the widget's, because a run of the clip changes the viewport too. `startPlayback` returns while a run is
      already going and captures `playbackView` before anything moves, cloning every value so nothing later writes through it. `pausePlayback` returns while
      nothing runs, pauses, and hands the view over to the editor camera at the pose the clip stopped at, so the frame can be judged and flown on from
      there. `finishPlayback`, the end of a non-looping run, clears `playbackView`, pauses, and, when there was a run, puts the playhead back and restores
      the saved view with its target, so the return is exact. `togglePlayback` is the only entry point — pause while running, start otherwise — and
      `controls.dispose()` drops the orbit registration, so no separate teardown call exists.
-   - FOV — `setCameraFov` is the panel's one entry point for the output camera's projection: it ignores non-finite input, clamps to `[1, 179]`, writes the
-     document's `fov`, and copies the clamped value onto `mirror.camera` with its projection refreshed, because assigning `fov` alone leaves the projection
-     stale — so the next export shows the authored value and a `fov` keyframe records it.
+   - Lens — `setCameraFov` is the panel's one entry point for the lens field: it ignores non-finite input, clamps to `[1, 179]`, and writes a key at the
+     playhead holding the shot's own pose and the clamped lens. There is no separate projection write: the state a lens is authored at *is* a key in a take,
+     so the field, a drag, and `Camera -> View` all end in the same `writeShot`.
    - Export — `exportMp4` refuses while a job is in flight (the app's one export slot), sizes the capture to the resolution the panel asked for, and runs
      the export job → `saveMp4`; a failure goes to `reportFailure`. The slot is released and the gizmo re-attached in a `finally`, so a run that fails or
      stalls cannot leave the button refusing to start another for the rest of the session. Resolution, frame rate, range, and mask mode are the panel's
@@ -162,7 +173,8 @@ function main(): void;
      started it; release the carrier and the path, both being views of the project being replaced; drop the raw-mesh layer, its records before any id can
      be reused, since a source is recorded under an object id and the mirror's own pass would otherwise re-parent the replaced import's meshes under a
      loaded object, and reset the override with it; reset the session *before* the objects, because its setters validate against the project and must not
-     see the load half-applied; write the truth; publish the two things no `sync()` writes, the scene settings and the output camera; mark every loaded id
+     see the load half-applied; write the truth; publish the one thing no `sync()` writes, the scene settings — `mirror.applySettings()`, with the loaded
+     shot reaching the output camera on the `playback.setTime(0)` below; mark every loaded id
      dirty and commit, because `sync()` keeps the node of an id it already has and a load normally reuses ids, so without the mark the replaced project's
      geometry would stay on screen; force the rebuild, so the rebinding sees the nodes the load just made; rebind the mixer explicitly, because the loop's
      own check only compares id sets, which reused ids satisfy, so the loop would never rebind on its own; put the playhead at zero; and refresh the views
@@ -180,7 +192,7 @@ function main(): void;
    to, because a rebuild replaced it; rebuilds the bindings when they were flagged; and updates navigation, which always flies the viewport camera and so
    can never touch the output camera. It renders through the output camera while a clip previews the shot and through the viewport camera otherwise. Just
    before the render it drives the carrier: hidden while a run previews the shot, otherwise reporting the output camera as it stands right now — the
-   authored pose, or the sampled one while a clip runs — with its colour following only the user's selection, and standing back while the carrier is
+   shot the playhead resolves, which `Playback` has just written — with its colour following only the user's selection, and standing back while the carrier is
    selected and the gizmo is busy, because a drag owns the pose until it commits. The path's marker size comes from the viewing distance, floored at the
    distance navigation orbits from — the orbit radius is the scene's own scale — because a viewport that sits *on* the carrier, which is exactly what
    `View -> Camera` produces, would otherwise shrink the rings to a dot; the rings need no rotation write, because a point sprite faces the drawing camera
@@ -215,7 +227,7 @@ function main(): void;
 - A project load is the app's own sequence rather than a new `Project`, and it is safe only because of what it resets: the raw-mesh
   records before any id can be reused, the session before the objects, a dirty mark for every loaded id (`sync()` keeps the node of an id it already
   has), an explicit `rebuildBindings()` (the loop's own `bindingsCurrent()` compares id sets, which reusing ids satisfies), and
-  `mirror.applySettings()`/`applyCamera()` for the two things no `sync()` publishes. `readJson` runs first, so a refused file leaves the editor as it
+  `mirror.applySettings()` for the one thing no `sync()` publishes, and the loaded shot reaches the output camera with `playback.setTime(0)`. `readJson` runs first, so a refused file leaves the editor as it
   was.
 - Importing and voxelizing are two steps, and the second one is the user's: a successful import ends with the model adopted, displayed as
   raw meshes, fitted, and listed, and with the settings dialog open — never with a job. Only `{ kind: 'run', cellsAcross }` starts one, through the one job body
@@ -241,15 +253,18 @@ function main(): void;
   `DEFAULT_VOXELS_ACROSS` — which is what makes the count the prompt asks for the model's length in voxels — and a confirm scales the same scene
   again, to the count the user answered with. Both go through `scaleImportedScene`, whose factor is absolute against the file's `authoredExtent`, so
   the second call replaces the first rather than compounding, and the fitted view, the raw meshes, and the payload are all in that one unit.
-- The render loop never reads or writes voxel data, and playback writes only mirror `Object3D` transforms and the camera `fov`.
-- Authored camera pose (`project.camera.transform`) is written by exactly four call sites and no others: the demo bootstrap in step 1, which places the
-  opening shot before any UI exists; `applyCameraMatrix`, on a carrier drag's commit;
-  `setCameraPose`, the numeric grid's whole-pose write; and `cameraToView`, through `captureViewAsCamera`. The bootstrap's write is what keeps the shot
-  from being the document's default identity pose, which in this Z-up world looks straight
-  down the camera's own `-Z`. Navigation never writes it: it flies the viewport camera, so the authored
-  camera is only ever moved by an explicit gesture on the carrier. And the authored pose never moves the view either: a commit that changed nothing
+- The render loop never reads or writes voxel data; playback writes only mirror `Object3D` transforms for the objects and resolves the active take onto the
+  output camera whenever it samples, so the shot is a function of the playhead and the takes.
+- The authored camera is written in exactly one place: `writeShot`, which stores a key for the take and segment the playhead is in. Its callers are
+  `applyCameraMatrix` (a carrier drag's commit), `setCameraPose` (the numeric grid's whole-pose write), `setCameraFov` (the lens field), and
+  `captureViewAsCamera` (which `cameraToView` calls, and which the camera group's `Camera -> View` command is) — and the demo bootstrap in step 1, which
+  writes the opening shot's key before any UI exists, and is what keeps the shot from being the model's default identity pose, which in this Z-up world
+  looks straight down the camera's own `-Z`. Nothing here writes `project.camera` directly and nothing writes a take's id or a segment's range: the model
+  owns those, and the app only names the take and segment it is editing. Navigation never writes the camera: it flies the viewport camera, so the authored
+  camera is only ever moved by an explicit gesture on the carrier. And the authored pose never moves the view either: a write that changed nothing
   would otherwise teleport the viewport into the shot, which is what makes third-person aiming impossible. The view is moved by `View -> Camera` and by
-  the transport's handoff and restore, and by nothing else. `project.camera.fov` is written only by `setCameraFov`, which `setCameraPose` routes its FOV through. Nothing else reads a mirror
+  the transport's handoff and restore, and by nothing else. A write while a clip runs is refused before anything is stored (`writeShot`'s own guard), so
+  the clip owns the shot for the length of a run; nothing else reads a mirror
   transform back into the document while the mixer is running.
 - A run of the clip is the app's transport and it is reversible: `togglePlayback` is the only entry point, `startPlayback` captures `playbackView` before
   anything moves, and the frame loop ends a non-looping run at its last frame through `finishPlayback` — so every run either pauses on the frame it
@@ -293,15 +308,16 @@ function main(): void;
   moves nothing on screen.
 - The carrier is a runtime-only handle on the output camera and never document data: its node is unnamed and on layer 1 with the rest of the
   decoration, so the raycaster cannot pick it, no export frame contains it, and the mixer's binding walk cannot reach it. It is
-  never serialized, never a keyframe target, and never a second camera: it draws `mirror.camera`'s pose and writes back into `project.camera`. The
+  never serialized, never a keyframe target, and never a second camera: it is handed `mirror.camera` itself — pose, projection kind, and lens — and a
+  gesture on it is committed by `writeShot` like every other camera write. The
   pose lives on the node and a fixed world-size scale on its helper, never both on one, because the gizmo derives its drag from the node's own matrix.
   A drag owns the pose while `controls.gizmoBusy()`, so the per-frame `setPose` stands back for it and the commit is the single write the gesture makes,
   and the carrier is drawn from the first frame, in one colour or the other, and hidden only while a run previews the shot. Its size is one world unit per helper unit, so it is a scene-sized
   object that no view can inflate; the gizmo's own handles, which `TransformControls` sizes by the distance to the drawing camera, still
   degenerate in a viewport sitting on the carrier: the remedy is to orbit away, which moves the viewport off the carrier and leaves the carrier where it was.
-- The camera path is a runtime-only view of the authored camera track and writes nothing: `refreshCameraPath` is its only writer, the drawing holds
-  no document data, and `cameraPathVisible` is the app's flag with the panel's `Show camera path` box as its view. Fewer than two camera position
-  keyframes is not a path, so the flag is cleared then and the box is disabled and unchecked; that one flag governs the drawing, and a run needs no rule of its own — the preview renders through the output camera, which enables layer 0 alone, so the drawing is simply not in the preview frames. The drawing is on layer 1 and unnamed, so it is never
+- The camera path is a runtime-only view of the active take and writes nothing: `refreshCameraPath` is its only writer, the drawing holds
+  no document data, and `cameraPathVisible` is the app's flag with the panel's `Show camera path` box as its view. Fewer than two camera
+  keys is not a path, so the flag is cleared then and the box is disabled and unchecked; that one flag governs the drawing, and a run needs no rule of its own — the preview renders through the output camera, which enables layer 0 alone, so the drawing is simply not in the preview frames. The drawing is on layer 1 and unnamed, so it is never
   picked, never in an export frame, and never bound by the mixer.
 - The pointer tool receives both live lookups it needs as closures — `getCamera()` for the render camera, `getGizmoBusy()` → `controls.gizmoBusy()` for
   the gizmo's claim — so neither is cached across frames. A left press therefore reaches `Picker.pick` whenever the gizmo is not dragging and no handle
@@ -317,13 +333,18 @@ dropping the file anew — and never by re-opening the prompt. That is the reque
 `runVoxelizeJob`
 treats the same way: it aborts the superseded job and returns. An aborted job's own `'cancelled'` result is reported like any
 other failure, because `jobController` is the only thing that knows the job was superseded.
-The carrier's writes refuse rather
-than report: `setCameraPose` returns before writing anything when any component is non-finite or the quaternion is zero-length, so a refused field never
-becomes a partial pose on the document or the mirror camera; the `panels.refresh()` that follows — or the next frame —
-re-seeds the fields from what the document then holds. `applyCameraMatrix` takes the matrix the gizmo derived from a real node transform, so it has
-nothing to refuse.
+The camera group's writes split the same two ways. `setCameraPose` and `setCameraFov` refuse rather than report: a component that is non-finite, or a
+quaternion that is zero-length and so not a rotation, returns before anything is written, so a refused field never
+becomes a partial key; the `panels.refresh()` that follows — or the next frame —
+re-seeds the fields from the shot the playhead then resolves. `applyCameraMatrix` takes the matrix the gizmo derived from a real node transform, so it has
+nothing to refuse. The commands that reshape the camera — `writeShot`'s own `upsertKey` and `applyCutAtPlayhead` — can be refused by the model, and those
+refusals are `Result` values that reach `reportFailure` and the console like any other.
 
 ## Dependencies
+- `../document/camera.js` — the camera model the app authors through: `activeTake` and `segmentAt` (the take and segment the playhead is in),
+  `resolveCameraAt` (the shot the panel and the carrier read), `upsertKey` (the one camera write), `addTake`, `removeTake`, `setActiveTake`, and
+  `splitSegment`, plus the `ResolvedCamera` type. The app never builds camera
+  records itself: the model mints the ids and keeps the ranges tiling.
 - `../document/project.js`, `../editor/{session,ops,pointer}.js` — `Project`, `EditorSession`, `EditResolution`, `applyVoxelizeResult`,
   `createGroup`, `deleteObject`, `renameObject`, `setObjectMaskColor`, `setObjectVisible`, `setObjectAlignToGrid`,
   `setObjectSubdivision`, `reparentObject`, `PointerTool`.
@@ -368,9 +389,10 @@ identity node transforms, so the placement half — every raw mesh carrying its 
 non-uniform scales must land with the object translation-only and every raw mesh exactly where the import put it — through the object's identity transform
 before the payload and the payload's `-origin` offset after it — with every voxel grid axis-aligned in world space, and `Show raw meshes` must bring the raw
 meshes back exactly on top of their voxels — before the fix those meshes landed rotated, sheared, and mis-scaled relative to them.
-Scenario A exercises the camera track end to end: import a GLB — one object, the whole file — confirm the dialog, aim the output camera (the numeric
-fields, or `Camera -> View` after flying the view), and `add` camera keyframes at two playhead times — the two keyframes must differ, the export must
-move the camera along them, and pressing play must leave the authored pose untouched while the clip runs. The two object properties the panel exposes go through their ops on the
+Scenario A exercises the camera end to end: import a GLB — one object, the whole file — confirm the dialog, aim the shot (a numeric field, a carrier
+drag, or `Camera -> View` after flying the view), and move the playhead to a second time and aim again, which is what writes the second key — the two
+states must differ, the export must move the camera along them, and pressing play must leave the authored keys untouched while the clip runs. The camera group's own commands are walked with it: `Copy take` must switch the fields to a copy the original's later edits do not reach, the take selector must switch back, `Delete take` must refuse the last one and be disabled there, `Cut here` must split the shot at the playhead with the later half
+holding its own state from that instant. The two object properties the panel exposes go through their ops on the
 same walk: renaming the active object must change the object list and the HUD, unticking `Visible` must hide its node in the viewport, and a blank
 name must come back as a reported failure with the object unchanged. The raw-mesh half of the walk: a click must select the imported object with no
 selection or overlay, hovering must change nothing at all
@@ -386,20 +408,18 @@ Two facts to check explicitly: the carrier is drawing the output camera rather t
 the carrier is still visible while the gizmo's handles have degenerated to a dot on it, and a middle-drag away restores grabbable handles without the
 carrier moving.
 
-The path is walked on the same run: with two camera keyframes in the track, ticking `Show camera path` in the `Camera` group must draw the
-white polyline through the sampled trajectory with one hollow ring per keyframe, following the camera as it is aimed and resizing as the viewport
-orbits, and unticking it must take the drawing away; with fewer than two camera keyframes the box must be disabled and unchecked and nothing must be
-drawn, and deleting a keyframe from a two-keyframe track must clear both again; an exported frame must contain no part of the drawing — it is on layer 1 and unreachable by a pick.
+The path is walked on the same run: with two camera keys in the active take, ticking `Show camera path` in the `Camera` group must draw the
+white polyline through the sampled trajectory with one hollow ring per key, following the camera as it is aimed and resizing as the viewport
+orbits, and unticking it must take the drawing away; with fewer than two camera keys the box must be disabled and unchecked and nothing must be
+drawn, and a fresh project — whose one shot holds one key — must leave both that way; a take whose segments differ across a cut must draw the jump, not a line across it; an exported frame must contain no part of the drawing — it is on layer 1 and unreachable by a pick.
 
 The transport is walked on the same run: pressing play must render the viewport through the output camera for the length of the run — the shot
 itself, which is what makes a camera animation visible — with the carrier hidden while it previews; pausing must stop the transport (the toggle reads `play`) and
 hand the editor camera the pose the clip stopped at, and letting a non-looping run reach its end must stop the transport, return the playhead to
 the run's start value, and put the view back where the run started from — with the target the run captured, so the return is exact rather than
 re-aimed. Nothing is locked: the viewport is the author's again the moment the run pauses or ends. Two orders are worth checking explicitly: the
-pause's handoff must leave `project.camera.transform` untouched, and a play pressed while a run is already going must change nothing — the captured
+pause's handoff must leave every camera key untouched, and a play pressed while a run is already going must change nothing — the captured
 view stays the one the run started from.
 
 ## Open questions
 - Dirty marking stays on the edit and import paths: rebuilding from project truth while the mixer's transforms are animated would clobber them.
-- The `FOV (deg)` field authors `mirror.camera.fov` directly, so a `fov` track that is running overwrites the typed value on the next mixer
-  sample while the document keeps it — the same ownership split the pose copy guards with `playback.playing`, but the projection has no such guard.

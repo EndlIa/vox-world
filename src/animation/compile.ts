@@ -3,7 +3,6 @@ import {
   InterpolateDiscrete,
   InterpolateLinear,
   InterpolateSmooth,
-  NumberKeyframeTrack,
   QuaternionKeyframeTrack,
   VectorKeyframeTrack,
 } from 'three';
@@ -12,7 +11,6 @@ import type { ObjectId, Project } from '../document/project.js';
 import type { Interpolation, Track, TrackChannel } from '../document/timeline.js';
 
 const CLIP_NAME = 'timeline';
-const CAMERA_BINDING_NAME = 'camera';
 
 /** Authoring interpolation to Three.js interpolant. Per track, so one clip may mix all three. */
 const INTERPOLANTS: Record<Interpolation, InterpolationModes> = {
@@ -33,8 +31,6 @@ export function channelBinding(channel: TrackChannel): { path: string; valueSize
       return { path: '.quaternion', valueSize: 4 };
     case 'scale':
       return { path: '.scale', valueSize: 3 };
-    case 'fov':
-      return { path: '.fov', valueSize: 1 };
     default: {
       const unknown: never = channel;
       throw new TypeError(`unknown track channel: ${String(unknown)}`);
@@ -54,8 +50,6 @@ function createTrack(
       return new VectorKeyframeTrack(name, times, values);
     case 'quaternion':
       return new QuaternionKeyframeTrack(name, times, values);
-    case 'fov':
-      return new NumberKeyframeTrack(name, times, values);
     default: {
       const unknown: never = channel;
       throw new TypeError(`unknown track channel: ${String(unknown)}`);
@@ -73,9 +67,6 @@ function bindingName(
   only: readonly ObjectId[] | undefined,
 ): string | undefined {
   const path = channelBinding(track.channel).path;
-  if (track.target.kind === 'camera') {
-    return only === undefined ? `${CAMERA_BINDING_NAME}${path}` : undefined;
-  }
   if (!project.objects.has(track.target.objectId)) return undefined;
   if (only !== undefined && !only.includes(track.target.objectId)) return undefined;
   return `${track.target.objectId}${path}`;
@@ -83,8 +74,9 @@ function bindingName(
 
 /**
  * Pure translation of the authoring timeline into one clip. Empty tracks and tracks whose object no
- * longer exists are skipped; `only` restricts the clip to the listed objects and drops the camera
- * track. Keyframe values are copied into fresh typed arrays.
+ * longer exists are skipped, and `only` restricts the clip to the listed objects. The camera is no track at all:
+ * `document/camera.ts` resolves it, so the mixer never interpolates a shot. Keyframe values are copied into fresh
+ * typed arrays.
  */
 export function buildClip(project: Project, only?: readonly ObjectId[]): AnimationClip {
   const tracks: KeyframeTrack[] = [];

@@ -1,6 +1,7 @@
 import { AnimationMixer, LoopOnce, LoopRepeat } from 'three';
 import type { AnimationAction, AnimationClip, Object3D, PerspectiveCamera } from 'three';
 import { buildClip } from './compile.js';
+import { resolveCameraAt } from '../document/camera.js';
 import type { ObjectId, Project } from '../document/project.js';
 
 const CAMERA_NAME = 'camera';
@@ -19,6 +20,8 @@ function sceneRootOf(object: Object3D): Object3D {
  */
 export class Playback {
   private readonly camera: PerspectiveCamera;
+  /** The project whose camera is resolved onto the output camera; set by the first `rebuild`. */
+  private project: Project | null = null;
   private mixer: AnimationMixer | null = null;
   private clip: AnimationClip | null = null;
   private action: AnimationAction | null = null;
@@ -27,14 +30,14 @@ export class Playback {
   /** Whether the transport is running; the public face of it is the `playing` accessor. */
   private running = false;
 
-  constructor(opts: { camera: PerspectiveCamera }) {
-    this.camera = opts.camera;
-  }
-
   /**
    * Points the mixer at the mirror's scene root and names the bound nodes after their `ObjectId`,
    * which is what makes the compiled track names resolve. Re-binding releases the old root.
    */
+  constructor(opts: { camera: PerspectiveCamera }) {
+    this.camera = opts.camera;
+  }
+
   bind(objects: Map<ObjectId, Object3D>): void {
     this.objects = objects;
     for (const [objectId, object] of objects) object.name = objectId;
@@ -57,6 +60,7 @@ export class Playback {
   /** Recompiles the clip and keeps the playhead, so an edit never jumps the timeline. */
   rebuild(project: Project): void {
     const time = this.time;
+    this.project = project;
     this.clip = buildClip(project);
     if (this.mixer === null) return; // the clip is retained; bind installs the action
     this.releaseAction();
@@ -67,8 +71,8 @@ export class Playback {
   /**
    * Clamps to `[0, duration]`, then applies exactly one mixer update of that time: the sampled
    * transforms depend only on `t` and the clip, never on call history, and a keyframe time
-   * reproduces its authored value exactly. The camera projection is refreshed here because a `.fov`
-   * track writes `camera.fov` without touching the matrix.
+   * reproduces its authored value exactly. The shot is resolved here too, from the camera model rather than from a
+   * track, so the frame the export loop asks for and the frame an author scrubs to are the same frame.
    */
   setTime(time: number): void {
     if (!Number.isFinite(time)) {
@@ -84,7 +88,7 @@ export class Playback {
       this.mixer.setTime(clamped);
       if (action !== null && wasPaused) action.paused = true;
     }
-    this.camera.updateProjectionMatrix();
+    this.applyCamera();
   }
 
   play(): void {
@@ -114,7 +118,7 @@ export class Playback {
       throw new RangeError(`advance requires a finite delta, received ${deltaSeconds}`);
     }
     if (this.mixer !== null) this.mixer.update(deltaSeconds);
-    this.camera.updateProjectionMatrix();
+    this.applyCamera();
   }
 
   /** The action's own playhead: `[0, duration)` while looping, clamped at the end otherwise. */
@@ -142,6 +146,22 @@ export class Playback {
 
   get duration(): number {
     return this.clip === null ? 0 : this.clip.duration;
+  }
+
+  /**
+   * Writes the active take's state at the playhead into the output camera: pose, clip planes, and the lens of a
+   * perspective segment.
+   */
+  private applyCamera(): void {
+    const state = this.project === null ? undefined : resolveCameraAt(this.project.camera, this.time * 1000);
+    if (state !== undefined) {
+      this.camera.position.copy(state.position);
+      this.camera.quaternion.copy(state.quaternion);
+      this.camera.near = state.near;
+      this.camera.far = state.far;
+      this.camera.fov = state.projection === 'perspective' ? state.lens : this.camera.fov;
+    }
+    this.camera.updateProjectionMatrix();
   }
 
   /** Releases the mixer; mirrored objects, the camera, and the project are left untouched. */

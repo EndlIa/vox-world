@@ -1,7 +1,14 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { CELL_SIZE } from '../voxels/uniform/grid.js';
 import type { HexColor, UniformGrid } from '../voxels/uniform/grid.js';
-import { adoptKeyframeIds, removeTracksFor, type Timeline, type TrackTarget } from './timeline.js';
+import {
+  adoptKeyframeIds,
+  removeTracksFor,
+  setDuration as setTimelineDuration,
+  type Timeline,
+  type TrackTarget,
+} from './timeline.js';
+import { adoptCameraIds, copyCamera, createCamera, retimeCamera, type Camera } from './camera.js';
 
 export type ObjectId = string;
 export type Transform = {
@@ -27,12 +34,6 @@ export type SceneObject = {
    */
   alignToGrid: boolean;
 };
-export type CameraSettings = {
-  fov: number;
-  near: number;
-  far: number;
-  transform: Transform;
-};
 export type ProjectSettings = { background: HexColor; ambientIntensity: number };
 /**
  * The minters, saved so a restore re-mints nothing: `nextId` is the counter `allocateId` reads and
@@ -46,7 +47,7 @@ export type ProjectCounters = { nextId: number; maskCursor: number };
  */
 export type ProjectData = {
   objects: SceneObject[];
-  camera: CameraSettings;
+  camera: Camera;
   settings: ProjectSettings;
   timeline: Timeline;
   counters: ProjectCounters;
@@ -66,9 +67,6 @@ const PALETTE: readonly HexColor[] = Object.freeze([
   0x46f0f0, 0xf032e6, 0xbcf60c, 0xfabebe, 0x008080, 0x9a6324,
 ]);
 
-const DEFAULT_FOV = 50;
-const DEFAULT_NEAR = 0.1;
-const DEFAULT_FAR = 2000;
 const DEFAULT_FPS = 30;
 /**
  * The scene background, and the one place it is defined. `index.html` mirrors it as `--scene`, so the
@@ -124,8 +122,7 @@ function copyTimeline(timeline: Timeline): Timeline {
     durationMs: timeline.durationMs,
     fps: timeline.fps,
     tracks: timeline.tracks.map((track) => {
-      const target: TrackTarget =
-        track.target.kind === 'camera' ? { kind: 'camera' } : { kind: 'object', objectId: track.target.objectId };
+      const target: TrackTarget = { kind: 'object', objectId: track.target.objectId };
       return {
         target,
         channel: track.channel,
@@ -147,12 +144,9 @@ function copyTimeline(timeline: Timeline): Timeline {
  */
 export class Project {
   readonly objects: Map<ObjectId, SceneObject> = new Map();
-  readonly camera: CameraSettings = {
-    fov: DEFAULT_FOV,
-    near: DEFAULT_NEAR,
-    far: DEFAULT_FAR,
-    transform: identityTransform(),
-  };
+  // A camera with one take and one shot, opening on the origin looking down its own `-Z`: a project is born with
+  // somewhere to author a camera, and the app's own boot decides what the opening shot is.
+  readonly camera: Camera = createCamera({ durationMs: 0, position: new Vector3(0, 0, 0), quaternion: new Quaternion() });
   readonly settings: ProjectSettings = { background: DEFAULT_BACKGROUND, ambientIntensity: 1 };
   readonly timeline: Timeline = { durationMs: 0, fps: DEFAULT_FPS, tracks: [] };
 
@@ -329,16 +323,12 @@ export class Project {
   }
 
   /**
-   * The placement a keyframe may store for a target. An object that aligns gets its own whole
-   * cells, exactly as a direct transform write does, so everything a track holds is on its lattice; every other
-   * target keeps the placement it was given.
-   *
-   * The camera is one of those: it is not a scene object, its placement is a viewpoint rather than voxel content,
-   * and a camera confined to whole cells could not frame anything. Nothing here constrains what the mixer
-   * interpolates between two returned placements — smooth motion between cells is the point of a track.
+   * The placement a keyframe may store for a target: an object that aligns gets its own whole cells, exactly as a
+   * direct transform write does, so everything a track holds is on its lattice. Nothing here constrains what the
+   * mixer interpolates between two returned placements — smooth motion between cells is the point of a track.
    */
   keyframePosition(target: TrackTarget, position: Vector3): Vector3 {
-    return target.kind === 'object' ? this.alignedPosition(target.objectId, position) : position.clone();
+    return this.alignedPosition(target.objectId, position);
   }
 
   /**
@@ -357,6 +347,16 @@ export class Project {
   }
 
   /** Palette walk: a plain cursor increment, so two fresh projects produce the same sequence. */
+  /**
+   * Writes the clip's length. The camera rides along: a take's segments tile the clip, so retiming the timeline has to
+   * retime the coverage with it, and this is the one place both happen. Every other duration write would leave a take
+   * that no longer answers for the clip's own end.
+   */
+  setDuration(durationMs: number): void {
+    setTimelineDuration(this.timeline, durationMs);
+    retimeCamera(this.camera, this.timeline.durationMs);
+  }
+
   nextMaskColor(): HexColor {
     // The cursor is reduced modulo the palette length, so the index is always in range.
     return PALETTE[this.maskCursor++ % PALETTE.length]!;
@@ -370,16 +370,7 @@ export class Project {
   snapshot(): ProjectData {
     return {
       objects: [...this.objects.values()].map(copySceneObject),
-      camera: {
-        fov: this.camera.fov,
-        near: this.camera.near,
-        far: this.camera.far,
-        transform: {
-          position: this.camera.transform.position.clone(),
-          quaternion: this.camera.transform.quaternion.clone(),
-          scale: this.camera.transform.scale.clone(),
-        },
-      },
+      camera: copyCamera(this.camera),
       settings: { background: this.settings.background, ambientIntensity: this.settings.ambientIntensity },
       timeline: copyTimeline(this.timeline),
       counters: { nextId: this.nextId, maskCursor: this.maskCursor },
@@ -431,12 +422,11 @@ export class Project {
     for (const object of data.objects) {
       this.objects.set(object.id, copySceneObject(object));
     }
-    this.camera.fov = data.camera.fov;
-    this.camera.near = data.camera.near;
-    this.camera.far = data.camera.far;
-    this.camera.transform.position.copy(data.camera.transform.position);
-    this.camera.transform.quaternion.copy(data.camera.transform.quaternion);
-    this.camera.transform.scale.copy(data.camera.transform.scale);
+    // The camera keeps its identity as well: its `takes` array is refilled with copies, so every holder of this
+    // project — the mirror, the editor, the panels — sees the loaded camera without re-reading it.
+    const camera = copyCamera(data.camera);
+    this.camera.activeTakeId = camera.activeTakeId;
+    this.camera.takes.splice(0, this.camera.takes.length, ...camera.takes);
     this.settings.background = data.settings.background;
     this.settings.ambientIntensity = data.settings.ambientIntensity;
     const timeline = copyTimeline(data.timeline);
@@ -448,6 +438,7 @@ export class Project {
     this.nextId = Math.max(data.counters.nextId, highestId + 1);
     this.maskCursor = data.counters.maskCursor;
     adoptKeyframeIds(this.timeline);
+    adoptCameraIds(this.camera);
   }
 
   private requireParent(parentId: ObjectId | null): void {

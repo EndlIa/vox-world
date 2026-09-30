@@ -3,7 +3,7 @@
 ## 1. What this repository is
 
 A greenfield TypeScript + Three.js 3D voxel animation editor. The user imports a GLB mesh scene,
-voxelizes it, edits spatial layout and shading, animates objects and the output camera, and exports
+voxelizes it, edits spatial layout and shading, animates objects and the camera, and exports
 a playable MP4 plus per-frame aligned scene data.
 
 Voxels are a **sparse uniform grid**: object-local integer cell coordinates with a per-object
@@ -31,7 +31,7 @@ resolution and no leaf-level editing.
    ground is the `xy` plane. This is the frame of the project this one exchanges data with, so no
    conversion is needed at that boundary. Cell coordinates, box extents, object transforms, and every
    size the UI reports are in that one unit, at the subdivision they belong to. The output camera and
-   the viewport share the convention, which is what lets one timeline and one export path cover
+   the viewport share the convention, which is what lets one authoring model and one export path cover
    everything.
 4. **Lightweight** — no speculative abstraction, no configurability that nothing sets, no wrapper
    where a plain module or a library call works.
@@ -83,7 +83,7 @@ graph BT
 | --- | --- | --- | --- |
 | 0 | `voxels/uniform` | Sparse uniform voxel grid, cell access and mutation, integer box region query, fill, clear, and extract. | `three` (any) |
 | 0 | `voxels/voxelize` | Surface voxelization of `BufferGeometry` into a uniform payload, including color sampling and per-primitive object separation. | `voxels/*`, `three` (any) |
-| 1 | `document` | Project truth: scene objects, identity, parent/child hierarchy, transforms, representation binding, timeline data, exported-camera settings, mask colors. | `voxels/*`, `three` (any) |
+| 1 | `document` | Project truth: scene objects, identity, parent/child hierarchy, transforms, representation binding, timeline data, the authored camera (takes of segments), mask colors. | `voxels/*`, `three` (any) |
 | 1 | `document/detach` | Detach: a uniform box region becomes a new scene object. | `voxels/*`, `three` (any) |
 | 1 | `animation` | Keyframe authoring data compiled to a Three.js `AnimationClip`; frame-exact sampling through `AnimationMixer`. | `document`, `three` (any) |
 | 2 | `three-runtime` | Scene and render state: GLB import into document objects, document-to-scene mirror, derived meshes, raycast picking, viewport controls, offscreen frame capture. | `voxels/*`, `document`, `three`, `@pmndrs/vanilla` (the grid's `Grid`, the outline's `Outlines`) |
@@ -143,7 +143,7 @@ The root configuration files are covered by `codemap/toolchain.md`.
 | Object transforms and names | Matrix world caches |
 | Uniform cells (keys and colors) | `InstancedMesh` instances and per-instance colors |
 | Timeline tracks and keyframes | `AnimationClip`, `AnimationMixer`, and the per-frame `Object3D` transforms they drive |
-| Output camera settings and its track | Viewport camera and controls state |
+| The authored camera (`Camera`: takes, segments, keys) | The output camera's resolved shot, viewport camera and controls state |
 | Object mask colors | Mask-pass material instances |
 
 Voxel and timeline data are plain records and typed arrays, not Three.js render objects: no project
@@ -218,8 +218,10 @@ SceneObject {
 
 ### Cameras and render state
 
-- Exactly two cameras exist at runtime. `SceneMirror.camera` is the **output** camera: derived from
-  `project.camera`, and the one an export and the camera's `fov` tracks use. The **viewport** camera is
+- Exactly two cameras exist at runtime. `SceneMirror.camera` is the **output** camera: posed by
+  `animation/playback.ts` from the take the project holds at the playhead, and the camera the
+  document holds — the active take resolved at the playhead — and the one every render, every export and the carrier
+  goes through. The **viewport** camera is
   app-owned runtime state, never project data: it is what navigation moves, what picking resolves
   against, and what `frameAll` fits. The viewport renders through the output camera only while a run
   previews the shot; nothing retargets navigation, and no navigation writes the authored camera. Both
@@ -306,12 +308,13 @@ deferred is deferred deliberately, not forgotten.
   cubes read as countable cells.
 - Subdivision: raise one object's own grid to a finer level from the Scene group, and have every
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
-- Timeline: a duration at authored precision and a frame rate, keyframes on object transforms and on the
-  output camera addressed by session id, step/linear/smooth interpolation, one Play/Pause toggle,
-  loop, and scrub. The bar starts collapsed and is summoned from the rail's `Animation` button, and
-  the output camera these keyframes record is aimed from third person through its carrier in the
-  `Camera` group, while the camera's authored trajectory is drawn back into the viewport as a white
-  polyline with one hollow ring per keyframe, shown from two keyframes up. A run previews the shot
+- Timeline: a duration at authored precision and a frame rate, keyframes on object transforms addressed by session id,
+  step/linear/smooth interpolation, one Play/Pause toggle,
+  loop, and scrub. The bar starts collapsed and is summoned from the rail's `Animation` button. The camera is not on
+  that bar: it is authored as takes of segments — each with its own keys, projection, and lens — from the `Camera`
+  group, where the shot is aimed from third person through its carrier, copied as a whole plan, cut at the playhead,
+  and given its projection and clip planes, while its trajectory is drawn back into the viewport as a white
+  polyline with one hollow ring per key, shown from two keys up. A run previews the shot
   through the output camera and a pause hands the frame back.
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range, with
   cancel; a failure reaches the console.

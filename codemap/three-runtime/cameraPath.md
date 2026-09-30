@@ -4,12 +4,12 @@ Ring: 2 · Layer: three-runtime · Depends on: `three`
 
 ## Responsibility
 Draws the authored camera's trajectory in the viewport: a white polyline through the sampled points and one hollow
-ring per authored keyframe, as one runtime-only root. It is strictly presentational, like the grid and the overlay:
+ring per authored camera key, as one runtime-only root. It is strictly presentational, like the grid and the overlay:
 it is handed points, holds no document reference, and knows nothing about the timeline. Its whole subtree — the root
 included, so a child added later cannot escape — is on layer 1, so `Picker` cannot hit it and no export frame
 contains it, and nothing in it is named, so the mixer's binding walk never reaches it. It is
-never serialized, never a keyframe target, and never a camera: it is the picture of the track
-`animation/trajectory.ts` hands it, and it shares the viewing distance and the hidden-with-the-carrier rule with
+never serialized, never a keyframe target, and never a camera: it is the picture of the path
+`animation/trajectory.ts` hands it, which that file samples from the active take, and it shares the viewing distance and the hidden-with-the-carrier rule with
 `three-runtime/cameraControl.ts`, the carrier it pairs with.
 
 Both halves are three's own primitives: a `Line` over a buffer it grows on demand, and one `Points` set whose material
@@ -72,7 +72,7 @@ class CameraPath {
 - The whole subtree is on layer 1 at every moment: the construction walk covers the root and both children, and nothing
   is ever moved off it, so the raycaster's layers and the export camera's cannot reach the drawing.
 - Nothing is named — the root, the line, and the point set carry no name — so the mixer's binding walk, which resolves
-  `<ObjectId>` nodes and `camera`, can never bind a path object.
+  the `<ObjectId>` names `Playback.bind` writes, can never bind a path object.
 - The line and the points use `depthTest: false` at `DECORATION_RENDER_ORDER`, so the path draws over the scene
   rather than being buried in it — the same decoration choice the grid, the overlay, and the carrier make.
 - Position and size are separate: `setScreenScale` writes the material and never a point, and `setMarkers` never sizes

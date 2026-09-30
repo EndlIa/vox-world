@@ -31,7 +31,7 @@ import {
   type TrackTarget,
 } from '../src/document/timeline.js';
 
-const CHANNELS: readonly TrackChannel[] = ['position', 'quaternion', 'scale', 'fov'];
+const CHANNELS: readonly TrackChannel[] = ['position', 'quaternion', 'scale'];
 
 /** Keyframe times in array order, in the authoring unit (milliseconds, at authored precision). */
 function times(track: Track | undefined): number[] {
@@ -53,7 +53,7 @@ function oneProject() {
   const car = project.createObject({ name: 'car', representation: 'empty' });
   const wheel = project.createObject({ name: 'wheel', parentId: car.id, representation: 'empty' });
   project.timeline.fps = 10;
-  project.timeline.durationMs = 2000;
+  project.setDuration(2000);
   return { project, car, wheel };
 }
 
@@ -61,11 +61,9 @@ function objectTarget(objectId: ObjectId): TrackTarget {
   return { kind: 'object', objectId };
 }
 
-const CAMERA: TrackTarget = { kind: 'camera' };
-
 /**
- * A mirror shaped like `SceneMirror`: one scene root, one node per project object, and the output
- * camera as a child of that root. `Playback.bind` names the nodes after their ids.
+ * A mixer rig shaped like `SceneMirror`: one scene root, one node per project object, and the output camera as a child
+ * of that root. `Playback.bind` names the nodes after their ids.
  */
 function mirrorFor(project: Project, objectId: ObjectId) {
   const root = new Object3D();
@@ -89,12 +87,7 @@ function mirrorFor(project: Project, objectId: ObjectId) {
 describe('track identity', () => {
   it('keys a distinct string per target kind, object id, and channel', () => {
     const { project, car, wheel } = oneProject();
-    const targets: TrackTarget[] = [
-      CAMERA,
-      objectTarget(car.id),
-      objectTarget(wheel.id),
-      objectTarget('obj-999'),
-    ];
+    const targets: TrackTarget[] = [objectTarget(car.id), objectTarget(wheel.id), objectTarget('obj-999')];
     const keys = new Set<string>();
     let count = 0;
     for (const target of targets) {
@@ -104,7 +97,7 @@ describe('track identity', () => {
       }
     }
     expect(keys.size).toBe(count);
-    expect(trackKey(CAMERA, 'position')).not.toBe(trackKey(objectTarget(car.id), 'position'));
+    expect(trackKey(objectTarget(wheel.id), 'position')).not.toBe(trackKey(objectTarget(car.id), 'position'));
     expect(trackKey(objectTarget(car.id), 'position')).not.toBe(
       trackKey(objectTarget(car.id), 'quaternion'),
     );
@@ -130,11 +123,11 @@ describe('track identity', () => {
 
   it('finds a track and returns undefined when the target has none', () => {
     const { project, car, wheel } = oneProject();
-    const track = ensureTrack(project.timeline, CAMERA, 'fov');
-    expect(findTrack(project.timeline, CAMERA, 'fov')).toBe(track);
-    expect(findTrack(project.timeline, CAMERA, 'position')).toBeUndefined();
-    expect(findTrack(project.timeline, objectTarget(car.id), 'fov')).toBeUndefined();
-    expect(findTrack(project.timeline, objectTarget(wheel.id), 'fov')).toBeUndefined();
+    const track = ensureTrack(project.timeline, objectTarget(car.id), 'scale');
+    expect(findTrack(project.timeline, objectTarget(car.id), 'scale')).toBe(track);
+    expect(findTrack(project.timeline, objectTarget(wheel.id), 'position')).toBeUndefined();
+    expect(findTrack(project.timeline, objectTarget(car.id), 'position')).toBeUndefined();
+    expect(findTrack(project.timeline, objectTarget(wheel.id), 'quaternion')).toBeUndefined();
   });
 });
 
@@ -187,10 +180,10 @@ describe('keyframes', () => {
       expect(short.detail.length).toBeGreaterThan(0);
     }
 
-    const long = addKeyframe(timeline, target, 'fov', 500, [1, 2, 3]);
+    const long = addKeyframe(timeline, target, 'scale', 500, [1, 2, 3, 4]);
     expect(long.ok).toBe(false);
     expect(findTrack(timeline, target, 'quaternion')).toBeUndefined();
-    expect(findTrack(timeline, target, 'fov')).toBeUndefined();
+    expect(findTrack(timeline, target, 'scale')).toBeUndefined();
     expect(values(findTrack(timeline, target, 'position'))).toEqual(before);
 
     // A time outside the clip is clamped rather than rejected; only a non-finite one is a programmer error.
@@ -224,7 +217,7 @@ describe('keyframes', () => {
 
     const snapshot = values(track);
     expect(moveKeyframe(timeline, target, 'position', 'keyframe-999', 1000)).toBe(false);
-    expect(moveKeyframe(timeline, CAMERA, 'fov', moved.keyframe.id, 1000)).toBe(false);
+    expect(moveKeyframe(timeline, objectTarget('obj-999'), 'position', moved.keyframe.id, 1000)).toBe(false);
     expect(values(track)).toEqual(snapshot);
 
     // Moving a keyframe onto the time it already has changes nothing but still counts as a move.
@@ -270,7 +263,7 @@ describe('keyframes', () => {
     const track = findTrack(timeline, target, 'position');
 
     expect(removeKeyframe(timeline, target, 'position', 'keyframe-999')).toBe(false);
-    expect(removeKeyframe(timeline, CAMERA, 'fov', first.keyframe.id)).toBe(false);
+    expect(removeKeyframe(timeline, objectTarget('obj-999'), 'position', first.keyframe.id)).toBe(false);
     expect(times(track)).toEqual([0, 500, 1500]);
 
     expect(removeKeyframe(timeline, target, 'position', first.keyframe.id)).toBe(true);
@@ -316,7 +309,7 @@ describe('keyframes', () => {
     expect(project.timeline.tracks).toHaveLength(1);
   });
 
-  it('sorts keyframes in place and drops every object track of a removed object while keeping the camera track', () => {
+  it('sorts keyframes in place and drops every object track of a removed object while keeping the others', () => {
     const ids = new Project();
     const firstId = ids.allocateId();
     const secondId = ids.allocateId();
@@ -353,15 +346,16 @@ describe('keyframes', () => {
     expect(times(timeline.tracks[0])).toEqual([0, 1000, 2000]);
     expect(times(timeline.tracks[1])).toEqual([500, 1500]);
 
-    const { project, car } = oneProject();
+    const { project, car, wheel } = oneProject();
     const carTarget = objectTarget(car.id);
+    const wheelTarget = objectTarget(wheel.id);
     addKeyframe(project.timeline, carTarget, 'quaternion', 0, [0, 0, 0, 1]);
-    addKeyframe(project.timeline, CAMERA, 'fov', 0, [50]);
+    addKeyframe(project.timeline, wheelTarget, 'scale', 0, [1, 1, 1]);
     const tracks = project.timeline.tracks;
     project.remove(car.id);
     expect(project.timeline.tracks).toBe(tracks);
     expect(findTrack(project.timeline, carTarget, 'quaternion')).toBeUndefined();
-    expect(findTrack(project.timeline, CAMERA, 'fov')?.keyframes).toHaveLength(1);
+    expect(findTrack(project.timeline, wheelTarget, 'scale')?.keyframes).toHaveLength(1);
 
     removeTracksFor(project.timeline, 'obj-999');
     expect(project.timeline.tracks).toHaveLength(1);
@@ -431,8 +425,8 @@ describe('clamped authoring times', () => {
     const timeline = project.timeline;
     expect(maxKeyframeTime(timeline)).toBe(0);
 
-    addKeyframe(timeline, CAMERA, 'fov', 1250, [70]);
-    addKeyframe(timeline, CAMERA, 'fov', 0, [50]);
+    addKeyframe(timeline, objectTarget(wheel.id), 'scale', 1250, [2, 2, 2]);
+    addKeyframe(timeline, objectTarget(wheel.id), 'scale', 0, [1, 1, 1]);
     addKeyframe(timeline, objectTarget(car.id), 'position', 800, [1, 0, 0]);
     expect(maxKeyframeTime(timeline)).toBe(1250);
 
@@ -454,27 +448,27 @@ describe('clip compilation', () => {
     addKeyframe(project.timeline, carTarget, 'position', 0, [0, 0, 0]);
     addKeyframe(project.timeline, carTarget, 'position', 1000, [1, 1, 1]);
     addKeyframe(project.timeline, wheelTarget, 'scale', 0, [1, 1, 1]);
-    addKeyframe(project.timeline, CAMERA, 'fov', 0, [50]);
-    addKeyframe(project.timeline, CAMERA, 'fov', 1000, [70]);
+    addKeyframe(project.timeline, wheelTarget, 'quaternion', 0, [0, 0, 0, 1]);
+    addKeyframe(project.timeline, wheelTarget, 'quaternion', 1000, [0, 0, 0, 1]);
     setInterpolation(project.timeline, carTarget, 'position', 'step');
     setInterpolation(project.timeline, wheelTarget, 'scale', 'smooth');
-    setInterpolation(project.timeline, CAMERA, 'fov', 'linear');
+    setInterpolation(project.timeline, wheelTarget, 'quaternion', 'linear');
 
     const clip = buildClip(project);
     const byName = new Map(clip.tracks.map((track) => [track.name, track]));
     expect(byName.get(`${car.id}.position`)?.getInterpolation()).toBe(InterpolateDiscrete);
     expect(byName.get(`${wheel.id}.scale`)?.getInterpolation()).toBe(InterpolateSmooth);
-    expect(byName.get('camera.fov')?.getInterpolation()).toBe(InterpolateLinear);
+    expect(byName.get(`${wheel.id}.quaternion`)?.getInterpolation()).toBe(InterpolateLinear);
     expect(byName.get(`${car.id}.position`)).toBeInstanceOf(VectorKeyframeTrack);
     expect(byName.get(`${wheel.id}.scale`)).toBeInstanceOf(VectorKeyframeTrack);
-    expect(byName.get('camera.fov')).toBeInstanceOf(NumberKeyframeTrack);
+    // The camera is no track: `document/camera.ts` resolves it, so a clip never carries one.
+    expect(byName.get('camera.fov')).toBeUndefined();
   });
 
   it('binds each channel to its property path and value size', () => {
     expect(channelBinding('position')).toEqual({ path: '.position', valueSize: 3 });
     expect(channelBinding('quaternion')).toEqual({ path: '.quaternion', valueSize: 4 });
     expect(channelBinding('scale')).toEqual({ path: '.scale', valueSize: 3 });
-    expect(channelBinding('fov')).toEqual({ path: '.fov', valueSize: 1 });
 
     const { project, car } = oneProject();
     const target = objectTarget(car.id);
@@ -488,13 +482,13 @@ describe('clip compilation', () => {
     expect(track?.values.length).toBe(2 * 4);
   });
 
-  it('names object tracks obj-<n>.<path> and the camera track camera.fov', () => {
+  it('names every track obj-<n>.<path>', () => {
     const { project, car, wheel } = oneProject();
     addKeyframe(project.timeline, objectTarget(car.id), 'position', 0, [0, 0, 0]);
     addKeyframe(project.timeline, objectTarget(wheel.id), 'quaternion', 0, [0, 0, 0, 1]);
-    addKeyframe(project.timeline, CAMERA, 'fov', 0, [50]);
+    addKeyframe(project.timeline, objectTarget(wheel.id), 'scale', 0, [1, 1, 1]);
     const names = buildClip(project).tracks.map((track) => track.name);
-    expect(names).toEqual([`${car.id}.position`, `${wheel.id}.quaternion`, 'camera.fov']);
+    expect(names).toEqual([`${car.id}.position`, `${wheel.id}.quaternion`, `${wheel.id}.scale`]);
     expect(car.id).toMatch(/^obj-\d+$/);
   });
 
@@ -505,7 +499,7 @@ describe('clip compilation', () => {
     expect(project.objects.has(wheel.id)).toBe(true);
     expect(buildClip(project).tracks).toHaveLength(1);
 
-    project.timeline.durationMs = 5000;
+    project.setDuration(5000);
     const stretched = buildClip(project);
     expect(stretched.duration).toBe(5);
     // The clip is seconds while the timeline is milliseconds, so 1000 ms reads back as one.
@@ -526,8 +520,6 @@ describe('playback sampling', () => {
     addKeyframe(project.timeline, target, 'position', 1500, [0.25, 0, 8]);
     addKeyframe(project.timeline, target, 'quaternion', 0, [0, 0, 0, 1]);
     addKeyframe(project.timeline, target, 'quaternion', 1000, [0.5, 0.5, 0.5, 0.5]);
-    addKeyframe(project.timeline, CAMERA, 'fov', 0, [40]);
-    addKeyframe(project.timeline, CAMERA, 'fov', 1000, [70]);
 
     const { playback, node, camera } = mirrorFor(project, car.id);
     expect(playback.duration).toBe(2);
@@ -549,13 +541,10 @@ describe('playback sampling', () => {
     expect(node.quaternion.toArray()).toEqual([0.5, 0.5, 0.5, 0.5]);
 
     playback.setTime(1);
-    expect(camera.fov).toBe(70);
-    const expectedProjection = new PerspectiveCamera(70, 1, 0.1, 2000);
-    expect(camera.projectionMatrix.elements).toEqual(expectedProjection.projectionMatrix.elements);
 
-    // The mixer animates the mirror only: the project's own transform is untouched.
+    // The mixer animates the mirror only: the project's own transform is untouched, and the shot is not the mixer's
+    // business at all — `document/camera.ts` resolves it.
     expect(project.get(car.id)?.transform.position.toArray()).toEqual([0, 0, 0]);
-    expect(project.camera.fov).toBe(50);
   });
 
   it('keeps the current time when the clip is rebuilt after an edit', () => {
@@ -563,13 +552,13 @@ describe('playback sampling', () => {
     const target = objectTarget(car.id);
     addKeyframe(project.timeline, target, 'position', 0, [0, 0, 0]);
     addKeyframe(project.timeline, target, 'position', 500, [0.5, 0, 0]);
-    const { playback, node } = mirrorFor(project, car.id);
+    const { playback, node, camera } = mirrorFor(project, car.id);
 
     playback.setTime(0.5);
     expect(playback.time).toBe(0.5);
 
     addKeyframe(project.timeline, target, 'position', 1500, [1.5, 0, 0]);
-    project.timeline.durationMs = 3000;
+    project.setDuration(3000);
     playback.rebuild(project);
     expect(playback.time).toBe(0.5);
     expect(playback.duration).toBe(3);
@@ -599,22 +588,25 @@ describe('adoptKeyframeIds', () => {
       fps: 30,
       tracks: [
         {
-          target: { kind: 'camera' },
-          channel: 'fov',
+          target: { kind: 'object', objectId: 'obj-1' },
+          channel: 'scale',
           interpolation: 'linear',
-          keyframes: [{ id: 'keyframe-900', timeMs: 0, value: [50] }],
+          keyframes: [{ id: 'keyframe-900', timeMs: 0, value: [1, 1, 1] }],
         },
       ],
     };
 
     adoptKeyframeIds(timeline);
-    const added = addKeyframe(timeline, { kind: 'camera' }, 'fov', 1000, [60]);
+    const added = addKeyframe(timeline, { kind: 'object', objectId: 'obj-1' }, 'scale', 1000, [2, 2, 2]);
 
     expect(added.ok).toBe(true);
     if (!added.ok) return;
     expect(added.keyframe.id).not.toBe('keyframe-900');
     expect(Number(/^keyframe-(\d+)$/.exec(added.keyframe.id)?.[1])).toBeGreaterThan(900);
     // The adopted id is left exactly as the file had it.
-    expect(ids(findTrack(timeline, { kind: 'camera' }, 'fov'))).toEqual(['keyframe-900', added.keyframe.id]);
+    expect(ids(findTrack(timeline, { kind: 'object', objectId: 'obj-1' }, 'scale'))).toEqual([
+      'keyframe-900',
+      added.keyframe.id,
+    ]);
   });
 });

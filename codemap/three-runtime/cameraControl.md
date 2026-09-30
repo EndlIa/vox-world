@@ -6,9 +6,9 @@ Ring: 2 · Layer: three-runtime · Depends on: `three`
 The output camera's stand-in in the viewport: three's own `CameraHelper` draws the frustum wireframe, derived from the
 vertical field of view and the viewport's aspect, and the triangle the library puts above its near plane is what marks
 which way is up. The drawing hangs off a runtime-only pose node, and that node is what the edit gizmo moves while the
-carrier is selected; `app/main.ts` gives it the output camera's pose and writes a drag or a field back into
-`project.camera`, so it is a handle on the authored camera and never a second camera: it renders nothing,
-is no mixer target, is never serialized, and holds no document state of its own.
+carrier is selected; `app/main.ts` gives it the output camera's pose and writes a drag or a field back into the shot
+being edited — a key at the playhead, on the active take — so it is a handle on the authored camera and never
+a second camera: it renders nothing, is no mixer target, is never serialized, and holds no document state of its own.
 
 `CameraHelper` derives its frame from a `Camera`'s projection, so the carrier owns a display-only `PerspectiveCamera`:
 it is never added to a scene, never rendered, never read for a matrix, and exists so the library can be handed the two
@@ -19,7 +19,7 @@ plane is a second frame behind it, which is the depth cue its frustum comes with
 
 Everything it draws is on layer 1 — the node itself included, so a child added later cannot escape the layer — which
 keeps it out of the `Picker`'s raycast (layers 0 and 2) and out of every export frame (layer 0 alone).
-The node carries no name, so the mixer's binding walk, which reaches `<ObjectId>`-named nodes and `camera`, can
+The node carries no name, so the mixer's binding walk, which reaches the `<ObjectId>`-named nodes and nothing else, can
 never bind it.
 
 ## Public interface

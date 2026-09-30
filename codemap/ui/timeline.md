@@ -3,8 +3,8 @@
 Ring: 4 · Layer: ui · Depends on: ./dom.js, ../document/timeline.js, ../document/project.js, ../animation/playback.js, ../editor/session.js
 
 ## Responsibility
-The timeline widget: one transport toggle, a scrub bar with its keyframe markers, the exact time, duration and frame-rate inputs, and a retime-in-place keyframe list with its add, seek, and delete actions against the active object and the output camera. It edits authoring data through the pure mutators of `document/timeline.ts` and never touches the mixer:
-seeking is delegated to `onScrub` and clip rebuilds to `onEdited`, and the transport press to `onTransport`, because a run of the clip changes the viewport too. It renders nothing about voxels. Every time it reads, displays, or hands over is the authoring unit, milliseconds, so the widget never converts — and the only place it rounds is the display and an entered seek, never a stored time: `onScrub` takes milliseconds and the app divides by 1000 for the clip, whose times are seconds. Its host is the bar along
+The timeline widget: one transport toggle, a scrub bar with its keyframe markers, the exact time, duration and frame-rate inputs, and a retime-in-place keyframe list with its add, seek, and delete actions against the active object. The camera is not a list of rows here: `document/camera.ts` owns it and the carrier authors it, so every target this widget resolves is an object. It edits authoring data through the pure mutators of `document/timeline.ts` and never touches the mixer:
+seeking is delegated to `onScrub`, clip rebuilds to `onEdited`, the clip's length to `setDuration`, and the transport press to `onTransport`, because a run of the clip changes the viewport too. It renders nothing about voxels. Every time it reads, displays, or hands over is the authoring unit, milliseconds, so the widget never converts — and the only place it rounds is the display and an entered seek, never a stored time: `onScrub` takes milliseconds and the app divides by 1000 for the clip, whose times are seconds. Its host is the bar along
 the bottom of the page, and that bar starts collapsed: whether it is on screen is the app's flag, and `setVisible` is the view of it, the way
 `setTime` is the view of the playhead.
 
@@ -14,7 +14,7 @@ type TimelineContext = {
   project: Project; playback: Playback; session: EditorSession;
   onScrub(timeMs: number): void;   // seeks to an absolute millisecond time; the app converts it to the clip's seconds
   onEdited(): void;
-  adoptViewAsCamera?(): void;   // run before a camera key is authored, so the app decides which pose the key records
+  setDuration(durationMs: number): void;   // writes the clip's length; the app retimes the camera's coverage with it
   onTransport(): void;       // starts or pauses the run; the app owns the transport because a run moves the viewport
 };
 class TimelinePanel {
@@ -34,8 +34,7 @@ class TimelinePanel {
    `interpolation` beside the `add` button; then the keyframe list — capped at `maxHeight = '100px'` with
    `overflowY = 'auto'`, so a bar of rows that grew with every keyframe cannot eat the viewport it sits under
    — and the panel's own message line; it finishes with `refresh()`.
-2. Target resolution: `{ kind: 'camera' }` when the switch is on the camera, otherwise `{ kind: 'object', objectId: session.activeObjectId }`;
-   the channel select is rebuilt for the target kind (`position` | `quaternion` | `scale`, plus `fov` for the camera) and the object option's
+2. Target resolution: `{ kind: 'object', objectId: session.activeObjectId }`, or `undefined` while nothing is active; every track this widget writes targets an object, so the target select holds the one option. The channel select is rebuilt from `OBJECT_CHANNELS` (`position` | `quaternion` | `scale`) and the object option's
    text names the active object, or says `(none)`.
 3. Keyframe rows and the scrub bar's markers both come from `findTrack(project.timeline, target, channel)?.keyframes ?? []`, rendered in
    array order, with a marker placed at `timeMs / durationMs` of the bar's width. Rows and markers are rebuilt on every `refresh()`, and each
@@ -48,21 +47,21 @@ class TimelinePanel {
    alone restores the field from what the clip holds.
 6. Delete calls `removeKeyframe` with the same `false` handling and otherwise `refresh()` plus `onEdited()`; the track it empties stays, so the
    list goes empty while the channel keeps its interpolation.
-7. Add reads the authoring value from project truth at the playhead — the target's `transform.position`/`quaternion`/`scale` components, or
-   `project.camera.transform` and `project.camera.fov` for the camera — builds a fresh `number[]` of the channel length (3, 4, or 1), and calls
+7. Add reads the authoring value from project truth at the playhead — the active object's `transform.position`/`quaternion`/`scale` components — builds a fresh `number[]` of the channel length (3, or 4 for `quaternion`), and calls
    `addKeyframe(project.timeline, target, channel, timeMs, value)` with `timeMs = playback.time * 1000` — unrounded, so the key lands at the time the
    playhead is actually at — because the playhead is the
    clip's seconds and the authoring time is milliseconds. The `position` channel is read through
-   `project.keyframePosition(target, transform.position)` — whole cells for an object that aligns, a copy of the placement for the camera and for an
-   unaligned object — so an aligned object's keyframes land on the lattice even while its live placement is a sampled one; that is
-   `document/project.ts`'s rule, which decides the camera case, so this file never branches on the target kind for it. On `ok` it calls `refresh()`
+   `project.keyframePosition(target, transform.position)` — whole cells for an object that aligns, a copy for an
+   unaligned one — so an aligned object's keyframes land on the lattice even while its live placement is a sampled one; that is
+   `document/project.ts`'s rule, and the camera has no case in it any more because the widget never asks about one. On `ok` it calls `refresh()`
    then `onEdited()`; on `bad-value-length` it writes that literal into the panel's own message line and changes nothing (defensive — the length is
    correct by construction). The button is enabled exactly while a target and a channel resolve, not while a track exists: a channel's first
    keyframe is what creates its track, so requiring one would make the first key impossible to add.
 8. The interpolation select calls `setInterpolation(project.timeline, target, channel, mode)` and calls `onEdited()` on `true`, so the rebuilt
    clip picks up the new mode; it is disabled while the channel has no track.
-9. The duration field calls `setDuration(project.timeline, durationMs)`, which clamps every keyframe onto the new length, then `refresh()` and
-   `onEdited()`; its own `min` is `maxKeyframeTime(timeline)`, the floor that keeps the field from offering a length that would cut the clip
+9. The duration field hands the value to `context.setDuration(durationMs)` and then `refresh()`es — it calls no mutator itself and no
+   `onEdited()`, because the app's write is the one place the clip's length and the camera's coverage move together, and it rebuilds what reads
+   the clip. Its own `min` is `maxKeyframeTime(timeline)`, the floor that keeps the field from offering a length that would cut the clip
    short, and a non-finite entry only refreshes. The fps field writes `project.timeline.fps` for a finite positive number and refreshes
    otherwise; `fps` is the frame grid the HUD readout and the export defaults use, and it no longer positions anything on the scrub bar.
 10. Transport: the toggle's click calls `context.onTransport()` and nothing else — the app owns the transport, because a run of the clip changes the
@@ -89,6 +88,8 @@ class TimelinePanel {
 - Its only project writes are through `document/timeline.ts` mutators plus `timeline.fps`; object, voxel, and camera data are untouched.
 - Every keyframe mutation that returned `true` is followed by exactly one `onEdited()` call, so the app rebuilds the clip once per user action;
   a refused one — add's `bad-value-length`, a `false` from move or remove, interpolation with no track — reports or refreshes and never calls it.
+  The duration is the one write that goes the other way: the widget hands it to `context.setDuration` and calls no `onEdited()`, because the app's
+  own write rebuilds the clip and moves the camera's coverage with it.
 - After any add, retime, or delete, keyframes are strictly ascending in `timeMs` with one keyframe per millisecond, a `value.length` matching the
   channel, and every time inside `[0, timeline.durationMs]`, because the model clamps what this file hands it.
 - The widget never converts units: every time it reads, displays, or hands over is milliseconds, and `onScrub`'s contract is milliseconds; the
@@ -108,17 +109,18 @@ class TimelinePanel {
 `reportError`. The boolean `false` from `moveKeyframe`, `removeKeyframe`, and `setInterpolation` is an ordinary outcome and produces a
 `refresh()` instead of a message: for a move it means either the millisecond belongs to another keyframe or the row went stale, and the rebuild
 puts the field back to what the clip holds. A duration that is not finite, and an fps that is not finite and positive, reflect from their own
-`refresh()` instead of reaching the model — `setDuration` would throw on the first, and a non-positive `fps` is no frame grid at all. Showing and
+`refresh()` instead of reaching the app — the model's `setDuration` would throw on the first, and a non-positive `fps` is no frame grid at all. Showing and
 hiding the bar has no failure path at all — `setVisible` writes the host's attribute and returns — and nothing here throws and no failure is
 silently dropped.
 
 ## Dependencies
 - `./dom.js` — `el`, `fmt` for construction and the time and keyframe-value readouts.
-- `../document/timeline.js` — the mutators (`addKeyframe`, `moveKeyframe`, `removeKeyframe`, `setDuration`, `setInterpolation`) and the lookups
+- `../document/timeline.js` — the mutators (`addKeyframe`, `moveKeyframe`, `removeKeyframe`, `setInterpolation`) and the lookups
   (`findTrack`, `maxKeyframeTime`), plus the `TrackTarget`, `TrackChannel`, `Interpolation` types; that file owns the data, the ordering rules,
-  and the clamp, so the panel owns none of that logic.
-- `../document/project.js` — `Project` for `timeline`, `camera`, object transforms, and `keyframePosition`, the one rule a `position` keyframe is
-  read through (ring 1).
+  and the clamp, so the panel owns none of that logic. `setDuration` is imported alongside them but the length no longer goes through it — the
+  app's `setDuration` is the writer.
+- `../document/project.js` — `Project` for `timeline`, object transforms, and `keyframePosition`, the one rule a `position` keyframe is
+  read through (ring 1). The camera is never read: no row here can address it.
 - `../animation/playback.js` — `Playback` for the loop setting, the playhead read, and the `playing` flag the toggle's label follows (ring 1); the
   transport itself is the app's, through `onTransport`.
 - `../editor/session.js` — `EditorSession` for the active object that keys the object tracks (ring 3).

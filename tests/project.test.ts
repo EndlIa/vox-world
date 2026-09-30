@@ -1,10 +1,9 @@
-import { Euler, Matrix4, Vector3 } from 'three';
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { Project, type ObjectId, type SceneObject } from '../src/document/project.js';
+import { activeTake, resolveCameraAt, upsertKey } from '../src/document/camera.js';
 import { addKeyframe, findTrack, type TrackTarget } from '../src/document/timeline.js';
 import { UniformGrid } from '../src/voxels/uniform/grid.js';
-
-const CAMERA: TrackTarget = { kind: 'camera' };
 
 function objectTarget(objectId: ObjectId): TrackTarget {
   return { kind: 'object', objectId };
@@ -194,13 +193,13 @@ describe('remove', () => {
     });
     addKeyframe(project.timeline, objectTarget(child.id), 'position', 0, [1, 0, 0]);
     addKeyframe(project.timeline, objectTarget(root.id), 'position', 0, [2, 0, 0]);
-    addKeyframe(project.timeline, CAMERA, 'fov', 0, [50]);
+    addKeyframe(project.timeline, objectTarget(root.id), 'scale', 0, [1, 1, 1]);
     expect(project.timeline.tracks).toHaveLength(3);
 
     project.remove(child.id);
     expect(findTrack(project.timeline, objectTarget(child.id), 'position')).toBeUndefined();
     expect(findTrack(project.timeline, objectTarget(root.id), 'position')).toBeDefined();
-    expect(findTrack(project.timeline, CAMERA, 'fov')?.keyframes).toHaveLength(1);
+    expect(findTrack(project.timeline, objectTarget(root.id), 'scale')?.keyframes).toHaveLength(1);
     expect(project.timeline.tracks).toHaveLength(2);
   });
 
@@ -384,7 +383,6 @@ describe('grid alignment', () => {
     expect(project.keyframePosition(objectTarget(object.id), fraction).toArray()).toEqual([2, -2, 1]);
     object.alignToGrid = false;
     expect(project.keyframePosition(objectTarget(object.id), fraction).toArray()).toEqual([2.4, -1.6, 0.6]);
-    expect(project.keyframePosition(CAMERA, fraction).toArray()).toEqual([2.4, -1.6, 0.6]);
   });
 
   it("rounds to the object's own cell, so a subdivided object snaps in its own steps", () => {
@@ -494,7 +492,7 @@ describe('snapshot / restore', () => {
 
     car.transform.position.set(9, 9, 9);
     car.name = 'renamed';
-    project.timeline.durationMs = 5000;
+    project.setDuration(5000);
 
     const copied = data.objects[0];
     expect(copied?.name).toBe('car');
@@ -516,17 +514,25 @@ describe('snapshot / restore', () => {
       payload: { kind: 'uniform', grid },
       position: new Vector3(2, 0, 0),
     });
-    source.camera.fov = 60;
-    source.camera.transform.position.set(1, 2, 3);
+    const sourceTake = activeTake(source.camera);
+    const sourceSegment = sourceTake?.segments[0];
+    if (sourceTake === undefined || sourceSegment === undefined) throw new Error('fixture: no take to pose');
+    upsertKey(source.camera, sourceTake.id, sourceSegment.id, {
+      timeMs: 0,
+      position: new Vector3(1, 2, 3),
+      quaternion: new Quaternion(),
+      lens: 60,
+    });
     source.settings.background = 0x101010;
     source.settings.ambientIntensity = 0.5;
-    source.timeline.durationMs = 4000;
+    source.setDuration(4000);
     source.timeline.fps = 24;
     addKeyframe(source.timeline, objectTarget(group.id), 'position', 1000, [1, 2, 3]);
 
     const target = new Project();
     target.createObject({ name: 'stale', representation: 'empty' });
     const camera = target.camera;
+    const takes = camera.takes;
     const settings = target.settings;
     const timeline = target.timeline;
     const tracks = timeline.tracks;
@@ -545,11 +551,13 @@ describe('snapshot / restore', () => {
     expect(target.objects.get(idsWritten[0] ?? '')?.representation).toBe('empty');
     // Instance identity: a load is invisible to the mirror, the mixer, and the panels, which hold these.
     expect(target.camera).toBe(camera);
+    expect(camera.takes).toBe(takes);
     expect(target.settings).toBe(settings);
     expect(target.timeline).toBe(timeline);
     expect(target.timeline.tracks).toBe(tracks);
-    expect(camera.fov).toBe(60);
-    expect(camera.transform.position.toArray()).toEqual([1, 2, 3]);
+    const restored = resolveCameraAt(camera, 0);
+    expect(restored?.lens).toBe(60);
+    expect(restored?.position.toArray()).toEqual([1, 2, 3]);
     expect(settings.background).toBe(0x101010);
     expect(settings.ambientIntensity).toBe(0.5);
     expect(timeline.durationMs).toBe(4000);

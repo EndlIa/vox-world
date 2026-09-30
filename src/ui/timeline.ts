@@ -1,6 +1,7 @@
 /**
  * The timeline widget: transport, scrub bar, keyframe markers, duration and frame-rate inputs, and the
- * keyframe list with its add, retime, seek, and delete actions against the active object and the output camera.
+ * keyframe list with its add, retime, seek, and delete actions against the active object. The camera is not a list of
+ * tracks here: `document/camera.ts` owns it, and the carrier is what authors it.
  * It edits authoring data through the mutators of `document/timeline.ts`, delegates seeking to `onScrub`, and
  * asks the app to rebuild the clip through `onEdited`; it never touches the mixer.
  *
@@ -36,11 +37,10 @@ export type TimelineContext = {
   onScrub(timeMs: number): void;
   onEdited(): void;
   /**
-   * Run before a camera key is authored, so the app can make the document hold the pose the key should record. The
-   * widget reads `project.camera.transform` either way; which pose that should be — the view being looked through, or a
-   * shot the app has already placed — is the app's decision, not the keyframe's.
+   * Writes the clip's length. The app owns the write because the length is not the timeline's alone: a take's
+   * segments tile the clip, so the camera has to be retimed with it.
    */
-  adoptViewAsCamera?(): void;
+  setDuration(durationMs: number): void;
   /**
    * Starts or pauses playback. The app owns the transport because a run of the clip changes the viewport too
    * so the widget reports the press and reads `playback.playing` back for its label.
@@ -49,7 +49,6 @@ export type TimelineContext = {
 };
 
 const OBJECT_CHANNELS: readonly TrackChannel[] = ['position', 'quaternion', 'scale'];
-const CAMERA_CHANNELS: readonly TrackChannel[] = ['position', 'quaternion', 'scale', 'fov'];
 const INTERPOLATIONS: readonly Interpolation[] = ['step', 'linear', 'smooth'];
 
 const MARKER_COLOR = 'var(--accent)';
@@ -128,10 +127,7 @@ export class TimelinePanel {
     this.fpsInput = el('input', { type: 'number', min: '1', step: '1', on: { change: () => this.writeFps() } });
 
     this.targetObjectOption = el('option', { value: 'object', text: 'active object' });
-    this.targetSelect = el('select', { on: { change: () => this.refresh() } }, [
-      this.targetObjectOption,
-      el('option', { value: 'camera', text: 'camera' }),
-    ]);
+    this.targetSelect = el('select', { on: { change: () => this.refresh() } }, [this.targetObjectOption]);
     this.channelSelect = el('select', { on: { change: () => this.refresh() } });
     this.interpolationSelect = el(
       'select',
@@ -304,20 +300,19 @@ export class TimelinePanel {
   }
 
   private readTarget(): TrackTarget | undefined {
-    if (this.targetSelect.value === 'camera') return { kind: 'camera' };
     const objectId = this.context.session.activeObjectId;
     return objectId === null ? undefined : { kind: 'object', objectId };
   }
 
-  /** Narrows the select's string back to a channel; `CAMERA_CHANNELS` is the superset of both cases. */
+  /** Narrows the select's string back to one of the object channels. */
   private readChannel(): TrackChannel | undefined {
     const value = this.channelSelect.value;
-    for (const channel of CAMERA_CHANNELS) if (channel === value) return channel;
+    for (const channel of OBJECT_CHANNELS) if (channel === value) return channel;
     return undefined;
   }
 
   private renderChannelSelect(target: TrackTarget | undefined): TrackChannel | undefined {
-    const channels = target !== undefined && target.kind === 'camera' ? CAMERA_CHANNELS : OBJECT_CHANNELS;
+    const channels = OBJECT_CHANNELS;
     const previous = this.channelSelect.value;
     this.channelSelect.replaceChildren(...channels.map((channel) => el('option', { value: channel, text: channel })));
     this.channelSelect.value = channels.some((channel) => channel === previous) ? previous : channels[0] ?? 'position';
@@ -325,14 +320,9 @@ export class TimelinePanel {
   }
 
   private authoringValue(target: TrackTarget, channel: TrackChannel): number[] | undefined {
-    if (channel === 'fov') {
-      return target.kind === 'camera' ? [this.context.project.camera.fov] : undefined;
-    }
-    // A camera key records what the app says it should: the hook runs first, so the app can put the pose the key is to
-    // hold into the document. An object key records the object, which the session already selected and can be seen moving.
-    if (target.kind === 'camera') this.context.adoptViewAsCamera?.();
-    const transform =
-      target.kind === 'camera' ? this.context.project.camera.transform : this.context.project.get(target.objectId)?.transform;
+    // A key records the object the session has selected, which can be seen moving; the camera is authored through the
+    // carrier, so no channel here reaches it.
+    const transform = this.context.project.get(target.objectId)?.transform;
     if (transform === undefined) return undefined;
     // An aligned object's keyframes land on the lattice even while its live placement is a
     // sampled one, which interpolation between two cells is free to produce.
@@ -410,9 +400,8 @@ export class TimelinePanel {
     }
     // The field's own `min` is the latest keyframe; the model clamps every keyframe as well, so a duration that
     // ever does come in short drags the clip onto it instead of losing the keyframes.
-    setDuration(this.context.project.timeline, durationMs);
+    this.context.setDuration(durationMs);
     this.refresh();
-    this.context.onEdited();
   }
 
   private writeFps(): void {

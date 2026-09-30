@@ -1,6 +1,7 @@
-import { Vector3 } from 'three';
+import { Quaternion, Vector3 } from 'three';
 import { describe, expect, it } from 'vitest';
 import { Project } from '../src/document/project.js';
+import { activeTake, resolveCameraAt, splitSegment, upsertKey } from '../src/document/camera.js';
 import { addKeyframe } from '../src/document/timeline.js';
 import {
   PROJECT_FORMAT,
@@ -60,11 +61,19 @@ function oneProject(): Project {
     payload: { kind: 'uniform', grid },
     position: new Vector3(2, 0, -1),
   });
-  project.camera.fov = 55;
-  project.timeline.durationMs = 2000;
+  const take = activeTake(project.camera);
+  const segment = take?.segments[0];
+  if (take === undefined || segment === undefined) throw new Error('fixture: no take to pose');
+  upsertKey(project.camera, take.id, segment.id, {
+    timeMs: 0,
+    position: new Vector3(0, 0, 0),
+    quaternion: new Quaternion(),
+    lens: 55,
+  });
+  project.setDuration(2000);
   project.timeline.fps = 25;
   addKeyframe(project.timeline, { kind: 'object', objectId: part.id }, 'position', 500, [1, 0, -1]);
-  addKeyframe(project.timeline, { kind: 'camera' }, 'fov', 1000, [70]);
+  addKeyframe(project.timeline, { kind: 'object', objectId: part.id }, 'scale', 1000, [1, 1, 1]);
   return project;
 }
 
@@ -274,7 +283,7 @@ describe('toJson / readJson', () => {
     // The counters a file carries are what keeps the next minted id clear of everything loaded.
     const minted = target.createObject({ name: 'after load', representation: 'empty' });
     expect(objectIds).not.toContain(minted.id);
-    const added = addKeyframe(target.timeline, { kind: 'camera' }, 'fov', 1500, [80]);
+    const added = addKeyframe(target.timeline, { kind: 'object', objectId: objectIds[1] ?? '' }, 'scale', 1500, [1, 1, 1]);
     expect(added.ok).toBe(true);
     if (!added.ok) return;
     expect(loadedKeyframes).not.toContain(added.keyframe.id);
@@ -294,14 +303,47 @@ describe('toJson / readJson', () => {
 
   it('reports bad-keyframe when two keys share a time', () => {
     const project = oneProject();
-    addKeyframe(project.timeline, { kind: 'camera' }, 'fov', 1001, [80]);
+    const partId = [...project.objects.keys()][1] ?? '';
+    addKeyframe(project.timeline, { kind: 'object', objectId: partId }, 'position', 700, [1, 0, -1]);
     const file = fileOf(project);
-    const fov = file.timeline.tracks.find((track) => track['channel'] === 'fov');
-    const keys = fov?.['keyframes'];
-    if (!Array.isArray(keys)) throw new Error('fixture: no fov keyframes');
+    const keys = keyframesOf(file);
     (keys[1] as Record<string, unknown>)['timeMs'] = (keys[0] as Record<string, unknown>)['timeMs'];
 
     expect(readJson(JSON.stringify(file))).toMatchObject({ ok: false, error: 'bad-keyframe' });
+  });
+
+  it('round-trips a camera of takes and segments, an exact cut included', () => {
+    const project = oneProject();
+    const take = activeTake(project.camera);
+    const segment = take?.segments[0];
+    if (take === undefined || segment === undefined) throw new Error('fixture: no take to pose');
+    upsertKey(project.camera, take.id, segment.id, {
+      timeMs: 500,
+      position: new Vector3(1, 1, 1),
+      quaternion: new Quaternion(),
+      lens: 40,
+    });
+    expect(splitSegment(project.camera, take.id, 500, project.timeline.durationMs).ok).toBe(true);
+    const later = project.camera.takes[0]?.segments[1];
+    if (later === undefined) throw new Error('fixture: no second segment');
+    // The two sides of the cut hold different states, which is the whole point of the shape.
+    upsertKey(project.camera, take.id, later.id, {
+      timeMs: 500,
+      position: new Vector3(0, 0, 9),
+      quaternion: new Quaternion(),
+      lens: 90,
+    });
+
+    const result = readJson(toJson(project));
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(result.detail);
+    const loaded = new Project();
+    loaded.restore(result.data);
+
+    expect(resolveCameraAt(loaded.camera, 499.9)?.position.x).toBeCloseTo(0.9998, 12);
+    expect(resolveCameraAt(loaded.camera, 500)?.position.toArray()).toEqual([0, 0, 9]);
+    expect(resolveCameraAt(loaded.camera, 500)?.lens).toBe(90);
+    expect(loaded.camera.takes[0]?.segments[1]?.enter).toBe('cut');
   });
 
   it('reports parse-failed', () => {

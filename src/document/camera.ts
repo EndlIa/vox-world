@@ -240,6 +240,25 @@ function resolveKey(keys: readonly CameraKey[], timeMs: number, target: { positi
 }
 
 /**
+ * One segment's own state at a time, ignoring every other segment: the primitive a cut needs, because the state a
+ * segment holds at its own end is not the state the clip holds there — the later segment owns that instant.
+ */
+export function resolveSegmentAt(segment: CameraSegment, timeMs: number, takeId: string): ResolvedCamera {
+  const state = { position: new Vector3(), quaternion: new Quaternion(), lens: segment.keys[0]?.lens ?? DEFAULT_FOV };
+  resolveKey(segment.keys, timeMs, state);
+  return {
+    takeId,
+    segmentId: segment.id,
+    position: state.position,
+    quaternion: state.quaternion,
+    projection: segment.projection,
+    lens: state.lens,
+    near: segment.near,
+    far: segment.far,
+  };
+}
+
+/**
  * The camera the active take holds at `timeMs`, or undefined when the camera has no take to answer with. Pure: every
  * call allocates its own result, so two readers of the same time can never fight over one pose.
  */
@@ -249,18 +268,7 @@ export function resolveCameraAt(camera: Camera, timeMs: number): ResolvedCamera 
   if (take === undefined) return undefined;
   const segment = segmentAt(take, timeMs);
   if (segment === undefined) return undefined;
-  const state = { position: new Vector3(), quaternion: new Quaternion(), lens: segment.keys[0]?.lens ?? DEFAULT_FOV };
-  resolveKey(segment.keys, timeMs, state);
-  return {
-    takeId: take.id,
-    segmentId: segment.id,
-    position: state.position,
-    quaternion: state.quaternion,
-    projection: segment.projection,
-    lens: state.lens,
-    near: segment.near,
-    far: segment.far,
-  };
+  return resolveSegmentAt(segment, timeMs, take.id);
 }
 
 export type CameraEditResult = { ok: true } | { ok: false; error: string; detail: string };

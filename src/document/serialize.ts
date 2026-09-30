@@ -14,8 +14,8 @@ import type { HexColor } from '../voxels/uniform/grid.js';
 import { channelValueSize, trackKey } from './timeline.js';
 import type { Keyframe, Timeline, TrackChannel, TrackTarget } from './timeline.js';
 import { isObjectId } from './project.js';
+import type { Camera, CameraKey, CameraSegment, CameraTake } from './camera.js';
 import type {
-  CameraSettings,
   ObjectId,
   Project,
   ProjectCounters,
@@ -305,17 +305,141 @@ function readTransform(value: unknown, where: string): Read<Transform> {
   return { position, quaternion, scale };
 }
 
-function readCamera(value: unknown): Read<CameraSettings> {
-  if (!isJsonObject(value)) return fail('bad-structure', 'camera: expected an object');
-  const fov = value['fov'];
+/**
+ * One segment: its range, how it takes over, its projection and clip planes, and its keys. A file is read on its own
+ * terms — a key inside the range and after the one before it, a positive lens, a usable clip-plane pair — because a
+ * load is not an edit and nothing here is clamped into shape.
+ */
+function readSegment(
+  value: unknown,
+  where: string,
+  segmentIds: Set<string>,
+  keyIds: Set<string>,
+): Read<CameraSegment> {
+  if (!isJsonObject(value)) return fail('bad-structure', `${where}: expected an object`);
+  const id = value['id'];
+  if (typeof id !== 'string' || id.length === 0 || segmentIds.has(id)) {
+    return fail('bad-structure', `${where}: segment id is not a fresh non-empty string`);
+  }
+  segmentIds.add(id);
+  const name = value['name'];
+  if (typeof name !== 'string') return fail('bad-structure', `${where}: name is not a string`);
+  const startMs = value['startMs'];
+  const endMs = value['endMs'];
+  // A shot of no length is what a project whose clip is still empty holds, so the range is allowed to be empty; what
+  // is refused is a range that runs backwards.
+  if (!isFiniteNumber(startMs) || !isFiniteNumber(endMs) || endMs < startMs) {
+    return fail('bad-structure', `${where}: ${String(startMs)}..${String(endMs)} is not a range`);
+  }
+  const enter = value['enter'];
+  if (enter !== 'start' && enter !== 'continuous' && enter !== 'cut') {
+    return fail('bad-structure', `${where}: enter ${String(enter)} is not start, continuous, or cut`);
+  }
+  const projection = value['projection'];
+  if (projection !== 'perspective' && projection !== 'orthographic') {
+    return fail('bad-structure', `${where}: projection ${String(projection)} is neither perspective nor orthographic`);
+  }
   const near = value['near'];
   const far = value['far'];
-  if (!isFiniteNumber(fov) || !isFiniteNumber(near) || !isFiniteNumber(far)) {
-    return fail('bad-structure', 'camera: fov, near, and far must be finite numbers');
+  if (!isFiniteNumber(near) || !isFiniteNumber(far) || near <= 0 || far <= near) {
+    return fail('bad-structure', `${where}: near ${String(near)} and far ${String(far)} are not a usable range`);
   }
-  const transform = readTransform(value['transform'], 'camera');
-  if (failed(transform)) return transform;
-  return { fov, near, far, transform };
+  const keysField = value['keys'];
+  if (!Array.isArray(keysField) || keysField.length === 0) {
+    return fail('bad-structure', `${where}: keys is not a non-empty array`);
+  }
+  const keys: CameraKey[] = [];
+  let previousTime = -Infinity;
+  for (const raw of keysField) {
+    if (!isJsonObject(raw)) return fail('bad-structure', `${where}: a key is not an object`);
+    const keyId = raw['id'];
+    if (typeof keyId !== 'string' || keyId.length === 0 || keyIds.has(keyId)) {
+      return fail('bad-structure', `${where}: key id is not a fresh non-empty string`);
+    }
+    keyIds.add(keyId);
+    const timeMs = raw['timeMs'];
+    if (!isFiniteNumber(timeMs) || timeMs < startMs || timeMs > endMs || timeMs <= previousTime) {
+      return fail(
+        'bad-structure',
+        `${where}: key ${keyId} is at ${String(timeMs)}, outside ${startMs}..${endMs} or not after the one before it`,
+      );
+    }
+    previousTime = timeMs;
+    const position = readVector3(raw['position']);
+    const quaternion = readQuaternion(raw['quaternion']);
+    if (position === undefined || quaternion === undefined) {
+      return fail('bad-structure', `${where}: key ${keyId} needs a finite position[3] and quaternion[4]`);
+    }
+    const lens = raw['lens'];
+    if (!isFiniteNumber(lens) || lens <= 0) {
+      return fail('bad-structure', `${where}: key ${keyId} lens ${String(lens)} is not positive`);
+    }
+    keys.push({ id: keyId, timeMs, position, quaternion, lens });
+  }
+  return { id, name, startMs, endMs, enter, projection, near, far, keys };
+}
+
+/**
+ * One take, and the tiling rule the whole shape rests on: its segments are stored sorted, and each has to start
+ * exactly where the one before it ends. A file that gapped or overlapped would make the resolution order, not the
+ * data, decide which shot is on screen, so it is refused rather than repaired.
+ */
+function readTake(
+  value: unknown,
+  where: string,
+  takeIds: Set<string>,
+  segmentIds: Set<string>,
+  keyIds: Set<string>,
+): Read<CameraTake> {
+  if (!isJsonObject(value)) return fail('bad-structure', `${where}: expected an object`);
+  const id = value['id'];
+  if (typeof id !== 'string' || id.length === 0 || takeIds.has(id)) {
+    return fail('bad-structure', `${where}: take id is not a fresh non-empty string`);
+  }
+  takeIds.add(id);
+  const name = value['name'];
+  if (typeof name !== 'string') return fail('bad-structure', `${where}: name is not a string`);
+  const segmentsField = value['segments'];
+  if (!Array.isArray(segmentsField) || segmentsField.length === 0) {
+    return fail('bad-structure', `${where}: segments is not a non-empty array`);
+  }
+  const segments: CameraSegment[] = [];
+  for (const raw of segmentsField) {
+    const segment = readSegment(raw, `${where}.segments[${segments.length}]`, segmentIds, keyIds);
+    if (failed(segment)) return segment;
+    segments.push(segment);
+  }
+  segments.sort((left, right) => left.startMs - right.startMs);
+  for (let index = 1; index < segments.length; index += 1) {
+    const previous = segments[index - 1];
+    const segment = segments[index];
+    if (previous !== undefined && segment !== undefined && segment.startMs !== previous.endMs) {
+      return fail('bad-structure', `${where}: ${segment.name} does not start where ${previous.name} ends`);
+    }
+  }
+  return { id, name, segments };
+}
+
+function readCamera(value: unknown): Read<Camera> {
+  if (!isJsonObject(value)) return fail('bad-structure', 'camera: expected an object');
+  const takesField = value['takes'];
+  if (!Array.isArray(takesField) || takesField.length === 0) {
+    return fail('bad-structure', 'camera: takes is not a non-empty array');
+  }
+  const takeIds = new Set<string>();
+  const segmentIds = new Set<string>();
+  const keyIds = new Set<string>();
+  const takes: CameraTake[] = [];
+  for (const raw of takesField) {
+    const take = readTake(raw, `camera.takes[${takes.length}]`, takeIds, segmentIds, keyIds);
+    if (failed(take)) return take;
+    takes.push(take);
+  }
+  const activeTakeId = value['activeTakeId'];
+  if (typeof activeTakeId !== 'string' || !takeIds.has(activeTakeId)) {
+    return fail('bad-structure', `camera: activeTakeId ${String(activeTakeId)} is not one of the takes`);
+  }
+  return { takes, activeTakeId };
 }
 
 function readSettings(value: unknown): Read<ProjectSettings> {
@@ -436,9 +560,8 @@ function readObjects(value: unknown): Read<ProjectData['objects']> {
 function readTarget(value: unknown, objectIds: ReadonlySet<ObjectId>, where: string): Read<TrackTarget> {
   if (!isJsonObject(value)) return fail('bad-keyframe', `${where}: target is not an object`);
   const kind = value['kind'];
-  if (kind === 'camera') return { kind: 'camera' };
   if (kind !== 'object') {
-    return fail('bad-keyframe', `${where}: target kind ${String(kind)} is neither camera nor object`);
+    return fail('bad-keyframe', `${where}: target kind ${String(kind)} is not an object`);
   }
   const objectId = value['objectId'];
   if (!isObjectId(objectId) || !objectIds.has(objectId)) {
@@ -449,7 +572,7 @@ function readTarget(value: unknown, objectIds: ReadonlySet<ObjectId>, where: str
 
 /**
  * One keyframe, validated against the channel it belongs to. A time outside the clip is refused rather than
- * clamped: a load is not an edit, and `clampTime`'s rounding is the authoring path's rule, not the reader's.
+ * clamped: a load is not an edit, and the authoring path's own clamping is the editor's rule, not the reader's.
  */
 function readKeyframe(
   value: unknown,
@@ -507,8 +630,8 @@ function readTimeline(value: unknown, objectIds: ReadonlySet<ObjectId>): Read<Ti
     const where = `tracks[${tracks.length}]`;
     if (!isJsonObject(entry)) return fail('bad-structure', `${where}: expected an object`);
     const channel = entry['channel'];
-    if (channel !== 'position' && channel !== 'quaternion' && channel !== 'scale' && channel !== 'fov') {
-      return fail('bad-keyframe', `${where}: channel ${String(channel)} is not one of the four`);
+    if (channel !== 'position' && channel !== 'quaternion' && channel !== 'scale') {
+      return fail('bad-keyframe', `${where}: channel ${String(channel)} is not one of the three`);
     }
     const interpolation = entry['interpolation'];
     if (interpolation !== 'step' && interpolation !== 'linear' && interpolation !== 'smooth') {
@@ -550,14 +673,28 @@ export function toJson(project: Project): string {
     counters: data.counters,
     settings: data.settings,
     camera: {
-      fov: data.camera.fov,
-      near: data.camera.near,
-      far: data.camera.far,
-      transform: {
-        position: data.camera.transform.position.toArray(),
-        quaternion: data.camera.transform.quaternion.toArray(),
-        scale: data.camera.transform.scale.toArray(),
-      },
+      activeTakeId: data.camera.activeTakeId,
+      takes: data.camera.takes.map((take) => ({
+        id: take.id,
+        name: take.name,
+        segments: take.segments.map((segment) => ({
+          id: segment.id,
+          name: segment.name,
+          startMs: segment.startMs,
+          endMs: segment.endMs,
+          enter: segment.enter,
+          projection: segment.projection,
+          near: segment.near,
+          far: segment.far,
+          keys: segment.keys.map((key) => ({
+            id: key.id,
+            timeMs: key.timeMs,
+            position: key.position.toArray(),
+            quaternion: key.quaternion.toArray(),
+            lens: key.lens,
+          })),
+        })),
+      })),
     },
     objects: data.objects.map((object) => ({
       id: object.id,

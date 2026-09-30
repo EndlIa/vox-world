@@ -103,7 +103,7 @@ export class CameraControl {
 
   /**
    * Adopts a camera pose and the projection to draw around it. `fovDegrees` is the vertical field of view, the
-   * number an authored `fov` keyframe holds, and `aspect` is the aspect of the viewport the drawing leads.
+   * number an authored key holds, and `aspect` is the aspect of the viewport the drawing leads.
    */
   setPose(position: THREE.Vector3, quaternion: THREE.Quaternion, fovDegrees: number, aspect: number): void {
     this.node.position.copy(position);

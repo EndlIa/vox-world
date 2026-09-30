@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { Vector3 } from 'three';
 import { Project } from '../src/document/project.js';
+import { DEFAULT_FAR, DEFAULT_FOV, DEFAULT_NEAR } from '../src/document/camera.js';
 import { SceneMirror } from '../src/three-runtime/scene.js';
 import { UniformGrid } from '../src/voxels/uniform/grid.js';
 
@@ -232,25 +233,24 @@ describe('project reload support', () => {
     expect(ambient.intensity).toBe(0.25);
   });
 
-  it('re-reads the authored camera into the output camera', () => {
+  it('builds the output camera on the camera model’s defaults, and never writes its pose in sync', () => {
     const project = new Project();
     const mirror = new SceneMirror(project);
 
-    project.camera.fov = 65;
-    project.camera.near = 0.5;
-    project.camera.far = 120;
-    project.camera.transform.position.set(3, 4, 5);
-    project.camera.transform.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 3);
-    project.camera.transform.scale.set(1, 1, 1);
-    mirror.applyCamera();
+    expect(mirror.camera.fov).toBe(DEFAULT_FOV);
+    expect(mirror.camera.near).toBe(DEFAULT_NEAR);
+    expect(mirror.camera.far).toBe(DEFAULT_FAR);
+    expect(mirror.camera.up.toArray()).toEqual([0, 0, 1]);
+    expect(mirror.camera.name).toBe('camera');
 
-    expect(mirror.camera.fov).toBe(65);
-    expect(mirror.camera.near).toBe(0.5);
-    expect(mirror.camera.far).toBe(120);
-    expect(mirror.camera.position.toArray()).toEqual([3, 4, 5]);
-    expect(mirror.camera.quaternion.toArray()).toEqual(project.camera.transform.quaternion.toArray());
-    // The projection is what an export renders through, so a matrix left on the old field of view would show.
-    const expected = new THREE.PerspectiveCamera(65, 1, 0.5, 120);
-    expect(mirror.camera.projectionMatrix.elements).toEqual(expected.projectionMatrix.elements);
+    // The shot is not the mirror's to write: `animation/playback.ts` resolves the take onto this camera, and a sync
+    // leaves whatever that put there alone.
+    const before = mirror.camera.position.toArray();
+    const key = project.camera.takes[0]?.segments[0]?.keys[0];
+    if (key === undefined) throw new Error('fixture: the project holds no key to move');
+    key.position.set(9, 9, 9);
+    mirror.sync();
+    expect(mirror.camera.position.toArray()).toEqual(before);
   });
+
 });
