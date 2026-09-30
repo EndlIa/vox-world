@@ -79,7 +79,7 @@ function mirrorFor(project: Project, objectId: ObjectId) {
   playback.rebuild(project);
   const node = nodes.get(objectId);
   if (node === undefined) throw new Error(`no mirror node for ${objectId}`);
-  return { playback, node };
+  return { playback, node, root };
 }
 
 describe('track identity', () => {
@@ -575,6 +575,32 @@ describe('playback sampling', () => {
     playback.stop();
     expect(playback.time).toBe(0);
     expect(node.position.toArray()).toEqual([0, 0, 0]);
+  });
+
+  it('holds a replacement node still until the mixer is bound to it', () => {
+    const { project, car } = oneProject();
+    const target = objectTarget(car.id);
+    addKeyframe(project.timeline, target, 'position', 0, [0, 0, 0]);
+    addKeyframe(project.timeline, target, 'position', 1000, [10, 0, 0]);
+    const { playback, node, root } = mirrorFor(project, car.id);
+
+    playback.setTime(0.5);
+    expect(node.position.x).toBeCloseTo(5);
+
+    // What a dirty rebuild does to a mirrored object: the entry is released and a new node takes the id. The binding
+    // resolved the name to the instance bound at action-install time, so it goes on writing into the node that is no
+    // longer in the scene — and the node on screen is never animated. `app/main.ts`'s rebinding is what prevents this.
+    const replacement = new Object3D();
+    root.add(replacement);
+    node.removeFromParent();
+    playback.setTime(1);
+    expect(node.position.x).toBeCloseTo(10);
+    expect(replacement.position.x).toBe(0);
+
+    // Binding the replacement is what makes it animate: the root is unchanged, and the action resolves the id again.
+    playback.bind(new Map([[car.id, replacement]]));
+    playback.setTime(1);
+    expect(replacement.position.x).toBeCloseTo(10);
   });
 });
 

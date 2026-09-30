@@ -121,7 +121,8 @@ function main(): void;
      world matrix the gesture asks for with the very rule the commit stores — preview and commit must match, or the release would step the object back onto
      the grid. The commit half is the one write, from the world matrix the gizmo reports and not from the node it was attached to; the rebuild that write
      triggers discards the preview and replaces the node, which is why the render loop compares `gizmoNodeNow()` against the attached node and re-attaches
-     (see 7).
+     — and the same replacement is why the mixer has to rebind: the clip's bindings were resolved against the node that just went away, so a commit that
+     left them alone would freeze the object at the document's transform (see 7).
    - Camera carrier — the `Camera` group's commands, which are of three kinds. The two toggles flip their flag and re-sync, so selecting the carrier takes
      the gizmo from the active object and deselecting it gives the gizmo back from the session alone. `Camera -> View` authors the viewport's pose into the
      shot and selects the carrier, because aiming it is what the user came for; `View -> Camera` moves the viewport to the shot the playhead resolves and
@@ -203,8 +204,8 @@ function main(): void;
      see the load half-applied; write the truth; publish the two things no `sync()` writes, the scene settings and the shot — `mirror.applySettings()`
      and `mirror.applyShot(0)`, which is what puts the loaded camera on the output camera without waiting for a frame; mark every loaded id
      dirty and commit, because `sync()` keeps the node of an id it already has and a load normally reuses ids, so without the mark the replaced project's
-     geometry would stay on screen; force the rebuild, so the rebinding sees the nodes the load just made; rebind the mixer explicitly, because the loop's
-     own check only compares id sets, which reused ids satisfy, so the loop would never rebind on its own; put the playhead at zero; and refresh the views
+     geometry would stay on screen; force the rebuild, so the rebinding sees the nodes the load just made; rebind the mixer explicitly, because a load
+     republishes every node at once and the frame loop's own check — which compares node identity, not membership — would only act on its next pass; put the playhead at zero; and refresh the views
      — the camera path, the readouts, the panels, and the timeline.
    - Drop — one drop target, two meanings: a dropped `.json` goes to `openProject`, anything else to `importFile`. It is decided here because this file is
      the only place that knows both.
@@ -216,7 +217,8 @@ function main(): void;
 7. **Render loop.** One `requestAnimationFrame` callback drives everything, once a frame: it advances the transport by the elapsed time, clamped, a paused
    action not advancing, so the transport flag never has to be mirrored here; ends a non-looping run at its last frame, which is where the transport stops
    and the view goes back; syncs the mirror's dirty objects; re-attaches the gizmo whenever the node it should be on is no longer the one it is attached
-   to, because a rebuild replaced it; rebuilds the bindings when they were flagged; and updates navigation, which always flies the viewport camera and so
+   to, because a rebuild replaced it; rebinds the mixer when a bound node was replaced (the check is the node identity the mirror holds, not the object
+   id, because `commitDirty()` flags the bindings on every commit and a rebuild keeps the id); and updates navigation, which always flies the viewport camera and so
    can never touch the output camera. It applies the shot to the output camera once per drawn frame — `mirror.applyShot(playback.time * 1000)` — unless the
    gizmo is busy, because a drag owns the pose until it commits, and the same call is what makes a scrub, a run, and a preview show the same camera. It renders through the output camera while a clip previews the shot and through the viewport camera otherwise. Just
    before the render it drives the carrier: hidden while a run previews the shot, otherwise handed the output camera as it stands right now — the
@@ -254,7 +256,8 @@ function main(): void;
   camera is never framed.
 - A project load is the app's own sequence rather than a new `Project`, and it is safe only because of what it resets: the raw-mesh
   records before any id can be reused, the session before the objects, a dirty mark for every loaded id (`sync()` keeps the node of an id it already
-  has), an explicit `rebuildBindings()` (the loop's own `bindingsCurrent()` compares id sets, which reusing ids satisfies), and
+  has), an explicit `rebuildBindings()` (a load republishes every node at once, and the loop's own `bindingsCurrent()` check — node identity — only
+  runs on its next pass), and
   `mirror.applySettings()`/`mirror.applyShot(0)` for the two things no `sync()` publishes. `readJson` runs first, so a refused file leaves the editor as it
   was.
 - Importing and voxelizing are two steps, and the second one is the user's: a successful import ends with the model adopted, displayed as
@@ -326,6 +329,11 @@ function main(): void;
   widget's milliseconds by 1000 on the way to `playback.setTime`, and the render loop multiplies `playback.time` by 1000 on the way into
   `setTime`. Every other time the app touches is already on its own side of that boundary — the export range and the HUD's frame count are the
   clip's seconds, and `project.timeline.durationMs` and every keyframe are the document's milliseconds.
+- The mixer is bound to the nodes the mirror holds, by identity, and every commit re-checks that binding: `commitDirty()` — the one funnel every dirty
+  mark passes through — flags the bindings, and the loop rebinds when any bound id's node is no longer the one the mirror holds. A rebuild replaces a node
+  while its id stays, so an id-set comparison is not enough: with one, an object that an edit rebuilt (a gizmo drag's commit, a paint, a subdivision, an
+  undo, an import) would stop animating until something else recompiled the clip, freezing it at the document's transform instead of the clip's. A rebind
+  re-samples the playhead through `playback.setTime`, so the rebuilt node draws the clip's pose in the same frame, never the document's.
 - The gizmo is attached to exactly one node at a time: the carrier's node while `cameraControlSelected` is set — whatever the session mode, so a selected
   carrier keeps the handles even in `edit` mode — and otherwise the active object's
   mirrored node while the session is in `object` mode, so the carrier and an object can never both carry handles. It pivots at the
@@ -399,6 +407,11 @@ None of its own: it is the smoke target of the slice, verified by `npm run dev` 
 A fresh boot is the first step of that walk: the demo cube must arrive as the active object — the object list and the Scene group's fields naming it,
 the timeline's target reading `active object: Demo cube` with `add` enabled, the HUD's resolution row showing `uniform 4×4×4`, and the gizmo and its
 outline on the cube — so a keyframe can be added without a click, and creating a primitive must move that selection to the new object.
+The object animation has to survive an edit, which is the walk the rebinding fix came from: with the cube holding two distinct `position` keys — `add` at
+one playhead, the object moved with the gizmo at another, `add` again — a run must move it; then, with the playhead back at the first key, a drag on the
+gizmo must leave that run moving, as must a payload edit (a subdivision change), an undo, and a load. Before the fix the drag's own commit froze the
+object at the pose the drag wrote: the rebuild replaced the node the clip was bound to, and nothing rebound it, so the frames after the gesture were
+identical until a timeline edit recompiled the clip — which is also why re-aiming and pressing `add` appeared to repair it.
 Saving and loading is part of that walk: rename an object, press `Save project…`, reload the page, drop the downloaded `.json` back onto
 the viewport, and the object with its cells, mask color, and placement plus the timeline (duration, fps, and any keyframe rows) must come back, with the
 demo object gone, the panel showing one row, and nothing on the console.

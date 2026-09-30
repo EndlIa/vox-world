@@ -278,7 +278,8 @@ export function main(): void {
   const playback = new Playback();
 
   const dirtyIds = new Set<ObjectId>();
-  let boundIds: ReadonlySet<ObjectId> = new Set<ObjectId>();
+  /** The nodes the mixer was last bound to, by object id: a rebuilt node makes this stale, an id set alone cannot. */
+  let boundNodes: ReadonlyMap<ObjectId, Object3D> = new Map<ObjectId, Object3D>();
   let bindingsDirty = true;
   let resolutionCache: EditResolution | null = null;
   /** The mirror node the gizmo is attached to, so a rebuilt replacement is noticed (see `syncGizmo`). */
@@ -498,7 +499,6 @@ export function main(): void {
     lastImport = { scene, objectId: adopted.objectId, meshes };
     attachSourceMeshes(scene, adopted.objectId, meshes);
     dirtyIds.add(adopted.objectId);
-    bindingsDirty = true;
     // The object has to exist and its bounds have to be measurable before the settings can be asked in
     // context, so the view is fitted here, on the raw meshes: `frameAll` syncs, creates the node,
     // and measures layers 0 and 2. Nothing has voxelized it yet, so it is still `'empty'`.
@@ -570,7 +570,6 @@ export function main(): void {
     }),
   );
     for (const id of applied.objectIds) dirtyIds.add(id);
-    bindingsDirty = true;
     commitDirty();
     mirror.frameAll(viewportCamera);
   }
@@ -637,13 +636,12 @@ export function main(): void {
     // 6. Every loaded object is rebuilt. `sync()` keeps the node of an id it already has, and a load normally
     //    reuses ids, so without a dirty mark the replaced project's geometry would stay on screen.
     for (const id of project.objects.keys()) dirtyIds.add(id);
-    bindingsDirty = true;
     commitDirty();
     // 7. `frameAll` syncs, so the rebuild happens here rather than on the next frame: the rebinding below has
     //    to see the nodes the load just made.
     mirror.frameAll(viewportCamera);
-    // 8. The mixer is still bound to the nodes step 6 released, and `bindingsCurrent()` only compares id sets —
-    //    which a load that reuses ids satisfies — so the frame loop would never rebind on its own.
+    // 8. The mixer is still bound to the nodes step 6 released, and the frame loop's own check — node identity — would
+    //    only notice on its next pass; a load publishes the rebinding here, before anything is drawn.
     rebuildBindings();
     playback.setTime(0);
     mirror.applyShot(0);
@@ -1067,7 +1065,6 @@ export function main(): void {
       session.setActiveObject(result.objectId);
       dirtyIds.add(result.objectId);
     }
-    bindingsDirty = true;
     commitDirty();
   }
 
@@ -1079,7 +1076,6 @@ export function main(): void {
     }
     session.setActiveObject(result.objectId);
     dirtyIds.add(result.objectId);
-    bindingsDirty = true;
     commitDirty();
   }
 
@@ -1092,7 +1088,6 @@ export function main(): void {
     }
     dirtyIds.delete(objectId);
     if (session.activeObjectId === objectId) session.setActiveObject(null);
-    bindingsDirty = true;
     commitDirty();
   }
 
@@ -1193,7 +1188,6 @@ export function main(): void {
       if (project.get(id) === undefined) dirtyIds.delete(id);
       else dirtyIds.add(id);
     }
-    bindingsDirty = true;
     const active = session.activeObjectId;
     if (active !== null && project.get(active) === undefined) session.setActiveObject(null);
     const selection = session.selection;
@@ -1219,6 +1213,10 @@ export function main(): void {
   function commitDirty(): void {
     for (const id of dirtyIds) if (project.get(id) !== undefined) mirror.markDirty(id);
     dirtyIds.clear();
+    // The commit is what replaces the marked objects' nodes on the next `sync()`, so the mixer's binding may be about
+    // to go stale — and this is the one funnel every dirty mark passes through, which is why the flag is written here
+    // rather than beside the `dirtyIds.add` of each caller.
+    bindingsDirty = true;
     refreshReadouts();
     panels.refresh();
     timelinePanel.refresh();
@@ -1242,7 +1240,6 @@ export function main(): void {
   /** The objects an operation rewrote: they are the ones whose derived geometry is rebuilt. */
   function projectChanged(ids: readonly ObjectId[]): void {
     for (const id of ids) dirtyIds.add(id);
-    bindingsDirty = true;
     commitDirty();
   }
 
@@ -1296,7 +1293,7 @@ export function main(): void {
       const node = mirror.objectOf(id);
       if (node !== undefined) bound.set(id, node);
     }
-    boundIds = new Set(bound.keys());
+    boundNodes = bound;
     bindingsDirty = false;
     // `Playback.bind` resolves its mixer root from the first bound node, so an empty scene keeps
     // the current binding instead of clearing it.
@@ -1307,9 +1304,18 @@ export function main(): void {
     playback.setTime(time);
   }
 
+  /**
+   * Whether the mixer is still bound to the nodes the mirror holds. Identity, not membership: a rebuild replaces an
+   * object's node while its id stays, so comparing id sets would leave the mixer writing into a node that is no longer
+   * in the scene — the object would freeze at whatever pose that dead node held until something else recompiled the
+   * clip. `Playback.bind` and the action it installs resolve their bindings against the root by name, which is why
+   * rebinding is what makes the replaced node animate again.
+   */
   function bindingsCurrent(): boolean {
-    if (boundIds.size !== project.objects.size) return false;
-    for (const id of project.objects.keys()) if (!boundIds.has(id)) return false;
+    if (boundNodes.size !== project.objects.size) return false;
+    for (const id of project.objects.keys()) {
+      if (boundNodes.get(id) !== mirror.objectOf(id)) return false;
+    }
     return true;
   }
 
@@ -1445,6 +1451,9 @@ export function main(): void {
     if (gizmoNode !== gizmoNodeNow()) syncGizmo();
     if (bindingsDirty) {
       bindingsDirty = false;
+      // The same replacement releases the node the mixer is bound to, and `bindingsCurrent()` compares node identity —
+      // so a commit that rebuilt anything rebinds here, and `rebuildBindings` re-samples the playhead, which is why the
+      // object never draws a frame at the document's own transform instead of the clip's.
       if (!bindingsCurrent()) rebuildBindings();
     }
     controls.update();
