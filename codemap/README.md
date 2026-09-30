@@ -298,7 +298,9 @@ deferred is deferred deliberately, not forgotten.
   object, fit the view, then a modal dialog with the one setting — how long the model is in voxels;
   confirm runs it with cancel and a budget guard, and cancel leaves the raw model visible.
 - Toggle the raw mesh against the voxel result; assign one mask color per object.
-- Select and edit voxel objects: create, name, delete, hide, transform, reparent. In `Object` mode the
+- Select and edit voxel objects: create, name, delete, hide, transform, reparent. The boot's demo cube arrives already
+  active — gizmo, fields, and a keyable object track, with no first click — and creating a shape moves the selection to
+  it. In `Object` mode the
   object the gizmo is on is wrapped in a yellow outline (`@pmndrs/vanilla`'s `Outlines` over that
   object's own instances), which comes and goes with the gizmo and is drawn in a pass of its own over
   the finished frame, so the object alone cuts the rim: it is never picked, never exported, and never

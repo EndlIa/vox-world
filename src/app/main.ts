@@ -203,7 +203,9 @@ export function main(): void {
   const CREATE_TERRAIN_SEED = 1;
   project.setDuration(DEFAULT_DURATION_MS);
   project.timeline.fps = DEFAULT_FPS;
-  project.createVoxelObject({
+  // The boot content. It is created before the session exists, so the session has to be told about it once it does
+  // (step 6): a boot with no active object has no gizmo, no editable field, and no object track to key.
+  const demoCube = project.createVoxelObject({
     name: 'Demo cube',
     maskColor: project.nextMaskColor(),
     payload: { kind: 'uniform', grid: buildDemoGrid() },
@@ -1378,6 +1380,12 @@ export function main(): void {
   });
 
   const unsubscribeSession = session.subscribe(sessionChanged);
+  // The boot content starts active. It is created in step 1, before the session could name it, so without this a fresh
+  // boot has no active object at all: nothing to edit, no gizmo, no fields, and no object track the timeline's `add`
+  // could write — while the object list still shows the cube, which is what makes the omission look like a bug rather
+  // than a state. Selecting it here rather than at creation puts the boot through the same session change every later
+  // selection goes through, so the readouts, the gizmo, the panels and the bar are all told in one place.
+  session.setActiveObject(demoCube.id);
   const detachDrop = wireDropTarget(viewport, ['.glb', '.json'], (file) => {
     // One drop target, two meanings; the composition root is the only place that knows which is which.
     if (file.name.toLowerCase().endsWith('.json')) void openProject(file);

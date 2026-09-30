@@ -29,7 +29,8 @@ function main(): void;
    coordinate, so the demo content occupies the cells it names. The demo's opening shot is written here too, as the one key of the project's first take
    and segment — `upsertKey` at time `0`, holding `OPENING_SHOT_POSITION` aimed at
    `OPENING_SHOT_TARGET` and the model's `DEFAULT_FOV`: a camera that stands off the content and looks at it, because a project's own camera starts at
-   the identity transform, which in this Z-up world is a camera at the origin looking straight down its own `-Z`.
+   the identity transform, which in this Z-up world is a camera at the origin looking straight down its own `-Z`. The demo object is bound rather than
+   dropped, because the session — built in step 3 — cannot name it yet: step 6 is what tells the session the boot content is its active object.
 2. **Viewport.** `viewportCamera` is app-owned viewport state built on the world's frame — `up` set to the z axis before `ViewportControls` is built,
    because `OrbitControls` snapshots `object.up` into its orbit axis in its constructor — with camera layers 1 and 2 enabled: the viewport draws the
    overlay, the gizmo, and the other decorations (layer 1) and the imported raw meshes (layer 2), while the raycaster tests layers 0 and 2 and the export
@@ -50,7 +51,10 @@ function main(): void;
    `cameraControlSelected` (`false`; whether the gizmo drives the carrier instead of the active object), `gizmoMode` (`'translate'`; the one mode the
    carrier and an object share), and `cameraPathVisible` (`false`, which `refreshCameraPath` clears whenever the active take holds fewer than two keys).
    `playbackView` is the viewport state a run started from — the camera's pose, the orbit target, and the playhead — or `undefined` when no run has
-   captured one; it is what lets a pause hand the frame over and a run's end undo the whole thing.
+   captured one; it is what lets a pause hand the frame over and a run's end undo the whole thing. The boot content starts active: the demo object exists
+   before the session does, so the app selects it at step 6, right after subscribing the session change — through the same path a row click takes, and not
+   beside the creation, which would notify nobody. Without it a fresh boot has no active object at all: no gizmo, no editable field, and no object track
+   the timeline's `add` could write, while the object list still shows the cube — which is what makes the omission read as a bug rather than as a state.
 4. **Animation.** `Playback` is built with no camera at all — the mixer drives object transforms and nothing else — and bound to every object's mirrored
    node; it names the bound objects itself. The shot is not its business: `SceneMirror.applyShot` resolves the active take into the output camera, and
    this file calls it wherever the playhead moves.
@@ -392,6 +396,9 @@ other. The lens fields go one step further and re-read the views on a refusal, s
 
 ## Tests
 None of its own: it is the smoke target of the slice, verified by `npm run dev` plus a walk through Scenario A (README section 9).
+A fresh boot is the first step of that walk: the demo cube must arrive as the active object — the object list and the Scene group's fields naming it,
+the timeline's target reading `active object: Demo cube` with `add` enabled, the HUD's resolution row showing `uniform 4×4×4`, and the gizmo and its
+outline on the cube — so a keyframe can be added without a click, and creating a primitive must move that selection to the new object.
 Saving and loading is part of that walk: rename an object, press `Save project…`, reload the page, drop the downloaded `.json` back onto
 the viewport, and the object with its cells, mask color, and placement plus the timeline (duration, fps, and any keyframe rows) must come back, with the
 demo object gone, the panel showing one row, and nothing on the console.
