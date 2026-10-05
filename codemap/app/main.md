@@ -59,14 +59,16 @@ function main(): void;
    beside the creation, which would notify nobody. Without it a fresh boot has no active object at all: no gizmo, no editable field, and no object track
    the timeline's `add` could write, while the object list still shows the cube — which is what makes the omission read as a bug rather than as a state.
 4. **Animation.** `Playback` is built with no camera at all — the mixer drives object transforms and nothing else — and bound to every object's mirrored
-   node; it names the bound objects itself. The shot is not its business: `SceneMirror.applyShot` resolves the active take into the output camera, and
-   this file calls it wherever the playhead moves.
+   node; it names the bound objects itself. The shot is not its business: `SceneMirror.applyShot` resolves a take into the output camera — the active
+   take at the playhead while editing, and the `Render` group's chosen take during an export — and this file calls it wherever the playhead moves.
 5. **UI.** `ModeBar` is a view of the session like the panels are, and the `VoxelizeDialog` is mounted into the same element as the panels; both, like
    them, receive callbacks and no state. They live in this file, and so does the file dialog, because `ui` never imports `app/`: the closure that seeds the
    dialog, the handling of its outcome, and the file dialog itself are the app's. The `Camera` group's view is read from the app's flags and from the shot
    the playhead resolves — `currentShot`, never from the carrier node, because what the fields show is what a key would hold — together with the
-   project's takes and the active take's id, the shot's projection, and its clip planes; `pathAvailable` is whether the take holds the two keys a path
-   needs to exist at all. The timeline bar's visibility is the app's `timelineVisible`,
+   shot's projection and its clip planes; `pathAvailable` is whether the take holds the two keys a path needs to exist at all. The `Render` group's
+   export camera is a separate view over the app's own `exportTakeId`: the project's takes, the pinned id or `''` while it follows, and the
+   preview take's name, which is what the follow option says — `undefined` meaning follow
+   the preview take. The timeline bar's visibility is the app's `timelineVisible`,
    `false` so the bar opens collapsed; `setTimelineVisible` is its only writer, and the panel is told the flag as soon as it exists, so flag and markup
    agree from the first frame — `index.html` carries `hidden` rather than leaving it to the module, because a bar laid out by the first paint and hidden
    only when the bundle runs would flash. There is no status line and no message area: the overlay holds the rail and the windows only.
@@ -138,15 +140,25 @@ function main(): void;
      matrix back on the node every frame; `onGizmoChange` fills the same slot from the drag preview, which is what makes a drag inside a track follow the
      pointer at all. An object no track animates holds nothing, because the mixer cannot move it. None of it happens while a clip runs: there the playhead
      is the mixer's and the matrix a gesture reports is read off the node the clip is driving.
-   - Camera carrier — the `Camera` group's commands, which are of three kinds. The two toggles flip their flag and re-sync, so selecting the carrier takes
+   - Camera carrier — the `Camera` group's commands. The two toggles flip their flag and re-sync, so selecting the carrier takes
      the gizmo from the active object and deselecting it gives the gizmo back from the session alone. `Camera -> View` authors the viewport's pose into the
      shot and selects the carrier, because aiming it is what the user came for; `View -> Camera` moves the viewport to the shot the playhead resolves and
-     writes nothing, which is what makes it a safe way to look at what a render would frame. The rest reshape the camera and refuse rather than report a
-     refusal to the user: `applySetActiveTake`, `applyAddTake` (which copies the active take and switches to the copy, because the point of a take is to
-     edit a copy and go back by switching), `applyRemoveTake`, `applyCutAtPlayhead` (splitting the segment the playhead is in), `applySetCameraProjection`,
-     and `applySetCameraLensParams`. Their refusals are `Result` values, so they reach the console through `reportFailure`; the two whose model call
-     cannot refuse (`setActiveTake`, `removeTake`) simply act on `true`. Only a command that changes what the `Camera` group shows refreshes it:
+     writes nothing, which is what makes it a safe way to look at what a render would frame. The two reshapes that remain here — `applySetCameraProjection`
+     and `applySetCameraLensParams` — refuse a `Result` rather than reporting a refusal to the user, so their failures reach the console through
+     `reportFailure`, and both are refused while a run is in flight. Only a command that changes what the `Camera` group shows refreshes it:
      `View -> Camera` refreshes nothing.
+   - Take target and structure — the timeline bar's camera target is where a take is switched and its structure changed, and the app owns every one of those.
+     `applySetActiveTake` is the preview/editor take switch: it refuses (returns `false`, changing nothing) while a run is in flight, because a run owns the
+     shot for its length, and otherwise switches and re-reads the views. `applyCopyTake` copies the shown take and switches to the copy, because the point
+     of a take is to edit a copy and go back by switching. `applyRemoveTake` deletes the shown take; the model refuses the last one, the app refuses it
+     while a run is in flight, and an explicit export choice of that take is cleared so the export follows the preview again rather than an id that names
+     nothing. `applyCutAtPlayhead` splits the segment the playhead is in and is likewise refused while a run owns the playhead. The model's own refusals
+     are `Result` values that reach the console through `reportFailure`.
+   - Export camera — the `Render` group's select picks the take an export renders, held in the app's `exportTakeId` and independent of the preview take:
+     `undefined` means follow the active take, which the select shows as `follow the preview: <name>` and which `applySetExportCamera` returns to whenever
+     the value names no take — that is what `''` from the follow option is — while an id that names one is stored. The
+     choice is cleared on a project load and when its take is deleted, so the app never holds a stale id; `runExport` passes the explicit id (or the
+     active take's) to the job, which renders exactly that take and fails with `'unknown-take'` if it no longer resolves rather than substituting another.
    - Camera path — `refreshCameraPath` is the one writer of the drawing and of `cameraPathVisible`: it clears the flag when the active take holds fewer than two
      keys, and hands the sampled trajectory and the key positions to the drawing, which is what keeps the `Show camera path` box a view of both.
      It runs on the timeline's `onEdited` (a keyframe edit is what changes the trajectory), from the toggle — which only writes the flag and calls it — and
@@ -164,14 +176,14 @@ function main(): void;
      lands rather than a frame later, and the bar says which keys that gesture left behind. No gesture moves the viewport: a shot is aimed from
      the third person, so a view that followed every commit — including one that changed nothing — would make that impossible. `View -> Camera` is the one
      explicit way to look through the shot, and the transport is the only other thing that moves the view on its own.
-   - Camera key rows — the timeline bar lists the active take's keys, and it is the only place one of them can be retimed or removed, so
+   - Camera key rows — the timeline bar's camera target lists the shown take's keys, and the bar is the only place one can be retimed or removed, so
      `moveCameraKey` hands a row's time to the model's `moveKey` and `removeCameraKey` hands its ids to `removeKey`; a `false` from either does
-     nothing at all, which is what the row's own rebuild then shows. A key that moved or went changes the shot the playhead resolves but not the
+     nothing at all, which is what the row's own rebuild then shows. Both are refused while `playback.playing`, so a run's shot cannot be edited under
+     it. A key that moved or went changes the shot the playhead resolves but not the
      clip — the camera is no track — so neither rebuilds the mixer: `refreshShotViews` is the whole follow-up, and the widget re-reads the rows
-     itself. That callback now also re-reads the bar, which is what keeps the rows in step with a camera write made anywhere else — a carrier drag,
-     `Camera -> View`, a typed pose, `Cut here`, a take switch or copy, a deletion, or a retimed clip length — rather than only with the two rows'
-     own edits. `removeKey` refuses a segment's last key, which the row's disabled `delete` mirrors. The two are not `writeShot`'s callers and not
-     gestures: no pose is read from anywhere, so nothing here is refused while a clip runs.
+     itself. That callback re-reads the bar too, which is what keeps the rows in step with a camera write made anywhere else — a carrier drag,
+     `Camera -> View`, a typed pose, `Cut here`, a take switch or copy, a deletion, or a retimed clip length. `removeKey` refuses a segment's last key,
+     which the row's disabled `delete` mirrors.
    - Raw meshes — `setSourceVisible` is the panel's one entry point for the override, and it writes the mirror's flag and nothing else: the mirror owns it,
      applies it at once and again on the next `sync()`, and the panel reads it back through `sceneVisible`, so the checkbox cannot drift from the mirror;
      no dirty mark or refresh is needed, and an export is unaffected either way.
@@ -204,16 +216,18 @@ function main(): void;
      so the field, a drag, and `Camera -> View` all end in the same `writeShot`. The clamp is the FOV's own — see Open questions for what it means on an
      orthographic shot, where the same scalar is a view height.
    - Export — `exportMp4` refuses while a job is in flight (the app's one export slot), sizes the capture to the resolution the panel asked for, and runs
-     the export job → `saveMp4`; a failure goes to `reportFailure`. The slot is released and the gizmo re-attached in a `finally`, so a run that fails or
-     stalls cannot leave the button refusing to start another for the rest of the session. Resolution, frame rate, range, and mask mode are the panel's
-     choices; `main` owns only the capture that must render at them.
+     the export job with the `Render` group's take — `exportTakeId` when one is chosen, else the active take — → `saveMp4`; a failure goes to
+     `reportFailure`. The job renders exactly that take and reports `'unknown-take'` if it no longer resolves, rather than substituting another plan. The
+     slot is released and the gizmo re-attached in a `finally`, so a run that fails or
+     stalls cannot leave the button refusing to start another for the rest of the session. Resolution, frame rate, range, mask mode, and the export take
+     are the panel's choices; `main` owns only the capture that must render at them.
    - Save / open project — `saveProject` is one call whose bytes are `document/serialize.ts`'s: no state of its own. `openProject` reads the text and hands
      it to `readJson`; a refusal goes to `reportFailure` with the file's own literal and detail and writes nothing, and a file that passes goes to
      `loadProject`.
    - The load sequence — `loadProject` is the one mutation that replaces the whole truth, and it is a sequence rather than a new `Project`: the project,
      the mirror, the mixer, and the session all survive it, so the state the replaced project left behind is reset in this order, and the order is the
      point. Abort the job — nothing may be in flight; pause the transport and drop `playbackView`, because a run's saved view belongs to the project that
-     started it; release the carrier and the path, both being views of the project being replaced; drop the raw-mesh layer, its records before any id can
+     started it; release the carrier, the path, and the explicit export take, all being views of the project being replaced; drop the raw-mesh layer, its records before any id can
      be reused, since a source is recorded under an object id and the mirror's own pass would otherwise re-parent the replaced import's meshes under a
      loaded object, and reset the override with it; reset the session *before* the objects, because its setters validate against the project and must not
      see the load half-applied; write the truth; publish the two things no `sync()` writes, the scene settings and the shot — `mirror.applySettings()`
@@ -236,8 +250,9 @@ function main(): void;
    of both; re-attaches the gizmo whenever the node it should be on is no longer the one it is attached
    to, because a rebuild replaced it; rebinds the mixer when a bound node was replaced (the check is the node identity the mirror holds, not the object
    id, because `commitDirty()` flags the bindings on every commit and a rebuild keeps the id); and updates navigation, which always flies the viewport camera and so
-   can never touch the output camera. It applies the shot to the output camera once per drawn frame — `mirror.applyShot(playback.time * 1000)` — unless the
-   gizmo is busy, because a drag owns the pose until it commits, and the same call is what makes a scrub, a run, and a preview show the same camera. It renders through the output camera while a clip previews the shot and through the viewport camera otherwise. Just
+   can never touch the output camera. It applies the shot to the output camera once per drawn frame — `mirror.applyShot(playback.time * 1000)`, naming no
+   take, so the active/preview take answers — unless the gizmo is busy, because a drag owns the pose until it commits; the same call is what makes a scrub, a
+   run, and a preview show the same camera, and it is the export alone that names its own take. It renders through the output camera while a clip previews the shot and through the viewport camera otherwise. Just
    before the render it drives the carrier: hidden while a run previews the shot, otherwise handed the output camera as it stands right now — the
    shot the playhead resolves, whether or not a clip is running — with its colour following only the user's selection, and standing back while the carrier is
    selected and the gizmo is busy, because a drag owns the pose until it commits. The path's marker size comes from the viewing distance, floored at the
@@ -399,8 +414,9 @@ other. The lens fields go one step further and re-read the views on a refusal, s
 
 ## Dependencies
 - `../document/camera.js` — the camera model the app authors through: `activeTake` and `segmentAt` (the take and segment the playhead is in),
-  `resolveCameraAt` (the shot the panel and the carrier read), `upsertKey` (the one *pose* write, behind every gesture), `moveKey`/`removeKey` (the
-  timeline bar's two key-level edits), `addTake`, `removeTake`, `setActiveTake`,
+  `resolveCameraAt` (the shot the panel and the carrier read, with its optional take for the export), `upsertKey` (the one *pose* write, behind every
+  gesture), `moveKey`/`removeKey` (the timeline bar's two key-level edits), `addTake`, `removeTake`, `setActiveTake`, `takeById` (validating the
+  `Render` group's export choice),
   `splitSegment`, `setSegmentProjection`, and `setSegmentLensParams`, plus the `ResolvedCamera` and `ProjectionKind` types. The app never builds camera
   records itself: the model mints the ids and keeps the ranges tiling.
 - `../document/project.js`, `../editor/{session,ops,pointer}.js` — `Project`, `EditorSession`, `EditResolution`, `applyVoxelizeResult`,
@@ -465,8 +481,8 @@ before the payload and the payload's `-origin` offset after it — with every vo
 meshes back exactly on top of their voxels — before the fix those meshes landed rotated, sheared, and mis-scaled relative to them.
 Scenario A exercises the camera end to end: import a GLB — one object, the whole file — confirm the dialog, aim the shot (a numeric field, a carrier
 drag, or `Camera -> View` after flying the view), and move the playhead to a second time and aim again, which is what writes the second key — the two
-states must differ, the export must move the camera along them, and pressing play must leave the authored keys untouched while the clip runs. The camera group's own commands are walked with it: `Copy take` must switch the fields to a copy the original's later edits do not reach, the take selector must switch back, `Delete take` must refuse the last one and be disabled there, `Cut here` must split the shot at the playhead with the later half
-holding its own state from that instant, the projection selector must switch the shot's kind, and the `Near`/`Far` fields must take a usable pair and refuse an unusable one with the fields coming back. The two object properties the panel exposes go through their ops on the
+states must differ, the export must move the camera along them, and pressing play must leave the authored keys untouched while the clip runs. The timeline bar's camera target is walked with it: choosing a take must switch the preview and list that take's keys, `Copy take` must switch to a copy the original's later edits do not reach, the target select must switch back, `Delete take` must refuse the last one and be disabled there, `Cut here` must split the shot at the playhead with the later half
+holding its own state from that instant, and a target switch or any of those commands must be refused while a clip runs. The `Render` group's camera select must choose the take an export renders independently of the preview and the export must frame that take's shot; choosing a take and then deleting it must leave the export on the preview, not on a dead id, and the `follow the preview` option must take the export back to following after a take has been pinned. The projection selector must switch the shot's kind, and the `Near`/`Far` fields must take a usable pair and refuse an unusable one with the fields coming back. The two object properties the panel exposes go through their ops on the
 same walk: renaming the active object must change the object list and the HUD, unticking `Visible` must hide its node in the viewport, and a blank
 name must come back as a reported failure with the object unchanged. The raw-mesh half of the walk: a click must select the imported object with no
 selection or overlay, hovering must change nothing at all

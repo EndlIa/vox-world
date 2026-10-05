@@ -440,17 +440,20 @@ export class SceneMirror {
   }
 
   /**
-   * Writes the shot the project's active take holds at `timeMs` into the output camera: pose, clip planes, and the lens
-   * in whichever projection the segment authors. It is the one place a take becomes a frame, so a scrub, a run, and an
-   * export cannot disagree about the camera they render through — and a cut is exact here because nothing interpolates
-   * across a segment boundary.
+   * Writes one take's shot at `timeMs` into the output camera: pose, clip planes, and the lens in whichever projection
+   * the segment authors. It is the one place a take becomes a frame, so a scrub, a run, and an export cannot disagree
+   * about the camera they render through — and a cut is exact here because nothing interpolates across a segment
+   * boundary.
    *
-   * A camera the active take cannot answer for leaves the last shot standing rather than failing: the frame still has to
-   * be drawn, and a project this class can hold always resolves.
+   * With no `takeId` the active take answers, which is what the viewport preview, a scrub, and a run want; an export
+   * passes the take the `Render` group selected, so a frame can render a plan other than the one being edited. An
+   * explicit `takeId` that names no take writes nothing and reports `false` rather than substituting another plan
+   * silently, so an export pointed at a deleted take fails instead of rendering the wrong shot; an unresolvable active
+   * take likewise leaves the last shot standing, because the frame still has to be drawn. Returns whether it wrote.
    */
-  applyShot(timeMs: number): void {
-    const state = resolveCameraAt(this.project.camera, timeMs);
-    if (state === undefined) return;
+  applyShot(timeMs: number, takeId?: string): boolean {
+    const state = resolveCameraAt(this.project.camera, timeMs, takeId);
+    if (state === undefined) return false;
     this.camera.position.copy(state.position);
     this.camera.quaternion.copy(state.quaternion);
     this.camera.projection = state.projection;
@@ -458,6 +461,7 @@ export class SceneMirror {
     this.camera.near = state.near;
     this.camera.far = state.far;
     this.camera.updateProjectionMatrix();
+    return true;
   }
 
   /**

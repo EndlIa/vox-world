@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { Vector3 } from 'three';
 import { Project } from '../src/document/project.js';
-import { DEFAULT_FAR, DEFAULT_FOV, DEFAULT_NEAR, splitSegment, setSegmentProjection, upsertKey } from '../src/document/camera.js';
+import { DEFAULT_FAR, DEFAULT_FOV, DEFAULT_NEAR, activeTake, addTake, splitSegment, setSegmentProjection, upsertKey } from '../src/document/camera.js';
 import { SceneMirror } from '../src/three-runtime/scene.js';
 import { UniformGrid } from '../src/voxels/uniform/grid.js';
 
@@ -312,5 +312,45 @@ describe('project reload support', () => {
     const expected = new THREE.OrthographicCamera(-4, 4, 4, -4, 0.1, 2000);
     expect(mirror.camera.projectionMatrix.elements).toEqual(expected.projectionMatrix.elements);
     expect(mirror.camera.projectionMatrixInverse.elements).toEqual(expected.projectionMatrixInverse.elements);
+  });
+});
+
+describe('applyShot take override', () => {
+  it('writes a named take into the output camera without switching the active one', () => {
+    const project = new Project();
+    project.setDuration(1000);
+    const mirror = new SceneMirror(project);
+    const active = activeTake(project.camera);
+    const segment = active?.segments[0];
+    if (active === undefined || segment === undefined) throw new Error('fixture: no shot');
+    upsertKey(project.camera, active.id, segment.id, {
+      timeMs: 0,
+      position: new THREE.Vector3(3, 0, 0),
+      quaternion: new THREE.Quaternion(),
+      lens: 40,
+    });
+
+    const other = addTake(project.camera, { name: 'Wide', durationMs: project.timeline.durationMs });
+    const otherSegment = other.segments[0];
+    if (otherSegment === undefined) throw new Error('fixture: the added take has no shot');
+    upsertKey(project.camera, other.id, otherSegment.id, {
+      timeMs: 0,
+      position: new THREE.Vector3(-7, 0, 0),
+      quaternion: new THREE.Quaternion(),
+      lens: 70,
+    });
+
+    // No take named: the shot is the active take's, which is what the viewport previews.
+    expect(mirror.applyShot(0)).toBe(true);
+    expect(mirror.camera.position.toArray()).toEqual([3, 0, 0]);
+    // A named take renders that plan without switching the editor's preview, which is what the export's own take does.
+    expect(mirror.applyShot(0, other.id)).toBe(true);
+    expect(mirror.camera.position.toArray()).toEqual([-7, 0, 0]);
+    expect(mirror.camera.lens).toBe(70);
+    expect(project.camera.activeTakeId).toBe(active.id);
+    // An explicit take that names nothing writes nothing and reports it rather than substituting the active take, so a
+    // stale export choice fails instead of rendering the wrong plan.
+    expect(mirror.applyShot(0, 'take-999')).toBe(false);
+    expect(mirror.camera.position.toArray()).toEqual([-7, 0, 0]);
   });
 });

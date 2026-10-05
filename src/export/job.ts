@@ -22,11 +22,21 @@ export type ExportRequest = {
   capture: Capture;
   playback: Playback;
   output: { width: number; height: number; fps: number; from: number; to: number; mode: 'beauty' | 'mask' };
+  /**
+   * The take to render, chosen in the `Render` group. Omitted, the shot is the active take's — the same resolution the
+   * editor previews — so a request that says nothing about takes renders what the author is looking at. Supplied, that
+   * take alone is rendered; if it names no take the run fails with `'unknown-take'` rather than substituting another.
+   */
+  takeId?: string;
 };
 
 export type ExportResult =
   | { ok: true; blob: Blob; codec: string; frames: number }
-  | { ok: false; error: 'cancelled' | 'no-codec' | 'encoder-failed' | 'not-finalized' | 'no-frames'; detail: string };
+  | {
+      ok: false;
+      error: 'cancelled' | 'no-codec' | 'encoder-failed' | 'not-finalized' | 'no-frames' | 'unknown-take';
+      detail: string;
+    };
 
 /**
  * Walks the requested timeline range at frame rate, samples it frame-exactly, renders each frame at
@@ -44,7 +54,7 @@ export class ExportJob {
     request: ExportRequest,
     signal?: AbortSignal,
   ): Promise<ExportResult> {
-    const { capture, playback, scene, output } = request;
+    const { capture, playback, scene, output, takeId } = request;
     const { width, height, fps, from, to, mode } = output;
     const restoreTime = playback.time;
     if (!Number.isFinite(from) || !Number.isFinite(to) || !Number.isFinite(fps) || fps <= 0) {
@@ -73,9 +83,20 @@ export class ExportJob {
           return { ok: false, error: 'cancelled', detail: `render cancelled at frame ${i} of ${total}` };
         }
         playback.setTime(from + i / fps);
-        // The frame's camera is the shot the clip holds at this time: the same resolution the viewport draws through,
-        // so an exported frame and a scrubbed frame cannot disagree.
-        this.mirror.applyShot((from + i / fps) * 1000);
+        // The frame's camera is the shot the requested take holds at this time, resolved by the same code the viewport
+        // draws through, so an exported frame and a scrubbed frame of the same take cannot disagree. The take is the
+        // `Render` group's choice, not the editor's preview: an export renders the plan it was asked for. An explicit
+        // take that no longer exists is a failure, never a silent fall back to another plan.
+        if (!this.mirror.applyShot((from + i / fps) * 1000, takeId)) {
+          return {
+            ok: false,
+            error: 'unknown-take',
+            detail:
+              takeId === undefined
+                ? 'the project has no take to render'
+                : `the requested take ${takeId} does not exist`,
+          };
+        }
         capture.render(scene, this.mirror.camera);
         const frame = await capture.readFrame();
         if (!frame.ok) {

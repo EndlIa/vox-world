@@ -225,8 +225,9 @@ SceneObject {
 ### Cameras and render state
 
 - Exactly two cameras exist at runtime. `SceneMirror.camera` is the **output** camera: an `OutputCamera` carrying
-  whichever projection the active segment authors, written by `SceneMirror.applyShot(timeMs)` from the camera the
-  document holds — the active take resolved at the playhead — and the one every render, every export and the carrier
+  whichever projection the active segment authors, written by `SceneMirror.applyShot(timeMs, takeId?)` from the camera the
+  document holds — the active take resolved at the playhead, or the take an export names, so a frame can render a plan
+  other than the preview — and the one every render, every export and the carrier
   goes through. The **viewport** camera is
   app-owned runtime state, never project data: it is what navigation moves, what picking resolves
   against, and what `frameAll` fits. The viewport renders through the output camera only while a run
@@ -318,12 +319,15 @@ deferred is deferred deliberately, not forgotten.
   cell-to-world mapping — rendering, picking, the box preview, snapping, `detach` — follow it.
 - Timeline: a duration at authored precision and a frame rate, keyframes on object transforms addressed by session id,
   step/linear/smooth interpolation, one Play/Pause toggle,
-  loop, and scrub. The bar starts collapsed and is summoned from the rail's `Animation` button. The camera is no track on
-  that bar, and not authored there: it is authored as takes of segments — each with its own keys, projection, and lens — from the `Camera`
-  group, where the shot is aimed from third person through its carrier, copied as a whole plan, cut at the playhead,
-  and given its projection and clip planes, while its trajectory is drawn back into the viewport as a white
-  polyline with one hollow ring per key, shown from two keys up. What the bar does carry is the active take's keys, marked and
-  listed beside the object keyframes, so a key can be found, seeked to, retimed, and removed at all. A run previews the shot
+  loop, and scrub. The bar starts collapsed and is summoned from the rail's `Animation` button. The bar's single `target`
+  select is the animation subject switch: the active object, or one camera take. The camera is still no track on that bar,
+  and its shot is aimed from the `Camera` group from third person through its carrier, which also carries the shot's
+  projection, clip planes, and lens. The take itself is a target of the bar, where it is switched, copied as a whole
+  plan, deleted, and cut at the playhead, and that take's keys are marked and listed there so a key can be found,
+  seeked to, retimed, and removed at all. Selecting a camera take makes it the preview/editor take, so the viewport, the
+  `Camera` group, and the listed keys describe the same plan; the trajectory is drawn back into the viewport as a white
+  polyline with one hollow ring per key, shown from two keys up. The `Render` group's own camera select chooses the take
+  an export renders, independently of the preview. A run previews the shot
   through the output camera and a pause hands the frame back.
 - Export the output camera view to a real MP4 with selectable resolution, frame rate, and range, with
   cancel; a failure reaches the console.

@@ -16,9 +16,10 @@ import type * as THREE from 'three';
 type ExportRequest = {
   project: Project; scene: THREE.Scene; capture: Capture; playback: Playback;
   output: { width: number; height: number; fps: number; from: number; to: number; mode: 'beauty' | 'mask' };
+  takeId?: string;   // the take to render; omitted => the active take; an unknown id fails, never substitutes
 };
 type ExportResult = { ok: true; blob: Blob; codec: string; frames: number } |
-  { ok: false; error: 'cancelled' | 'no-codec' | 'encoder-failed' | 'not-finalized' | 'no-frames'; detail: string };
+  { ok: false; error: 'cancelled' | 'no-codec' | 'encoder-failed' | 'not-finalized' | 'no-frames' | 'unknown-take'; detail: string };
 class ExportJob {
   constructor(opts: { mirror: SceneMirror });
   run(request: ExportRequest, signal?: AbortSignal): Promise<ExportResult>;
@@ -32,7 +33,7 @@ class ExportJob {
 4. The loop is `for (let i = 0; i < total; i++)` with `t = from + i / fps` computed from the index rather than accumulated, so frame times carry no float drift:
    - abort check first: `signal?.aborted` leaves the loop and returns `'cancelled'` after the writer is cancelled;
    - `playback.setTime(t)` for frame-exact sampling — it clamps to the clip's length in seconds (`timeline.durationMs / 1000`), zeroes the mixer clock, and updates once, so the same `t` always produces the same frame and nothing is inherited from the viewport;
-   - `mirror.applyShot((from + i / fps) * 1000)` — the frame's camera is the shot the active take holds at this time, resolved by the same code and into the same output camera the viewport draws through, so an exported frame and a scrubbed frame cannot disagree. The loop is the time it applies at: the camera is a derived state of the playhead, not a second timeline the mixer carries;
+   - `mirror.applyShot((from + i / fps) * 1000, request.takeId)` — the frame's camera is the shot the requested take holds at this time, resolved by the same code and into the same output camera the viewport draws through, so an exported frame and a scrubbed frame of the same take cannot disagree. With no `takeId` that is the active take; with one it is exactly that take, which is how an export renders a plan other than the editor's preview. It returns `false` when the take does not resolve — an explicit id that names no take, or a project with no take — and the loop then returns `'unknown-take'` rather than rendering another plan silently. The loop is the time it applies at: the camera is a derived state of the playhead, not a second timeline the mixer carries;
    - `capture.render(request.scene, mirror.camera)`: the render camera is the mirror's output camera, with the shot already applied to it, never the viewport navigation camera — which is why exported framing equals authored framing;
    - `const frame = await capture.readFrame()`; a `{ ok: false }` result cancels the writer and returns `{ ok: false, error: 'encoder-failed', detail: 'capture: ' + detail }`;
    - `writer.push(frame.bitmap, i)`;
@@ -57,12 +58,15 @@ class ExportJob {
 - `'encoder-failed'` — the writer's `'encoder-failed'`, or a `CaptureResult` failure, which is reported through this literal because `ExportResult` has no capture-specific one.
 - `'not-finalized'` — `Mp4Writer.finish()`'s own literal, returned unchanged rather than collapsed into `'encoder-failed'`. It is the writer's answer for a cancelled writer or one that never received a frame, so the literal is in `ExportResult` even though the loop itself cannot reach it: one frame is pushed per index, so `push` always precedes `finish()`.
 - `'no-frames'` — `end < from` after the clamp; returned before any encoder or render work.
+- `'unknown-take'` — `applyShot` resolved nothing at a frame time: an explicit `takeId` that names no take, or a project
+  with no take at all. It is returned rather than substituted, so a stale export choice fails loudly instead of encoding a
+  plan the request did not ask for; the writer is cancelled by the `finally` like every other early return.
 - Programmer errors throw `RangeError`: non-finite `from`/`to`/`fps`, or `fps <= 0`. A non-positive `width`/`height` is likewise a caller bug and surfaces from `Capture` or the encoder config.
 
 ## Dependencies
 - `../document/project.ts` — `Project`, carried by the request so one object identifies the timeline; the loop reads nothing mutable from it.
 - `../animation/playback.ts` — `Playback`: `setTime` for frame-exact sampling and `time` for the restore. It is camera-free: the shot is the mirror's.
-- `../three-runtime/scene.ts` — `SceneMirror`: `camera` (the output camera), `sync`, `setMaskMode`, and `applyShot(timeMs)` for the frame's camera.
+- `../three-runtime/scene.ts` — `SceneMirror`: `camera` (the output camera), `sync`, `setMaskMode`, and `applyShot(timeMs, takeId?)` for the frame's camera; its `false` is the `'unknown-take'` refusal.
 - `../three-runtime/capture.ts` — `Capture`: `render` and `readFrame` at export resolution, over the mirror's own `OutputCamera`.
 - `./encode.ts` — `selectCodec`, `Mp4Writer`, `FrameSink`: the encode seam; `three` — `Scene` for the render call.
 Not imported: `editor/*`. That the export path cannot reach an edit operation is part of why an export cannot corrupt authored data.

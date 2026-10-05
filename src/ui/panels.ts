@@ -38,9 +38,6 @@ export type CameraControlView = {
   selected: boolean;
   mode: 'translate' | 'rotate';
   pose: CameraPose;
-  /** The project's takes, and the one the fields are editing: the selector's list. */
-  takes: { id: string; name: string }[];
-  activeTakeId: string;
   /** The shot's own projection and clip planes, which the projection selector and the two fields edit. */
   projection: ProjectionKind;
   near: number;
@@ -50,6 +47,19 @@ export type CameraControlView = {
   /** Whether the camera path is drawn, and whether the track holds a path at all (two keyframes or more). */
   pathVisible: boolean;
   pathAvailable: boolean;
+};
+
+/**
+ * What the `Render` group's export-camera select reads: the takes it offers, and the one an export will render. It is
+ * deliberately separate from the editor's preview take, so a frame can be rendered from a plan the author is not
+ * looking at.
+ */
+export type ExportCameraView = {
+  takes: { id: string; name: string }[];
+  /** The take the export is pinned to, or `''` while it follows the preview take — the state the app starts in. */
+  takeId: string;
+  /** The take a following export would render, which the follow option names; `''` when the camera holds no take. */
+  previewTakeName: string;
 };
 
 export type PanelContext = {
@@ -83,6 +93,11 @@ export type PanelContext = {
    * without a carrier has nothing for them to aim.
    */
   cameraControl?: () => CameraControlView;
+  /**
+   * The takes the `Render` group's export-camera select offers, and the one an export will render. When present the
+   * select is a view of the app's export choice and `refresh()` seeds it; when absent the select lists nothing.
+   */
+  exportCamera?: () => ExportCameraView;
   actions: {
     pickImportFile(): void;
     saveProject(): void;
@@ -112,10 +127,7 @@ export type PanelContext = {
     reparentActive(parentId: ObjectId | null): void;
     setCameraFov(fov: number): void;
     setCameraPose(pose: CameraPose): void;
-    setActiveTake(takeId: string): void;
-    addTake(): void;
-    removeTake(): void;
-    cutAtPlayhead(): void;
+    setExportCamera(takeId: string): void;
     setCameraProjection(projection: ProjectionKind): void;
     setCameraLensParams(params: { near: number; far: number }): void;
     toggleCameraControl(): void;
@@ -236,10 +248,6 @@ export class Panels {
   private readonly cameraFovInput: HTMLInputElement;
   /** The carrier's numeric grid, in label order: X, Y, Z, QX, QY, QZ, QW. */
   private readonly cameraPoseInputs: HTMLInputElement[];
-  private readonly cameraTakeSelect: HTMLSelectElement;
-  private readonly cameraAddTakeButton: HTMLButtonElement;
-  private readonly cameraRemoveTakeButton: HTMLButtonElement;
-  private readonly cameraCutButton: HTMLButtonElement;
   private readonly cameraProjectionSelect: HTMLSelectElement;
   private readonly cameraNearInput: HTMLInputElement;
   private readonly cameraFarInput: HTMLInputElement;
@@ -249,6 +257,8 @@ export class Panels {
   private readonly cameraToViewButton: HTMLButtonElement;
   private readonly viewToCameraButton: HTMLButtonElement;
   private readonly cameraPathInput: HTMLInputElement;
+  /** The take an export renders: the `Render` group's own choice, independent of the editor's preview take. */
+  private readonly exportCameraSelect: HTMLSelectElement;
   private readonly exportResolutionSelect: HTMLSelectElement;
   private readonly exportFpsInput: HTMLInputElement;
   private readonly exportFromInput: HTMLInputElement;
@@ -360,7 +370,12 @@ export class Panels {
       },
     });
 
-    // Export.
+    // Export. The camera select is the take an export renders, which is the `Render` group's own choice and not
+    // necessarily the take being edited: a frame can render a plan the author is not previewing.
+    this.exportCameraSelect = el('select', {
+      title: 'the take an export renders',
+      on: { change: () => context.actions.setExportCamera(this.exportCameraSelect.value) },
+    });
     this.exportResolutionSelect = el(
       'select',
       undefined,
@@ -530,25 +545,6 @@ export class Panels {
         on: { change: () => this.writeCameraPose() },
       }),
     );
-    this.cameraTakeSelect = el('select', {
-      title: 'the shooting plan being edited',
-      on: { change: () => context.actions.setActiveTake(this.cameraTakeSelect.value) },
-    });
-    this.cameraAddTakeButton = el('button', {
-      text: 'Copy take',
-      title: 'copy this take and edit the copy, leaving the original alone',
-      on: { click: () => context.actions.addTake() },
-    });
-    this.cameraRemoveTakeButton = el('button', {
-      text: 'Delete take',
-      title: 'delete this take; the project always keeps one',
-      on: { click: () => context.actions.removeTake() },
-    });
-    this.cameraCutButton = el('button', {
-      text: 'Cut here',
-      title: 'split the shot at the playhead: the later half holds its own state from that instant on',
-      on: { click: () => context.actions.cutAtPlayhead() },
-    });
     this.cameraProjectionSelect = el(
       'select',
       {
@@ -576,8 +572,7 @@ export class Panels {
     group('Camera', [
       el('div', { class: 'row' }, [this.cameraSelectButton, this.cameraModeButton]),
       el('div', { class: 'row' }, [this.cameraToViewButton, this.viewToCameraButton]),
-      el('div', { class: 'row' }, [this.cameraTakeSelect, this.cameraAddTakeButton, this.cameraRemoveTakeButton]),
-      el('div', { class: 'row' }, [this.cameraProjectionSelect, this.cameraCutButton]),
+      el('div', { class: 'row' }, [this.cameraProjectionSelect]),
       el('div', { class: 'row' }, [this.field('Near', this.cameraNearInput), this.field('Far', this.cameraFarInput)]),
       this.field('Show camera path', this.cameraPathInput),
       el('div', { class: 'row' }, [
@@ -594,6 +589,7 @@ export class Panels {
       el('label', undefined, [this.cameraLensLabel, this.cameraFovInput]),
     ]);
     group('Render', [
+      this.field('Camera', this.exportCameraSelect),
       this.field('Resolution', this.exportResolutionSelect),
       this.field('FPS', this.exportFpsInput),
       this.field('From (s)', this.exportFromInput),
@@ -709,6 +705,23 @@ export class Panels {
     if (!this.touched.exportFrom) this.exportFromInput.value = '0';
     // The export range is seconds while the clip is authored in milliseconds.
     if (!this.touched.exportTo) this.exportToInput.value = String(project.timeline.durationMs / 1000);
+    // The export-camera select is a view of the app's export take, not of the editor's preview take: `refresh()` seeds
+    // it from the takes the app offers so a copy or a delete under it is reflected.
+    const exportCamera = this.context.exportCamera?.();
+    if (exportCamera !== undefined) {
+      // Two states, two options. An export either follows the preview take — the app's default, and what a load
+      // returns to — or is pinned to one; a list of takes alone could only show the second, so the state the app
+      // starts in would be invisible and unreachable once a take had been picked.
+      const follow: HTMLOptionElement[] =
+        exportCamera.previewTakeName === ''
+          ? []
+          : [el('option', { value: '', text: `follow the preview: ${exportCamera.previewTakeName}` })];
+      this.exportCameraSelect.replaceChildren(
+        ...follow,
+        ...exportCamera.takes.map((take) => el('option', { value: take.id, text: take.name })),
+      );
+      this.exportCameraSelect.value = exportCamera.takeId;
+    }
 
     // The raw-mesh checkbox is a view of the app's flag only while the context exposes one; a context
     // without `sceneVisible()` owns the state itself, so `refresh()` leaves the box alone.
@@ -725,22 +738,14 @@ export class Panels {
       // A path needs two keyframes to exist at all, so below that the box is unchecked as well as disabled.
       this.cameraPathInput.disabled = !cameraControl.pathAvailable;
       this.cameraPathInput.checked = cameraControl.pathAvailable && cameraControl.pathVisible;
-      // The take selector lists the project's takes; the projection, the clip planes, and the lens label follow the
-      // shot the fields are editing, which is the active take's segment at the playhead.
-      this.cameraTakeSelect.replaceChildren(
-        ...cameraControl.takes.map((take) => el('option', { value: take.id, text: take.name })),
-      );
-      this.cameraTakeSelect.value = cameraControl.activeTakeId;
+      // The projection, the clip planes, and the lens label follow the shot the fields are editing, which is the
+      // active take's segment at the playhead.
       this.cameraProjectionSelect.value = cameraControl.projection;
       this.cameraLensLabel.textContent = cameraControl.projection === 'perspective' ? 'FOV (deg)' : 'View height';
       if (!this.touched.cameraNear) this.cameraNearInput.value = String(cameraControl.near);
       if (!this.touched.cameraFar) this.cameraFarInput.value = String(cameraControl.far);
       // A run owns the shot for its length, so the controls that would reshape it wait.
-      this.cameraTakeSelect.disabled = cameraControl.playing;
-      this.cameraAddTakeButton.disabled = cameraControl.playing;
-      this.cameraRemoveTakeButton.disabled = cameraControl.playing || cameraControl.takes.length < 2;
       this.cameraProjectionSelect.disabled = cameraControl.playing;
-      this.cameraCutButton.disabled = cameraControl.playing;
       const authored = [...cameraControl.pose.position, ...cameraControl.pose.quaternion, cameraControl.pose.fov];
       // The lens is part of the same state: the shot the carrier draws is the shot the fields show.
       if (!this.touched.cameraFov) this.cameraFovInput.value = String(cameraControl.pose.fov);

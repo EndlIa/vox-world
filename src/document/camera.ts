@@ -259,12 +259,16 @@ export function resolveSegmentAt(segment: CameraSegment, timeMs: number, takeId:
 }
 
 /**
- * The camera the active take holds at `timeMs`, or undefined when the camera has no take to answer with. Pure: every
- * call allocates its own result, so two readers of the same time can never fight over one pose.
+ * The camera one take holds at `timeMs`, or undefined when the camera cannot answer. With no `takeId` the active take
+ * answers, which is the legacy/default document behaviour every interactive reader wants. With an explicit `takeId` that
+ * take alone answers: an unknown id returns `undefined` rather than silently falling back to the active take, so an
+ * export pointed at a take that no longer exists fails instead of rendering a plan it was not asked for.
+ *
+ * Pure: every call allocates its own result, so two readers of the same time can never fight over one pose.
  */
-export function resolveCameraAt(camera: Camera, timeMs: number): ResolvedCamera | undefined {
+export function resolveCameraAt(camera: Camera, timeMs: number, takeId?: string): ResolvedCamera | undefined {
   assertFinite(timeMs, 'timeMs');
-  const take = activeTake(camera);
+  const take = takeId === undefined ? activeTake(camera) : takeById(camera, takeId);
   if (take === undefined) return undefined;
   const segment = segmentAt(take, timeMs);
   if (segment === undefined) return undefined;

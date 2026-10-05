@@ -20,6 +20,7 @@ import {
   setSegmentLensParams,
   setSegmentProjection,
   splitSegment,
+  takeById,
   upsertKey,
   type ProjectionKind,
   type ResolvedCamera,
@@ -300,6 +301,12 @@ export function main(): void {
   let gizmoMode: 'translate' | 'rotate' = 'translate';
   /** Whether the camera path is drawn. A track with fewer than two keyframes has no path, so this is cleared then. */
   let cameraPathVisible = false;
+  /**
+   * The take an export renders. `undefined` means "follow the preview take", which is the default until the `Render`
+   * group's select is used; an explicit id is cleared when its take is deleted and on a project load, so the app never
+   * holds a stale choice — and if one ever reached an export, the job would report it rather than substitute a plan.
+   */
+  let exportTakeId: string | undefined;
   /** The viewport state a run started from, so a pause can hand the view on and the end of a run can undo it. */
   let playbackView: { position: Vector3; quaternion: Quaternion; target: Vector3; time: number } | undefined;
   let lastImport: ImportedAssets | undefined;
@@ -332,13 +339,20 @@ export function main(): void {
           quaternion: [shot.quaternion.x, shot.quaternion.y, shot.quaternion.z, shot.quaternion.w],
           fov: shot.lens,
         },
-        takes: project.camera.takes.map((take) => ({ id: take.id, name: take.name })),
-        activeTakeId: activeTake(project.camera)?.id ?? '',
         projection: shot.projection,
         near: shot.near,
         far: shot.far,
       };
     },
+    // The `Render` group's export take: its own app state, defaulting to the preview take, so an export can render a
+    // plan the editor is not looking at.
+    exportCamera: () => ({
+      takes: project.camera.takes.map((take) => ({ id: take.id, name: take.name })),
+      // Two states, not one: `undefined` is "follow the preview take", which the select shows as an option of its own,
+      // so `takeId` is `''` while it does — and `previewTakeName` is the take that option names.
+      takeId: exportTakeId ?? '',
+      previewTakeName: activeTake(project.camera)?.name ?? '',
+    }),
     historyState: () => ({ canUndo: history.canUndo, canRedo: history.canRedo }),
     actions: {
       undo: () => applyHistoryStep('undo'),
@@ -361,10 +375,7 @@ export function main(): void {
       renameActive: applyRenameActive,
       reparentActive: applyReparent,
       setCameraFov,
-      setActiveTake: applySetActiveTake,
-      addTake: applyAddTake,
-      removeTake: applyRemoveTake,
-      cutAtPlayhead: applyCutAtPlayhead,
+      setExportCamera: applySetExportCamera,
       setCameraProjection: applySetCameraProjection,
       setCameraLensParams: applySetCameraLensParams,
       setCameraPose,
@@ -395,8 +406,13 @@ export function main(): void {
       clearPoseOverride();
     },
     setDuration: applyDuration,
-    // The bar lists the active take's keys and is the only place one can be retimed or removed, but the two writes are
-    // the app's: a key that moved or went changes the shot the playhead resolves, not the clip.
+    // The bar's target select is the only place a take is switched or its structure changed, and every one of those is
+    // the app's: a take switch re-reads the preview, and a key that moved or went changes the shot the playhead
+    // resolves, not the clip. Each refuses while a run is in flight.
+    setActiveTake: applySetActiveTake,
+    copyTake: applyCopyTake,
+    deleteTake: applyRemoveTake,
+    cutAtPlayhead: applyCutAtPlayhead,
     moveCameraKey,
     removeCameraKey,
   };
@@ -631,6 +647,8 @@ export function main(): void {
     //    is playing, and the transport is paused above.
     cameraControlSelected = false;
     cameraPathVisible = false;
+    // The export take is a view of the project being replaced, so it falls back to the loaded active take.
+    exportTakeId = undefined;
     // 3. The raw-mesh layer goes. A source is recorded under an object id, so the records have to be dropped
     //    before ids are reused: the mirror's own pass would otherwise re-parent the replaced import's meshes
     //    under a loaded object. The meshes themselves are the app's, and it detaches them.
@@ -693,6 +711,10 @@ export function main(): void {
     // The capture renders at the requested resolution; nothing in the viewport marks it.
     capture.resize(options.width, options.height);
     const job = new ExportJob({ mirror });
+    // The `Render` group's take, defaulting to the preview take: an export renders the plan it was asked for, which may
+    // not be the one on screen. An explicit stale choice is passed through rather than substituted — the job reports it
+    // — while `undefined` leaves the job on the active take.
+    const takeId = exportTakeId ?? activeTake(project.camera)?.id;
     let result: ExportResult;
     try {
       result = await job.run(
@@ -709,6 +731,7 @@ export function main(): void {
             to: options.to,
             mode: options.mode,
           },
+          ...(takeId === undefined ? {} : { takeId }),
         },
         controller.signal,
       );
@@ -787,16 +810,24 @@ export function main(): void {
     timelinePanel.refresh();
   }
 
-  /** The take being edited, which the whole `Camera` group is about. */
-  function applySetActiveTake(takeId: string): void {
-    if (setActiveTake(project.camera, takeId)) refreshShotViews();
+  /**
+   * Switches the take the timeline bar shows and the clip previews — the bar's camera target *is* the preview/editor
+   * take. A run owns the shot for its length, so the switch is refused while one is in flight; the bar leaves its target
+   * where it was. Returns whether the switch took effect.
+   */
+  function applySetActiveTake(takeId: string): boolean {
+    if (playback.playing) return false;
+    if (!setActiveTake(project.camera, takeId)) return false;
+    refreshShotViews();
+    return true;
   }
 
   /**
-   * Copies the take being edited and switches to the copy — the point of takes: a different shooting plan is made by
-   * editing a copy, and going back is a switch rather than an undo chain.
+   * Copies the take the bar shows and switches to the copy — the point of takes: a different shooting plan is made by
+   * editing a copy, and going back is a switch rather than an undo chain. Refused while a run owns the shot.
    */
-  function applyAddTake(): void {
+  function applyCopyTake(): void {
+    if (playback.playing) return;
     const source = activeTake(project.camera);
     const copy = addTake(project.camera, {
       ...(source === undefined ? {} : { source }),
@@ -806,10 +837,23 @@ export function main(): void {
     refreshShotViews();
   }
 
-  /** Deletes the take being edited. The model refuses the last one, which is why the button is disabled instead. */
+  /**
+   * Deletes the take the bar shows. The model refuses the last one, and a run refuses the delete; the button mirrors
+   * both. An explicit export choice of that take is cleared, so the export falls back to the preview take rather than
+   * holding an id that names nothing.
+   */
   function applyRemoveTake(): void {
+    if (playback.playing) return;
     const take = activeTake(project.camera);
-    if (take !== undefined && removeTake(project.camera, take.id)) refreshShotViews();
+    if (take === undefined || !removeTake(project.camera, take.id)) return;
+    if (exportTakeId === take.id) exportTakeId = undefined;
+    refreshShotViews();
+  }
+
+  /** The `Render` group's export-camera select: an id that names a take is stored, anything else returns to the preview. */
+  function applySetExportCamera(takeId: string): void {
+    exportTakeId = takeById(project.camera, takeId) === undefined ? undefined : takeId;
+    panels.refresh();
   }
 
   /**
@@ -819,20 +863,24 @@ export function main(): void {
    * refuses one that already holds a key, so a refused move leaves the camera exactly as it was.
    */
   function moveCameraKey(takeId: string, segmentId: string, keyId: string, timeMs: number): void {
+    if (playback.playing) return;
     if (!Number.isFinite(timeMs)) return;
     if (moveKey(project.camera, takeId, segmentId, keyId, timeMs)) refreshShotViews();
   }
 
   /** Removes one camera key. The model refuses the last key of a segment, which is why that row's button is disabled. */
   function removeCameraKey(takeId: string, segmentId: string, keyId: string): void {
+    if (playback.playing) return;
     if (removeKey(project.camera, takeId, segmentId, keyId)) refreshShotViews();
   }
 
   /**
    * Cuts at the playhead: the shot is split in two, and the later half holds its own state from that instant — which is
-   * an exact cut until the author moves it, and a seamless split if they never do.
+   * an exact cut until the author moves it, and a seamless split if they never do. Refused while a run owns the shot,
+   * because the playhead it would cut at is the run's.
    */
   function applyCutAtPlayhead(): void {
+    if (playback.playing) return;
     const take = activeTake(project.camera);
     if (take === undefined) return;
     const result = splitSegment(project.camera, take.id, playback.time * 1000, project.timeline.durationMs);
@@ -848,6 +896,7 @@ export function main(): void {
    * the author sets it for the new kind; the clip planes are the shot's own and are kept.
    */
   function applySetCameraProjection(projection: ProjectionKind): void {
+    if (playback.playing) return;
     const shot = shotTarget();
     if (shot === undefined) return;
     const result = setSegmentProjection(project.camera, shot.takeId, shot.segmentId, projection);
@@ -860,6 +909,7 @@ export function main(): void {
 
   /** Writes the shot's clip planes, which the model refuses unless they are a usable pair. */
   function applySetCameraLensParams(params: { near: number; far: number }): void {
+    if (playback.playing) return;
     const shot = shotTarget();
     if (shot === undefined) return;
     const result = setSegmentLensParams(project.camera, shot.takeId, shot.segmentId, params);
@@ -965,6 +1015,8 @@ export function main(): void {
     };
     playback.play();
     panels.refresh();
+    // The bar's camera rows and take commands are gated on `playing`, so a run's start has to reach it too.
+    timelinePanel.refresh();
   }
 
   /**
@@ -977,6 +1029,7 @@ export function main(): void {
     playback.pause();
     controls.setViewFrom(mirror.camera.position, mirror.camera.quaternion);
     panels.refresh();
+    timelinePanel.refresh();
   }
 
   /**
@@ -993,6 +1046,7 @@ export function main(): void {
       controls.setViewFrom(restore.position, restore.quaternion, restore.target);
     }
     panels.refresh();
+    timelinePanel.refresh();
   }
 
   /** The transport toggle: the only entry point, so every run is saved and every pause can hand the view over. */

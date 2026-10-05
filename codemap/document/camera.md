@@ -41,7 +41,7 @@ function adoptCameraIds(camera: Camera): void;
 function activeTake(camera: Camera): CameraTake | undefined;
 function takeById(camera: Camera, takeId: string): CameraTake | undefined;
 function segmentAt(take: CameraTake, timeMs: number): CameraSegment | undefined;
-function resolveCameraAt(camera: Camera, timeMs: number): ResolvedCamera | undefined;
+function resolveCameraAt(camera: Camera, timeMs: number, takeId?: string): ResolvedCamera | undefined;
 
 function setActiveTake(camera: Camera, takeId: string): boolean;
 function addTake(camera: Camera, init: { name?: string; source?: CameraTake; durationMs: number }): CameraTake;
@@ -76,8 +76,12 @@ function retimeCamera(camera: Camera, durationMs: number): void;
 5. `resolveKey` answers one segment's state at a time: the first key's state before the first key, the last key's after
    the last, and in between position by `lerpVectors`, orientation by shortest-arc `slerp`, and the lens scalar
    linearly. Nothing about `enter` can change this, so a mislabelled boundary cannot bend a path.
-6. `resolveCameraAt` returns a fresh `ResolvedCamera` on every call — the vectors and the quaternion are new — which is
-   what makes two readers of the same time independent. It returns `undefined` only when the camera has no take at all.
+6. `resolveCameraAt` resolves the active take when no `takeId` is given — the legacy/default document behaviour — and
+   exactly the named take when one is given: an explicit id that matches no take returns `undefined` rather than falling
+   back to another plan, so an export pointed at a deleted take cannot silently render the wrong shot. A camera with no
+   take at all likewise returns `undefined`. It returns a fresh `ResolvedCamera` on every call — the vectors and the
+   quaternion are new — which is what makes two readers of the same time independent. The override is what lets an
+   export render a take other than the one being previewed without switching `activeTakeId`.
 7. Take edits: `addTake` either copies a source take (a deep copy, keys included, with fresh ids, so editing the copy
    cannot reach the original) or creates a single segment opening on a default shot; `removeTake` refuses the last take
    and hands `activeTakeId` to the first survivor; `setActiveTake` refuses an unknown id; `renameTake` refuses an empty
@@ -137,7 +141,9 @@ function retimeCamera(camera: Camera, durationMs: number): void;
 
 ## Tests
 `tests/camera.test.ts` pins the shape a project starts from and that it answers for every time; the hold outside the
-authored span; linear position and lens with shortest-arc orientation; a pure resolve; segment ownership of an instant
+authored span; linear position and lens with shortest-arc orientation; a pure resolve; resolving a take named by id
+while the active take stays the preview, and a named id that matches nothing resolving to nothing rather than to the
+active take; segment ownership of an instant
 and of the clip's end; a split that tiles the take with the same state keyed on both sides; two sides of a cut
 diverging with no blend across the boundary; refusals for an empty split, a removed-only segment, an overlapping range,
 and unusable clip planes; a shared boundary moving both neighbours; the lens scalar surviving a projection switch;

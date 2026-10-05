@@ -266,6 +266,31 @@ describe('takes', () => {
     expect(takeById(camera, copy.id)?.name).toBe('Wide');
   });
 
+  it('resolves a named take by id, so a preview and an export can read different plans', () => {
+    const camera = cameraAt(2, 0, 0);
+    const { take, segment } = only(camera);
+    upsertKey(camera, take.id, segment.id, { timeMs: 1000, position: new Vector3(5, 0, 0), quaternion: new Quaternion(), lens: 40 });
+
+    const other = addTake(camera, { name: 'Wide', durationMs: DURATION });
+    const otherSegment = other.segments[0];
+    if (otherSegment === undefined) throw new Error('fixture: the added take has no segment');
+    upsertKey(camera, other.id, otherSegment.id, { timeMs: 0, position: new Vector3(8, 0, 0), quaternion: new Quaternion(), lens: 70 });
+
+    // The active take answers when no id is named; naming one reads that take whatever the active flag says, which is
+    // what lets an export render a plan the editor is not previewing.
+    expect(setActiveTake(camera, take.id)).toBe(true);
+    expect(resolveCameraAt(camera, 0)?.position.toArray()).toEqual([2, 0, 0]);
+    expect(resolveCameraAt(camera, 0, other.id)?.position.toArray()).toEqual([8, 0, 0]);
+    expect(resolveCameraAt(camera, 0, other.id)?.takeId).toBe(other.id);
+    // The other take's own single key holds for the whole clip, so a later time reads it rather than the active take.
+    expect(resolveCameraAt(camera, 1000, other.id)?.position.toArray()).toEqual([8, 0, 0]);
+
+    // A take that names nothing resolves to nothing rather than substituting the active take: an export pointed at a
+    // deleted take must fail, not render the wrong plan. Omitting the id is what asks for the active take.
+    expect(resolveCameraAt(camera, 0, 'take-999')).toBeUndefined();
+    expect(resolveCameraAt(camera, 0)?.takeId).toBe(take.id);
+  });
+
   it('keeps at least one take, and hands the active flag on when the active one goes', () => {
     const camera = cameraAt(0, 0, 0);
     const { take } = only(camera);

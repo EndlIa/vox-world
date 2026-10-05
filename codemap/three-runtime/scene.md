@@ -26,7 +26,7 @@ class SceneMirror {
   get sourceVisible(): boolean;
   clearSources(): void;                                // forgets the raw-mesh records; never touches the meshes
   applySettings(): void;                               // re-reads project settings: background + ambient term
-  applyShot(timeMs: number): void;                      // writes the active take's shot into the output camera
+  applyShot(timeMs: number, takeId?: string): boolean;  // writes the named take's shot, else the active take's; false when none resolves
   frameAll(camera: THREE.PerspectiveCamera): void;      // fits the given camera to layers 0 and 2
   dispose(): void;
 }
@@ -52,11 +52,14 @@ class SceneMirror {
 15. `previewTransform(id, matrixWorld)` writes one node's local `position`/`quaternion`/`scale` from a world matrix and touches nothing else: the parent's world matrix is divided out first through `project.worldMatrix(parentId)`, the same conversion the document write performs, and an object with no parent takes the matrix as it is. It is the one write that puts a pose on screen without committing it, and both of its callers are gestures: the live half of a gizmo drag, so the object follows the pointer before anything is committed, and the app's held pose, which puts the same matrix back every frame while the clip has no keyframe to speak for it. `sync()` never rewrites a clean object's transform, so the write stands until the commit rebuilds the node from the document — which by then holds the same matrix — or the next mixer sample overwrites it. An unknown id is a no-op.
 16. `clearSources()` empties the raw-mesh record map and touches nothing else: no mesh is detached, disposed, or hidden, because a source mesh belongs to the app. It exists for a load: a record is keyed by object id and `sync()`'s source pass runs for every recorded id, so a record that outlived its project would re-parent an earlier project's mesh under whatever object the loaded file gives that id, and show it whenever that object is `empty`.
 17. `applySettings()` re-reads `project.settings` into the scene: a fresh `Color` for `scene.background` and the stored ambient light's `intensity`. Neither is reachable from `sync()`, which leaves the scene's own lighting and clear color alone, so a load has to say so explicitly.
-18. `applyShot(timeMs)` is the one place a take becomes a frame: it resolves the project's camera at that time
-   (`document/camera.ts`) and writes the state into the output camera — pose, clip planes, projection kind, and the
-   lens in that kind's own unit — then rebuilds the projection. A state that does not resolve (a camera with no take)
-   leaves the last shot standing, because the frame still has to be drawn. `up` is never among the fields it writes:
-   the frame is set once at construction, so nothing here can re-roll the export frame.
+18. `applyShot(timeMs, takeId?)` is the one place a take becomes a frame: it resolves the project's camera at that time
+   (`document/camera.ts`) — the active take when no id is named, else the named take, which is how an export renders a
+   plan other than the one being previewed — and writes the state into the output camera — pose, clip planes, projection
+   kind, and the lens in that kind's own unit — then rebuilds the projection, and returns `true`. A state that does not
+   resolve leaves the last shot standing and returns `false`: an active take that cannot answer still has a frame to
+   draw, while an explicit `takeId` that names no take must not be substituted with another plan — the caller, an
+   export, reports the refusal. `up` is never among the fields it writes: the frame is set once at construction, so
+   nothing here can re-roll the export frame.
 
 ## Invariants
 - One `Object3D` per document object: after `sync()` the node set equals `project.objects`, every node is a descendant of `mirror.scene`, and the output camera is a child of the scene root named `camera` (no clip binds it: the shot is resolved, not mixed).
@@ -64,8 +67,10 @@ class SceneMirror {
 - The output camera stands in the world's frame: its `up` is `+Z`, written once at construction and never again — `applyShot` writes position, quaternion, projection kind, lens, and clip planes and leaves `up` alone — so a later
   `lookAt` on it, and therefore the export frame after any load, stays Z-up however the shot changes. The mirror writes
   no other camera's `up`.
-- `applyShot` is pure in `(project.camera, timeMs)`: the same time always produces the same camera state, a cut is
-  exact because nothing interpolates across a segment boundary, and an unresolvable time leaves the camera as it was.
+- `applyShot` is pure in `(project.camera, timeMs, takeId)`: the same time and take always produce the same camera
+  state, a cut is exact because nothing interpolates across a segment boundary, and an unresolvable state leaves the
+  camera as it was and returns `false`. An explicit `takeId` is never substituted with the active take; naming one
+  writes only the output camera and never changes `activeTakeId`.
 - `objectOf(id)` returns the mirrored node of a live object and `undefined` for anything else.
 - `contentCenterOf(id)` is a pure function of the object's container: the same grid always answers the same point, half a cell
   of that object's own grid past the mid-point of the box its occupied cells span; it is the
@@ -114,14 +119,15 @@ class SceneMirror {
   `PerspectiveCamera`, `Camera`, `DirectionalLight`, `AmbientLight`, `Color`, `Box3`, `Vector3`, `Matrix4` (the source
   placement and the attachment contract), `Layers`.
 - `./outputCamera.js` — `OutputCamera`, the one camera instance this mirror owns and `applyShot` writes.
-- `../document/camera.js` — `resolveCameraAt`, the one evaluator the shot comes from.
+- `../document/camera.js` — `resolveCameraAt`, the one evaluator the shot comes from, with its optional `takeId` naming the
+  take an export renders.
 - `../document/project.js` — `Project`, `ObjectId`, `SceneObject` (whose `representation` is the payload test of the source-mesh visibility rule).
 - `../voxels/uniform/grid.js` — `HexColor`, plus `CELL_SIZE`, the base cell size a grid subdivides; the rendered cube's edge and the cell-center offset are that grid's own `cellSize`, not the constant.
 No outer-ring import: no editor, no UI, no capture. A source mesh arrives as an `Object3D` from the caller; the mirror never builds one.
 
 ## Tests
 - `tests/scene.test.ts` (node environment, no renderer needed: it builds a real `Project` and `SceneMirror` and calls `sync()`) pins the derived voxel geometry, the one place a cell size can go wrong without any document value changing. One `describe`, two cases: a cube the size of the object's own cell centered half a cell past its index — the same cell `(3, 0, 0)` is a width-`1` cube at `3.5`/`0.5`/`0.5` at subdivision 1 and a width-`0.5` cube at `1.75`/`0.25`/`0.25` at subdivision 2, which is `(x + 0.5) * cell` on every axis — and `contentCenterOf` pivoting on that same lattice, `(1, 1, 1)` for the cells `(0, 0, 0)` and `(1, 1, 1)` at subdivision 1 and `(0.25, 0.25, 0.25)` at subdivision 4. The fixtures place the object at `(10, 0, -3)`, so an instance matrix that folded the node's own placement in would fail; the instance translations are read in a sorted list, so instance order never decides the result.
-- The reload support the app needs is pinned node-side in the same file: `clearSources()` followed by `sync()` leaves an app-detached source mesh detached, `applySettings()` moves the background colour and the ambient light's intensity, and `applyShot()` writes the active take's shot — pose, kind, lens, clip planes — into the output camera, jumping at a cut and rendering an orthographic segment with an orthographic projection, element for element.
+- The reload support the app needs is pinned node-side in the same file: `clearSources()` followed by `sync()` leaves an app-detached source mesh detached, `applySettings()` moves the background colour and the ambient light's intensity, and `applyShot()` writes the active take's shot — pose, kind, lens, clip planes — into the output camera, jumping at a cut and rendering an orthographic segment with an orthographic projection, element for element; `applyShot(t, takeId)` writes exactly the named take without switching the active one, and returns `false` and writes nothing for a `takeId` that names no take.
 - The rest of the mirror has no vitest file: mask mode's flat pass and its restore, the instance-to-cell lookup and picking through it, the layer-2 source meshes, `frameAll`, and material and lighting appearance — the light's aim and the output camera's `up` are not pinned by `tests/scene.test.ts`, they are run-and-look — are verified by running the app (README §10), plus the node-side checks below. `tests/timeline.test.ts` binds a stand-in root shaped like this class, so it pins the mixer, not the mirror.
 - The source-mesh layer is also checked node-side, where no renderer is needed (a throwaway `vitest` repro against a real `Project` and `SceneMirror`): a mesh attached before its node exists ends up on layer 2 as the object's only child under `userData.objectId`; attaching it twice leaves one child; a `uniform` payload hides it, `setSourceVisible(true)` shows it again, and a rebuild moves it onto the replacement node; `frameAll` moves a camera that saw nothing on layer 0 onto a layer-2 mesh alone. The placement contract is checked the same way against real imported content (79 rotated, non-uniformly scaled nodes of a Sketchfab GLB): every object `applyVoxelizeResult` fills comes out translation-only, and every attached mesh's world matrix still equals its imported node's, before the payload (local placement ≈ identity) and after it (local placement ≈ the `-origin` offset).
 
