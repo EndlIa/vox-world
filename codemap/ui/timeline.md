@@ -93,8 +93,8 @@ class TimelinePanel {
      track, and `add` is enabled exactly while a target and a channel resolve — not while a track exists, because the
      first keyframe of a channel is what creates its track;
    - a camera target renders the preview take's keys in segment order then key order, one `cameraKeyRow` each, with a
-     marker in `CAMERA_MARKER_COLOR = 'var(--text)'` — the second colour is what tells a camera key apart from an object
-     keyframe on the same bar. The camera structure buttons are live here and `Copy take`/`Cut here` are `disabled`
+     marker in `CAMERA_MARKER_COLOR = 'var(--text)'` — the colour the bar marks camera keys with. Only the selected
+     target's keys are drawn, so the two colours never share the bar; this one says which kind it is drawing. The camera structure buttons are live here and `Copy take`/`Cut here` are `disabled`
      while `playback.playing`, and `Delete take` also while the project holds one take, mirroring the app's refusal and
      the model's refusal of the last take.
    Every row and marker is rebuilt on each `refresh()`, and each row addresses its key by id, never by its place in a
@@ -223,7 +223,9 @@ take stays the preview, an unknown explicit id resolves to nothing, and the acti
 Panel behavior is verified by running the app: add, retime, seek to, and delete object keyframes while watching the
 preview, and confirm a retime onto an occupied millisecond is refused and the field comes back; the target select must
 list the active object plus one entry per take, choosing a take must switch the preview and replace the list with that
-take's keys, and choosing the object must put the object track back. With a camera target the camera control row shows
+take's keys, and choosing the object must put the object track back; a channel switch must show that channel's own rows —
+empty for a channel with no track, with `add` still enabled because the first key is what creates one — and switching
+back must restore the rows and markers the track holds. With a camera target the camera control row shows
 `Copy take`/`Delete take`/`Cut here` and the object row is hidden: aiming the shot at a second time adds a second row and
 a second marker, a row's `key` seeks, typing a new time retimes it and re-sorts the list, `delete` removes the row and
 disables itself once one key is left, `Cut here` adds a row and prefixes the labels with the segment names, `Copy take`

@@ -95,7 +95,7 @@ const OBJECT_TARGET = 'object';
 const TAKE_TARGET_PREFIX = 'take:';
 
 const MARKER_COLOR = 'var(--accent)';
-/** Camera keys are not object keyframes: a second colour is what tells the two apart on the same bar. */
+/** Camera keys are not object keyframes: the bar marks them in a colour of their own, so which kind it is drawing is readable. */
 const CAMERA_MARKER_COLOR = 'var(--text)';
 
 export class TimelinePanel {
