@@ -371,7 +371,9 @@ function main(): void;
   re-samples the playhead through `playback.setTime`, so the rebuilt node draws the clip's pose in the same frame, never the document's.
 - The gizmo is attached to exactly one node at a time: the carrier's node while `cameraControlSelected` is set — whatever the session mode, so a selected
   carrier keeps the handles even in `edit` mode — and otherwise the active object's
-  mirrored node while the session is in `object` mode, so the carrier and an object can never both carry handles. It pivots at the
+  mirrored node while the session is in `object` mode, so the carrier and an object can never both carry handles. Both subjects carry the one `gizmoMode`, so an
+  object's handles rotate it exactly as the carrier's do, and the provider publishes the attach itself as `gizmoAttached` so the panel's mode button is live
+  whenever the gizmo has a subject — gating that button on the carrier would leave every object on `translate`. It pivots at the
   carrier's own origin, the camera position, for the carrier, and at that object's content center for an object. A gesture moves the
   object through `previewTransform`, which writes no document, and produces exactly one document write on release, from the matrix the gizmo reports
   and not from the node it was attached to; that write rebuilds the object, so the loop's identity comparison is what re-attaches the gizmo, and no

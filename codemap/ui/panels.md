@@ -36,6 +36,7 @@ type CameraPose = {                 // one authored camera pose: the carrier's f
 type CameraControlView = {          // what the carrier's controls read
   selected: boolean;                // whether the gizmo currently drives the carrier
   mode: 'translate' | 'rotate';     // the gizmo's mode, shared with objects
+  gizmoAttached: boolean;           // whether the gizmo is on a node at all; the mode button is the gizmo's, so it, not `selected`, is what makes the button live
   playing: boolean;                 // whether a run is in flight; the app skips the `Camera -> View` capture while one is, and the reshaping controls wait
   pose: CameraPose;                 // the shot the playhead resolves, i.e. what a key would hold
   projection: ProjectionKind;       // the shot's own kind: the projection selector's value
@@ -136,10 +137,13 @@ class Panels {
    two clip-plane fields go together through `setCameraLensParams` — the pair is one decision, because a camera with `near >= far` renders nothing — and both
    are marked touched, so a refused pair comes back from the next `refresh()`. With `context.cameraControl()` present `refresh()` seeds the
    seven fields from the shot the playhead resolves (skipping whichever field is focused, so the field being typed into is never overwritten) and swaps the two button
-   labels: the select reads `Deselect` while the carrier is selected, and the mode button names the mode a press would move *to*, so a `rotate` carrier reads
+   labels: the select reads `Deselect` while the carrier is selected, and the mode button names the mode a press would move *to*, so `rotate` reads
    `-> Move`. The four carrier controls are gated rather than tracked: with no provider the select, the mode, and the two view switches are all `disabled`, because a
-   context with no carrier has nothing for them to aim, and the mode button is disabled too while the carrier is not selected, since a mode with nothing to move
-   is no choice. The projection selector — the one control here that would reshape the camera while it is being rendered — is `disabled` while `playing`; the
+   context with no carrier has nothing for them to aim, and the mode button is disabled too while the gizmo is attached to nothing — `!gizmoAttached`, which is not
+   the carrier being unselected, because an active object in object mode is a subject as well — since a mode with nothing to move is no choice. The mode button
+   belongs to the gizmo rather than to the carrier for that reason: `mode` is the one mode a carrier and an object share, so an object's handles rotate with a press
+   exactly as the carrier's do, and while the gizmo is on an object the button stays live — gating it on the carrier is what would leave every object on `translate`,
+   the mode the objects could then never leave and the carrier could set only by accident. The projection selector — the one control here that would reshape the camera while it is being rendered — is `disabled` while `playing`; the
    take-structure commands that could also disturb a run (switch, copy, delete, cut) live on the timeline bar's camera target and are refused there.
    `Show camera path` is seeded from the same provider — `checked = pathAvailable && pathVisible`, `disabled = !pathAvailable` — because a path
    needs two keys to exist at all, so a take below two is unchecked as well as disabled, and the panel holds no path flag of its own. The seven pose
@@ -222,7 +226,7 @@ class Panels {
   rather than a detach. It is `disabled` exactly while `session.selection.kind === 'none'`, because it commands the region the session already
   selected and with no region there is nothing to detach; the tool buttons are never disabled, since a press is what creates the region those tools
   work on.
-- The carrier's controls are a view of the app's own state and never a second copy of it: `refresh()` seeds the seven pose fields, the projection selector, the two clip-plane fields, and the lens label from `context.cameraControl()`, so what the fields show is the shot the app would write a key from. The panel keeps no pose, no take, no selection, and no mode of its own, and the carrier's controls are gated rather than tracked — `disabled` with no provider, the mode button also while the carrier is not selected, and the projection selector while a run owns the shot. The `Show camera path` box is seeded from the same view — `checked = pathAvailable && pathVisible`, `disabled = !pathAvailable` — so it can never show a drawn path below two keys and the panel holds no visibility flag of its own.
+- The carrier's controls are a view of the app's own state and never a second copy of it: `refresh()` seeds the seven pose fields, the projection selector, the two clip-plane fields, and the lens label from `context.cameraControl()`, so what the fields show is the shot the app would write a key from. The panel keeps no pose, no take, no selection, and no mode of its own, and the carrier's controls are gated rather than tracked — `disabled` with no provider, the mode button also while the gizmo is attached to nothing (not while the carrier is merely unselected, because the active object is a subject too), and the projection selector while a run owns the shot. The `Show camera path` box is seeded from the same view — `checked = pathAvailable && pathVisible`, `disabled = !pathAvailable` — so it can never show a drawn path below two keys and the panel holds no visibility flag of its own.
 - `Show raw meshes` forwards `checked` and nothing else, and is the panel's only view of the raw-mesh override while `context.sceneVisible()` exists:
   it then displays that value on every `refresh()` and holds no copy of its own, so the mirror and the checkbox cannot disagree. With no `sceneVisible()`
   in the context the checkbox is forward-only and `refresh()` leaves it alone — the panel then displays the user's last click, and the app is the only
@@ -326,7 +330,10 @@ disappear behind the voxels — in the same place — without changing what an e
 pressing `Select` must put the gizmo on the camera carrier and enable `Camera -> View`, `View -> Camera`, and the mode button, `Camera -> View` must author
 the pose the viewport shows into the seven fields, a drag on the carrier must aim the shot and commit one pose into them, typing any of `X`, `Y`, `Z`,
 `QX`, `QY`, `QZ`, `QW` must move the shot and re-seed the others, `View -> Camera` must move the viewport to the authored shot and change no field,
-the mode button must read `-> Move` after a press and keep the carrier selected, `Deselect` must hand the gizmo back to the active object, and the carrier
+the mode button must read `-> Move` after a press and keep the carrier selected, `Deselect` must hand the gizmo back to the active object, and with the object
+holding the gizmo the mode button must be live again — a press must put the object's handles into `rotate`, a drag on a ring must turn the object about its content
+center without touching the shot's fields, and a mode the carrier left in `rotate` must be shown there rather than silently inherited — while with no object
+selected and the carrier deselected the gizmo is on nothing and the button must be disabled, and the carrier
 must be drawn from the first frame and hidden only while a run previews the shot, because the preview renders the viewport through the output camera
 and a camera cannot see itself. The path box is on the same group: with two camera keyframes it must be enabled, and ticking it must
 draw the white polyline through the trajectory with one ring per keyframe and unticking it must take the drawing away, while with fewer than two

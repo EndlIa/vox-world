@@ -331,6 +331,11 @@ export function main(): void {
       return {
         selected: cameraControlSelected,
         mode: gizmoMode,
+        // `gizmoMode` is the one mode the carrier and an object share, so the button that flips it is the gizmo's,
+        // not the carrier's: it is live whenever the gizmo is on a node at all. The app's own attach rule answers
+        // that, rather than the panel repeating it — a button gated on the carrier would leave every object on
+        // `translate`, the mode it could then never leave.
+        gizmoAttached: gizmoNodeNow() !== undefined,
         playing: playback.playing,
         pathVisible: cameraPathVisible,
         pathAvailable: cameraKeyframePositions(project).length >= 2,
