@@ -56,6 +56,7 @@ import type { ImportedScene } from '../three-runtime/import.js';
 import { SceneMirror } from '../three-runtime/scene.js';
 import { Picker } from '../three-runtime/picking.js';
 import { ViewportControls } from '../three-runtime/controls.js';
+import type { GizmoMode } from '../three-runtime/controls.js';
 import { Capture } from '../three-runtime/capture.js';
 import { Overlay } from '../three-runtime/overlay.js';
 import { WorldGrid } from '../three-runtime/grid.js';
@@ -127,6 +128,11 @@ const EXPORT_FILENAME = 'vox-world.mp4';
 const PROJECT_FILENAME = 'vox-world-project.json';
 /** The carrier pivots about its own origin, which is the camera position. */
 const CAMERA_CONTROL_PIVOT = new Vector3(0, 0, 0);
+/**
+ * An object's gizmo draws both handle sets at once, so rotation is a handle on the object rather than a mode
+ * to find: the mode button belongs to the camera carrier alone, whose gizmo takes one set.
+ */
+const OBJECT_GIZMO_MODES: readonly GizmoMode[] = ['translate', 'rotate'];
 /** Clip length before the author edits it, in the authoring unit: milliseconds. */
 const DEFAULT_DURATION_MS = 10_000;
 const DEFAULT_FPS = 30;
@@ -297,8 +303,11 @@ export function main(): void {
   let timelineVisible = false;
   /** Whether the camera carrier is selected: while it is, the gizmo drives the output camera instead of an object. */
   let cameraControlSelected = false;
-  /** The gizmo's mode for whatever it is attached to; the carrier and an object share the one toggle. */
-  let gizmoMode: 'translate' | 'rotate' = 'translate';
+  /**
+   * The carrier's own gizmo mode, flipped by the `Camera` group's button; an object does not need one, because
+   * its gizmo draws the arrows and the rings together (`OBJECT_GIZMO_MODES`).
+   */
+  let cameraGizmoMode: GizmoMode = 'translate';
   /** Whether the camera path is drawn. A track with fewer than two keyframes has no path, so this is cleared then. */
   let cameraPathVisible = false;
   /**
@@ -330,12 +339,7 @@ export function main(): void {
       const shot = currentShot();
       return {
         selected: cameraControlSelected,
-        mode: gizmoMode,
-        // `gizmoMode` is the one mode the carrier and an object share, so the button that flips it is the gizmo's,
-        // not the carrier's: it is live whenever the gizmo is on a node at all. The app's own attach rule answers
-        // that, rather than the panel repeating it — a button gated on the carrier would leave every object on
-        // `translate`, the mode it could then never leave.
-        gizmoAttached: gizmoNodeNow() !== undefined,
+        mode: cameraGizmoMode,
         playing: playback.playing,
         pathVisible: cameraPathVisible,
         pathAvailable: cameraKeyframePositions(project).length >= 2,
@@ -1068,9 +1072,9 @@ export function main(): void {
     panels.refresh();
   }
 
-  /** Flips the gizmo between translating and rotating, for whichever node it is attached to. */
+  /** Flips the carrier's handle set between moving and rotating the output camera. */
   function toggleGizmoMode(): void {
-    gizmoMode = gizmoMode === 'translate' ? 'rotate' : 'translate';
+    cameraGizmoMode = cameraGizmoMode === 'translate' ? 'rotate' : 'translate';
     syncGizmo();
     panels.refresh();
   }
@@ -1429,7 +1433,9 @@ export function main(): void {
     // The carrier pivots about its own origin, which is the camera position; an object pivots about the center of
     // its content, so the handles sit on what the user edits.
     const pivot = cameraControlSelected || objectId === null ? CAMERA_CONTROL_PIVOT : mirror.contentCenterOf(objectId);
-    controls.attachGizmo(node, gizmoMode, pivot);
+    // The carrier takes one set — the mode its `Camera` group button flips — while an object takes both, so an
+    // object rotates from a handle and never from a mode that a panel elsewhere would have to be found to set.
+    controls.attachGizmo(node, cameraControlSelected ? [cameraGizmoMode] : OBJECT_GIZMO_MODES, pivot);
     gizmoNode = node;
   }
 

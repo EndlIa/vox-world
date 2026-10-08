@@ -37,12 +37,6 @@ export type CameraPose = {
 export type CameraControlView = {
   selected: boolean;
   mode: 'translate' | 'rotate';
-  /**
-   * Whether the gizmo is attached to a node at all — the carrier while it is selected, or the active object in
-   * object mode. The mode button is the gizmo's rather than the carrier's, so this, not `selected`, is what makes
-   * it live: `mode` is the one mode both subjects use, and an object left to `translate` could never leave it.
-   */
-  gizmoAttached: boolean;
   pose: CameraPose;
   /** The shot's own projection and clip planes, which the projection selector and the two fields edit. */
   projection: ProjectionKind;
@@ -526,7 +520,7 @@ export class Panels {
     // aims it, and its projection — while the timeline bar keeps the keyframes, which are animation.
     this.cameraSelectButton = el('button', { on: { click: () => context.actions.toggleCameraControl() } });
     this.cameraModeButton = el('button', {
-      title: 'switch the gizmo between moving and rotating whatever it is on',
+      title: 'switch the gizmo between moving and rotating the carrier',
       on: { click: () => context.actions.toggleGizmoMode() },
     });
     this.cameraToViewButton = el('button', {
@@ -760,12 +754,13 @@ export class Panels {
         if (document.activeElement !== input) input.value = fmt(authored[index] ?? 0, 4);
       });
     }
-    // The mode button belongs to the gizmo, not to the carrier: `mode` is what an object rotates with too, so the
-    // gate is whether the gizmo is on a node at all. Gating it on the carrier instead would leave every object on
-    // `translate`, with only whatever mode the carrier left behind reachable by accident — and no button to leave it.
+    // The carrier's own controls need a carrier: a context without one has nothing for them to aim, and a
+    // rotation mode with no carrier selected has nothing to rotate. The mode button is the carrier's alone —
+    // an object's gizmo draws its arrows and rings together, so nothing about an object is gated here, and
+    // the object needs no mode the camera's button would have to be reached to set.
     const carrierGated = cameraControl === undefined;
     this.cameraSelectButton.disabled = carrierGated;
-    this.cameraModeButton.disabled = carrierGated || !cameraControl?.gizmoAttached;
+    this.cameraModeButton.disabled = carrierGated || !cameraControl?.selected;
     this.cameraToViewButton.disabled = carrierGated;
     this.viewToCameraButton.disabled = carrierGated;
 

@@ -48,8 +48,8 @@ function main(): void;
    lookup is deferred to call time. Its two callbacks keep the UI and the mirror in step: a session change re-syncs the gizmo, marks the active object
    dirty, and re-reads the readouts and the UI; the ids an operation wrote go straight to a mark-dirty plus a commit, so exactly those objects are rebuilt
    — which is what leaves neither half of a detach, whose two objects both changed, drawing stale geometry. The flags no module can own are the app's:
-   `cameraControlSelected` (`false`; whether the gizmo drives the carrier instead of the active object), `gizmoMode` (`'translate'`; the one mode the
-   carrier and an object share), `cameraPathVisible` (`false`, which `refreshCameraPath` clears whenever the active take holds fewer than two keys), and
+   `cameraControlSelected` (`false`; whether the gizmo drives the carrier instead of the active object), `cameraGizmoMode` (`'translate'`; the carrier's own handle
+   set, which an object never reads because its gizmo is given both sets at once), `cameraPathVisible` (`false`, which `refreshCameraPath` clears whenever the active take holds fewer than two keys), and
    `poseOverride` (`undefined`; the world matrix one object's node is held on when a gesture wrote a pose no keyframe holds, cleared by every change of
    the time context — a seek, the transport, a keyframe edit, a retimed clip, an undo, a load, an export — and by the session ceasing to name the object
    the hold was made on, which a press that re-selects the same object does not count as, because the session notifies on every assignment).
@@ -121,7 +121,9 @@ function main(): void;
      node while the session is in `object` mode, and nothing in `edit` mode or with an empty selection. The mirror's outline follows the same condition,
      because the outline says which object the handles are on. The pivot is the carrier's own origin — the camera position, since a camera has no content
      to center on — and the center of the object's own content for an object, so the handles sit on what the user edits rather than at the node origin the
-     document transform means; both carry the one `gizmoMode`. A drag has two halves and writes the document once. The live half writes no document: the
+     document transform means. The two subjects do not share a mode: the carrier is given the one set its own `cameraGizmoMode` names, while an object is given
+     both sets at once (`OBJECT_GIZMO_MODES`), so rotating an object is a handle on it rather than a mode some other group's button would have to be reached to
+     flip. A drag has two halves and writes the document once. The live half writes no document: the
      carrier's node takes the reported matrix directly, since the carrier *is* the node the gizmo derives from, and an object's mirrored node takes the
      world matrix the gesture asks for with the very rule the commit stores — preview and commit must match, or the release would step the object back onto
      the grid. The commit half is the one write, from the world matrix the gizmo reports and not from the node it was attached to; the rebuild that write
@@ -371,9 +373,10 @@ function main(): void;
   re-samples the playhead through `playback.setTime`, so the rebuilt node draws the clip's pose in the same frame, never the document's.
 - The gizmo is attached to exactly one node at a time: the carrier's node while `cameraControlSelected` is set — whatever the session mode, so a selected
   carrier keeps the handles even in `edit` mode — and otherwise the active object's
-  mirrored node while the session is in `object` mode, so the carrier and an object can never both carry handles. Both subjects carry the one `gizmoMode`, so an
-  object's handles rotate it exactly as the carrier's do, and the provider publishes the attach itself as `gizmoAttached` so the panel's mode button is live
-  whenever the gizmo has a subject — gating that button on the carrier would leave every object on `translate`. It pivots at the
+  mirrored node while the session is in `object` mode, so the carrier and an object can never both carry handles. What the node carries differs by subject: the
+  carrier takes the one set `cameraGizmoMode` names, flipped by the `Camera` group's own button, while an object takes both sets at once, so an object's rotation is
+  always a handle and never waits on a mode set somewhere else. The panel's mode button is therefore gated on the carrier's own selection and on nothing about an
+  object. It pivots at the
   carrier's own origin, the camera position, for the carrier, and at that object's content center for an object. A gesture moves the
   object through `previewTransform`, which writes no document, and produces exactly one document write on release, from the matrix the gizmo reports
   and not from the node it was attached to; that write rebuilds the object, so the loop's identity comparison is what re-attaches the gizmo, and no
@@ -445,6 +448,12 @@ None of its own: it is the smoke target of the slice, verified by `npm run dev` 
 A fresh boot is the first step of that walk: the demo cube must arrive as the active object — the object list and the Scene group's fields naming it,
 the timeline's target reading `active object: Demo cube` with `add` enabled, the HUD's resolution row showing `uniform 4×4×4`, and the gizmo and its
 outline on the cube — so a keyframe can be added without a click, and creating a primitive must move that selection to the new object.
+The object's handles are walked on that same boot object, with nothing else touched: in `object` mode both sets must be drawn at once around its content center —
+arrows and rings together, no mode button anywhere, and the `Camera` group's mode button must be disabled — a drag on a ring must turn the object about that
+center with its position unmoved and the shot's fields untouched, a drag on an arrow must move it with its orientation unmoved, and one undo must put either back, so
+each gesture is one document write and one history step. Where the two sets' handles overlap — a band just inside each arrowhead, where a ring's picker is
+also in reach — a press must be taken by exactly one of them and produce exactly one of those two changes, never a move and a turn from one gesture, and that
+must hold for a press that follows a release with no pointer movement in between, which is where three's own hover state has already been cleared.
 The object animation has to survive an edit, which is the walk the rebinding fix came from: with the cube holding two distinct `position` keys — `add` at
 one playhead, the object moved with the gizmo at another, `add` again — a run must move it; then, with the playhead back at the first key, a drag on the
 gizmo must leave that run moving, as must a payload edit (a subdivision change), an undo, and a load. Before the fix the drag's own commit froze the
