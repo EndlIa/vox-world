@@ -1,5 +1,5 @@
 /**
- * The world grid: one plane of shader-drawn lines on the world's ground, the look the Grid group's one switch shows
+ * The world grid: one plane of shader-drawn lines on the world's ground, the look the View group's one switch shows
  * or hides, and the three patches that adapt the library's shader. Node-side and GPU-free: `three` builds the plane,
  * its uniforms, and its material without a renderer.
  */

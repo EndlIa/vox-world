@@ -1382,7 +1382,7 @@ export function main(): void {
     timelinePanel.refresh();
   }
 
-  /** Grid group: whether the world grid is drawn. */
+  /** View group: whether the world grid is drawn. */
   function setGridVisible(visible: boolean): void {
     worldGrid.setVisible(visible);
     panels.refresh();

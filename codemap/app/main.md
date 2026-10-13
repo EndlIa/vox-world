@@ -189,7 +189,7 @@ function main(): void;
    - Raw meshes — `setSourceVisible` is the panel's one entry point for the override, and it writes the mirror's flag and nothing else: the mirror owns it,
      applies it at once and again on the next `sync()`, and the panel reads it back through `sceneVisible`, so the checkbox cannot drift from the mirror;
      no dirty mark or refresh is needed, and an export is unaffected either way.
-   - Grid — the `Grid` group's one control is the viewport's flag, so the action and the view go through the `worldGrid` instance rather than through
+   - View — the `View` group's one control is the viewport's flag, so the action and the view go through the `worldGrid` instance rather than through
      `app`: `Panels` refreshes inside its own constructor, before `app` is built, while the instance already exists. `setGridVisible` writes that one
      instance and refreshes, and the re-seed is what makes the checkbox a view of the app's state rather than a forward-only control. The grid holds no
      per-frame state beyond its own position, so a commit or a session change touches no grid at all.
@@ -349,7 +349,7 @@ function main(): void;
   the payload the object is at the identity, after it at the payload's translation, and `applySources` re-derives each mesh's local matrix from it: the app
   never re-parents a mesh, never computes a placement, and never writes a mesh matrix itself. Whether they are shown is the mirror's flag and the panel's
   checkbox (`setSourceVisible` + `sceneVisible`) — `main` keeps no copy of it and never toggles `visible` on a mesh itself.
-- The `Grid` group's flag lives on the viewport's grid and never in the document: `panelContext.gridVisible` reads `WorldGrid.visible` and
+- The `View` group's flag lives on the viewport's grid and never in the document: `panelContext.gridVisible` reads `WorldGrid.visible` and
   `setGridVisible` writes that one instance, so the panel and the grid it displays cannot disagree; no grid flag ever reaches `project`, a
   timeline track, or an export.
 - The grid is put on the camera the frame is drawn through: the loop calls `worldGrid.update(renderCamera)` once a frame, before the render. It is decoration on layer 1, which

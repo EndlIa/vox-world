@@ -10,7 +10,7 @@ The voxelization settings are not here
 
 The panel is an overlay on the canvas, not a reserved column: it is anchored to the top-left of the window at
 `width: 112px` and takes no space from the viewport, which keeps the whole window width. It is a rail of group
-buttons — `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`, `Project`, in that order, full width — with the `Animation`
+buttons — `Project`, `Import`, `View`, `Edit`, `Create`, `Camera`, `Scene`, `Render`, in that order, full width — with the `Animation`
 toggle at its foot, and behind each group button that group's controls in a floating window
 (`./floatingWindow.ts`): no group is expanded
 until its button is pressed, several windows can be open at once, each is moved by dragging its title bar, and
@@ -93,10 +93,10 @@ class Panels {
 ## Internal logic
 1. Construction and lifetime. Every control is built once and lives for the page lifetime, with no `dispose`. Each group's controls are appended to that group's
    own window body — a `FloatingWindow` (`./floatingWindow.ts`) — and are never copied, re-created, or re-parented, so no control has a second copy in the rail.
-   The rail and the seven windows are the panel's whole content: nothing else is appended to `root`, and `index.html` gives the rail `order: -1`, so it is the
+   The rail and the eight windows are the panel's whole content: nothing else is appended to `root`, and `index.html` gives the rail `order: -1`, so it is the
    overlay's first row whatever order the nodes arrived in. `refresh()` runs at the end of the constructor.
-2. Rail and windows. Each group is one rail button plus one window, built together in the order `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`,
-   `Project`, `Project` last. The window's `onVisibilityChange` puts the `on` class on its button for exactly as long as the window is open, so the rail is the
+2. Rail and windows. Each group is one rail button plus one window, built together in the order `Project`, `Import`, `View`, `Edit`, `Create`, `Camera`,
+   `Scene`, `Render` last. The window's `onVisibilityChange` puts the `on` class on its button for exactly as long as the window is open, so the rail is the
    only place the panel says which groups are on screen. Windows open one stagger step down and right of the previous group's, so two opened at once never sit
    exactly on top of each other. `Edit` is the one group whose press does more than toggle its window: its press hook selects the edit mode its tools belong to
    (`session.setMode('edit')`), and the button is disabled while no object is active, because that mode edits one object's voxels and there is nothing to edit
@@ -179,7 +179,7 @@ class Panels {
    a finer one, which is where the Scene group says coarsening is not offered. Its levels are the module constant `SUBDIVISIONS`, and it forwards the chosen
    level through `setActiveSubdivision(level)`; they are powers of two because a cell has to stay an exact binary fraction of the world unit, and the list is
    the UI's range rather than a rule of the grid. It is not a voxelize setting: it raises the level of a payload that already exists and never rescales a model.
-9. `Grid` group: one control, the viewport's `World grid` checkbox. Its `change` event forwards `checked` through `setGridVisible(visible)` and nothing else, so
+9. `View` group: one control, the viewport's `World grid` checkbox. Its `change` event forwards `checked` through `setGridVisible(visible)` and nothing else, so
    the panel never touches the grid, the scene, or a mesh, and it is never disabled: it acts on the viewport rather than on the document, it needs no active
    object, and it is a plain toggle over the app's own flag, so there is nothing for the panel to gate it on. It follows the same view rule as
    `Show raw meshes`: while `context.gridVisible()` exists `refresh()` writes its answer into the checkbox and the panel holds no grid flag of its own; with no
@@ -229,7 +229,7 @@ class Panels {
   it then displays that value on every `refresh()` and holds no copy of its own, so the mirror and the checkbox cannot disagree. With no `sceneVisible()`
   in the context the checkbox is forward-only and `refresh()` leaves it alone — the panel then displays the user's last click, and the app is the only
   thing that knows the real state. Either way no mesh, scene, layer, or mirror is touched here.
-- The `Grid` group's one control is the viewport's own flag, not document state: while `context.gridVisible()` exists, `refresh()` writes
+- The `View` group's one control is the viewport's own flag, not document state: while `context.gridVisible()` exists, `refresh()` writes
   it back into the checkbox, so the panel invents no state of its own and holds none, and it needs no active object. With no `gridVisible()` in the
   context the checkbox is forward-only and `refresh()` never rewrites it, exactly like `Show raw meshes` without `sceneVisible()` — the panel then shows
   the user's last click and the app is the only thing that knows the real state.
@@ -341,15 +341,15 @@ viewport decoration, and an export must contain no part of it. A run changes no 
 pausing must stop the transport and leave the viewport on the frame the clip stopped at, and a non-looping run that reaches its end must stop the
 transport, put the playhead back to the run's start value, and return the view to the one the run started from.
 
-The rail and window walk is the same run: the overlay must show exactly the seven group buttons `Import`, `Edit`, `Camera`, `Render`, `Scene`, `Grid`, `Project`
+The rail and window walk is the same run: the overlay must show exactly the eight group buttons `Project`, `Import`, `View`, `Edit`, `Create`, `Camera`, `Scene`, `Render`
 plus the `Animation` toggle, and no
 group control at all until one is pressed; with nothing selected `Edit` must be disabled and unpressable, and pressing it with an object selected must open one window
 titled `Edit` holding that group's controls, mark the button `on`, and put the session in edit mode — the viewport mode switch must
 follow, and the gizmo must be gone; dragging the window's title bar must move it and leave it under the pointer; `×` must close it and clear the button; opening `Edit` and
-`Scene` together must show two windows at different positions, and pressing one must put it above the other; pressing `Grid` must open a window holding one
+`Scene` together must show two windows at different positions, and pressing one must put it above the other; pressing `View` must open a window holding one
 `World grid` checkbox, and unticking it must take the grid out of the viewport and ticking it must bring it back; pressing `Animation` must show the timeline bar along the bottom of the page and mark the button
 `on`, and pressing it again must hide the bar — leaving the keyframes it held intact when it is shown again — with the canvas' box and its drawing
 buffer still in step; a drag far past an edge must park
 the window against it with its title bar still reachable; a press below the rail must reach the viewport rather than the overlay; a second import
-must still open the voxelize modal over every window with its fields and `Voxelize` working; and the overlay must hold the seven group buttons, the
+must still open the voxelize modal over every window with its fields and `Voxelize` working; and the overlay must hold the eight group buttons, the
 `Animation` toggle, and the open windows and nothing else — no progress row, no message row, no error line — however many windows are open.

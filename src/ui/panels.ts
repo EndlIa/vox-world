@@ -72,7 +72,7 @@ export type PanelContext = {
    */
   sceneVisible?: () => boolean;
   /**
-   * Whether the world grid is drawn, if the app exposes the flag (`WorldGrid`). When present the Grid group's
+   * Whether the world grid is drawn, if the app exposes the flag (`WorldGrid`). When present the View group's
    * checkbox is a view of it and `refresh()` seeds it; when absent the checkbox is forward-only.
    */
   gridVisible?: () => boolean;
@@ -460,7 +460,7 @@ export class Panels {
       { on: { change: () => context.actions.setActiveSubdivision(Number(this.subdivisionSelect.value)) } },
       SUBDIVISIONS.map((level) => el('option', { value: String(level), text: String(level) })),
     );
-    // The Grid group: one world grid, and one switch over it. It is the viewport's own flag rather than document
+    // The View group: one world grid, and one switch over it. It is the viewport's own flag rather than document
     // state, so the app owns it and `refresh()` only reads it back.
     this.worldGridInput = el('input', {
       type: 'checkbox',
@@ -499,11 +499,32 @@ export class Panels {
       return button;
     };
 
+    // The project file: the whole truth as one JSON document, written and read back by `document/serialize.ts`.
+    // It leads the rail, so save/open are the first thing the column offers.
+    group('Project', [
+      el('div', { class: 'row' }, [
+        el('button', {
+          text: 'Save project\u2026',
+          title: 'write the whole project to one JSON file',
+          on: { click: () => context.actions.saveProject() },
+        }),
+        el('button', {
+          text: 'Open project\u2026',
+          title: 'load a project file, replacing what is open',
+          on: { click: () => context.actions.openProject() },
+        }),
+      ]),
+      el('div', { class: 'dim', text: 'or drop a .json onto the viewport' }),
+    ]);
+
     group('Import', [
       importButton,
       el('div', { class: 'dim', text: 'or drop a .glb onto the viewport' }),
       this.field('Show raw meshes', this.sourceVisibleInput),
     ]);
+    // The View group sits third, right after Import: the viewport switches are the first thing the rail offers
+    // after the file controls.
+    group('View', [this.field('World grid', this.worldGridInput)]);
     this.editGroupButton = group(
       'Edit',
       [
@@ -516,6 +537,46 @@ export class Panels {
       ],
       () => context.session.setMode('edit'),
     );
+    // The Create group sits directly under Edit: both build content, so the shape maker follows the voxel tools.
+    // Creating a shape: the kind decides what the size means — a box and a corner are built from it on every axis, a
+    // sphere takes it as a radius, a landscape as its footprint — and the two fields only one kind reads are disabled
+    // for the others rather than hidden, so the row does not move as the kind changes.
+    this.primitiveKindSelect = el(
+      'select',
+      {
+        on: {
+          change: () => {
+            const value = this.primitiveKindSelect.value;
+            const kind = PRIMITIVE_KINDS.find((candidate) => candidate === value);
+            if (kind !== undefined) this.refreshPrimitiveControls(kind);
+          },
+        },
+      },
+      PRIMITIVE_KINDS.map((kind) => el('option', { value: kind, text: kind })),
+    );
+    this.primitiveSizeInput = el('input', { type: 'number', min: '1', step: '1', value: String(DEFAULT_PRIMITIVE_SIZE) });
+    this.primitiveHeightInput = el('input', { type: 'number', min: '1', step: '1', value: String(DEFAULT_PRIMITIVE_HEIGHT) });
+    this.primitiveHollowInput = el('input', { type: 'checkbox' });
+    this.createPrimitiveButton = el('button', {
+      text: 'Create',
+      title: 'make a shape and put it in the scene as its own object',
+      on: {
+        click: () =>
+          context.actions.createPrimitive({
+            kind: this.primitiveKindSelect.value as PrimitiveKind,
+            size: Number(this.primitiveSizeInput.value),
+            height: Number(this.primitiveHeightInput.value),
+            hollow: this.primitiveHollowInput.checked,
+          }),
+      },
+    });
+    group('Create', [
+      this.field('Shape', this.primitiveKindSelect),
+      this.field('Size', this.primitiveSizeInput),
+      this.field('Height', this.primitiveHeightInput),
+      this.field('Hollow', this.primitiveHollowInput),
+      el('div', { class: 'row' }, [this.createPrimitiveButton]),
+    ]);
     // Everything that is *about the camera* lives here — the carrier that
     // aims it, and its projection — while the timeline bar keeps the keyframes, which are animation.
     this.cameraSelectButton = el('button', { on: { click: () => context.actions.toggleCameraControl() } });
@@ -588,15 +649,6 @@ export class Panels {
       ]),
       el('label', undefined, [this.cameraLensLabel, this.cameraFovInput]),
     ]);
-    group('Render', [
-      this.field('Camera', this.exportCameraSelect),
-      this.field('Resolution', this.exportResolutionSelect),
-      this.field('FPS', this.exportFpsInput),
-      this.field('From (s)', this.exportFromInput),
-      this.field('To (s)', this.exportToInput),
-      this.field('Mode', this.exportModeSelect),
-      this.exportButton,
-    ]);
     // The divisor separates the two halves of this group: above it the list that chooses among every
     // object, below it the fields that act on the one the list selected.
     group('Scene', [
@@ -609,66 +661,6 @@ export class Panels {
       this.field('Visible', this.visibleInput),
       this.field('Grid align', this.alignToGridInput),
       this.field('Subdivision', this.subdivisionSelect),
-    ]);
-
-    group('Grid', [this.field('World grid', this.worldGridInput)]);
-
-    // The project file: the whole truth as one JSON document, written and read back by `document/serialize.ts`.
-    // The group sits last, so adding it left every other window at the staggered position it had.
-    group('Project', [
-      el('div', { class: 'row' }, [
-        el('button', {
-          text: 'Save project\u2026',
-          title: 'write the whole project to one JSON file',
-          on: { click: () => context.actions.saveProject() },
-        }),
-        el('button', {
-          text: 'Open project\u2026',
-          title: 'load a project file, replacing what is open',
-          on: { click: () => context.actions.openProject() },
-        }),
-      ]),
-      el('div', { class: 'dim', text: 'or drop a .json onto the viewport' }),
-    ]);
-
-    // Creating a shape: the kind decides what the size means — a box and a corner are built from it on every axis, a
-    // sphere takes it as a radius, a landscape as its footprint — and the two fields only one kind reads are disabled
-    // for the others rather than hidden, so the row does not move as the kind changes.
-    this.primitiveKindSelect = el(
-      'select',
-      {
-        on: {
-          change: () => {
-            const value = this.primitiveKindSelect.value;
-            const kind = PRIMITIVE_KINDS.find((candidate) => candidate === value);
-            if (kind !== undefined) this.refreshPrimitiveControls(kind);
-          },
-        },
-      },
-      PRIMITIVE_KINDS.map((kind) => el('option', { value: kind, text: kind })),
-    );
-    this.primitiveSizeInput = el('input', { type: 'number', min: '1', step: '1', value: String(DEFAULT_PRIMITIVE_SIZE) });
-    this.primitiveHeightInput = el('input', { type: 'number', min: '1', step: '1', value: String(DEFAULT_PRIMITIVE_HEIGHT) });
-    this.primitiveHollowInput = el('input', { type: 'checkbox' });
-    this.createPrimitiveButton = el('button', {
-      text: 'Create',
-      title: 'make a shape and put it in the scene as its own object',
-      on: {
-        click: () =>
-          context.actions.createPrimitive({
-            kind: this.primitiveKindSelect.value as PrimitiveKind,
-            size: Number(this.primitiveSizeInput.value),
-            height: Number(this.primitiveHeightInput.value),
-            hollow: this.primitiveHollowInput.checked,
-          }),
-      },
-    });
-    group('Create', [
-      this.field('Shape', this.primitiveKindSelect),
-      this.field('Size', this.primitiveSizeInput),
-      this.field('Height', this.primitiveHeightInput),
-      this.field('Hollow', this.primitiveHollowInput),
-      el('div', { class: 'row' }, [this.createPrimitiveButton]),
     ]);
 
     // The one rail entry that opens nothing: the timeline is a bar along the bottom of the page rather than a
@@ -686,6 +678,19 @@ export class Panels {
       },
     });
     rail.append(this.animationButton);
+
+    // Render is the rail's last entry, below the timeline toggle: exporting is the final step, so its window
+    // sits under everything that feeds it. It takes `index` like every group, so the toggle's lack of one does
+    // not shift the windows built before it.
+    group('Render', [
+      this.field('Camera', this.exportCameraSelect),
+      this.field('Resolution', this.exportResolutionSelect),
+      this.field('FPS', this.exportFpsInput),
+      this.field('From (s)', this.exportFromInput),
+      this.field('To (s)', this.exportToInput),
+      this.field('Mode', this.exportModeSelect),
+      this.exportButton,
+    ]);
 
     // The rail is the overlay's whole content: six buttons that open windows, plus the timeline toggle.
     root.append(rail);
@@ -727,7 +732,7 @@ export class Panels {
     // without `sceneVisible()` owns the state itself, so `refresh()` leaves the box alone.
     const sceneVisible = this.context.sceneVisible;
     if (sceneVisible !== undefined) this.sourceVisibleInput.checked = sceneVisible();
-    // Same rule for the Grid group: with a source the checkbox is a view of the viewport's own flag.
+    // Same rule for the View group: with a source the checkbox is a view of the viewport's own flag.
     const gridVisible = this.context.gridVisible?.();
     if (gridVisible !== undefined) this.worldGridInput.checked = gridVisible;
 

@@ -311,7 +311,7 @@ deferred is deferred deliberately, not forgotten.
   cell on a click, and a wall `Add wall` cells deep on a drag — while `select`, `paint`, and `remove`
   take the cells the pointer names.
 - Viewport grid: one plane of shader-drawn lines on the world's `xy` ground at `z = 0`, one white line
-  per world unit and a brighter one every twenty cells, switched by the Grid group's `World grid` box.
+  per world unit and a brighter one every twenty cells, switched by the View group's `World grid` box.
   It is decoration: layer 1, never picked, never exported, and outside framing's measurement. Every
   voxel face also carries a one-pixel border at 22% of its own colour, which is what makes a mass of
   cubes read as countable cells.
